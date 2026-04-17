@@ -1,0 +1,118 @@
+---
+- name: Bootstrap Jetson Device
+  hosts: all
+  become: yes
+  gather_facts: yes
+  vars_files:
+  - ../group_vars/all.yml
+  
+  tasks:
+    - name: Display bootstrap start message
+      debug:
+        msg: "Starting Jetson bootstrap process..."
+      tags: info
+
+    - name: Afficher JETSON_IP
+      debug:
+        msg: "{{ lookup('env','JETSON_IP') }}"
+
+    - name: Update apt package cache
+      apt:
+        update_cache: yes
+        cache_valid_time: 3600
+      tags: update
+
+    - name: Install basic utilities
+      apt:
+        name:
+          - nano
+          - htop
+          - net-tools
+          - iftop
+          - iotop
+          - tmux
+          - curl
+          - wget
+          - git
+        state: present
+      tags: utils
+
+    - name: Import SSH configuration playbook
+      import_tasks: network_ssh.yml
+      tags: ssh
+
+    - name: Import network setup playbook
+      import_tasks: network_setup.yml
+      tags: network
+
+    - name: Import LXDE installation playbook
+      import_tasks: install_lxde.yml
+      tags: lxde
+
+    - name: Optimize Jetson system
+      block:
+        - name: Disable unnecessary services
+          systemd:
+            name: "{{ item }}"
+            enabled: no
+            state: stopped
+          loop:
+            - bluetooth
+            - avahi-daemon
+            - ModemManager
+            - packagekit
+            - kerneloops
+          tags: optimize
+
+        - name: Disable snapd completely
+          systemd:
+            name: "{{ item }}"
+            enabled: no
+            state: stopped
+          loop:
+            - snapd
+            - snapd.socket
+          tags: optimize
+
+        - name: Set Jetson to MAXN mode (Super Orin)
+          command: sudo nvpmodel -m 2
+          tags: optimize
+
+        - name: Enable maximum CPU/GPU clocks
+          command: sudo jetson_clocks
+          tags: optimize
+
+    - name: Import k3s installation playbook (Jetson optimized)
+      import_tasks: install_k3s_jetson_optimized.yml
+      tags: k3s
+
+    # - name: Import k3s installation playbook (containerd version)
+    #   import_tasks: install_k3s_containerd.yml
+    #   tags: k3s
+
+    # - name: Import GPU validation playbook
+    #   import_tasks: validate_gpu_k8s.yml
+    #   tags: gpu
+
+    # - name: Import GitOps deployment playbook
+    #   import_tasks: deploy_gitops.yml
+    #   tags: gitops
+
+    - name: Import countingapp build playbook
+      import_tasks: build_app.yml
+      tags: build
+
+    - name: Import countingapp deployment playbook
+      import_tasks: deploy_countingapp.yml
+      tags: deploy
+
+    - name: Display bootstrap completion message
+      debug:
+        msg: "Jetson bootstrap completed successfully!"
+      tags: info
+
+  handlers:
+    - name: restart ssh
+      systemd:
+        name: ssh
+        state: restarted

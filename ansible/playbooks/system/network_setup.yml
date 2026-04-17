@@ -1,0 +1,117 @@
+---
+- name: Install NetworkManager and nmcli
+  apt:
+    name:
+      - network-manager
+      - network-manager-config-connectivity-ubuntu
+    state: present
+  tags: packages
+
+- name: Set network variables from environment
+  set_fact:
+    wifi_hotspot:
+      ssid: "{{ lookup('env', 'JETSON_HOTSPOT_SSID') | default('JetsonCounter', true) }}"
+      password: "{{ lookup('env', 'JETSON_HOTSPOT_PASSWORD') | default('ChangeMe123', true) }}"
+      ip: "{{ lookup('env', 'JETSON_HOTSPOT_IP') | default('192.168.50.1/24', true) }}"
+      interface: "{{ lookup('env', 'JETSON_HOTSPOT_INTERFACE') | default('wlP1p1s0', true) }}"
+    ethernet_static:
+      interface: "{{ lookup('env', 'JETSON_ETH_INTERFACE') | default('enP8p1s0', true) }}"
+      ip: "{{ lookup('env', 'JETSON_ETH_IP') | default('192.168.1.50/24', true) }}"
+      gateway: "{{ lookup('env', 'JETSON_ETH_GATEWAY') | default('192.168.1.1', true) }}"
+  tags: always
+
+- name: Ensure NetworkManager is running
+  systemd:
+    name: NetworkManager
+    state: started
+    enabled: yes
+  tags: networkmanager
+
+- name: Enable WiFi radio
+  command: nmcli radio wifi on
+  changed_when: false
+  tags: wifi
+
+- name: Create WiFi hotspot connection
+  command: >
+    nmcli con add type wifi ifname {{ wifi_hotspot.interface }} 
+    con-name {{ wifi_hotspot.interface }} ssid {{ wifi_hotspot.ssid }}
+  args:
+    creates: /etc/NetworkManager/system-connections/{{ wifi_hotspot.interface }}
+  tags: hotspot
+
+- name: Configure hotspot as access point
+  command: >
+    nmcli con modify {{ wifi_hotspot.interface }}
+    802-11-wireless.mode ap
+    802-11-wireless.band bg
+    ipv4.method shared
+    wifi-sec.key-mgmt wpa-psk
+    wifi-sec.psk {{ wifi_hotspot.password }}
+  tags: hotspot
+
+- name: Set hotspot autoconnect priority
+  command: >
+    nmcli con modify {{ wifi_hotspot.interface }}
+    connection.autoconnect yes
+    connection.autoconnect-priority -100
+  tags: hotspot
+
+- name: Create Ethernet connection
+  command: >
+    nmcli con add type ethernet ifname {{ ethernet_static.interface }}
+    con-name {{ ethernet_static.interface }}
+  args:
+    creates: /etc/NetworkManager/system-connections/{{ ethernet_static.interface }}
+  tags: ethernet
+
+- name: Configure Ethernet with static IP
+  command: >
+    nmcli con modify {{ ethernet_static.interface }}
+    ipv4.addresses {{ ethernet_static.ip }}
+    ipv4.gateway {{ ethernet_static.gateway }}
+    ipv4.method manual
+  tags: ethernet
+
+- name: Bring up Ethernet interface
+  command: nmcli con up {{ ethernet_static.interface }}
+  tags: ethernet
+
+- name: Configure firewall for hotspot
+  command: >
+    iptables -I INPUT -i {{ wifi_hotspot.interface }} -p icmp --icmp-type echo-request -j ACCEPT
+  tags: firewall
+
+- name: Configure firewall for SSH
+  command: >
+    iptables -I INPUT -i {{ wifi_hotspot.interface }} -p tcp --dport 22 -j ACCEPT
+  tags: firewall
+
+- name: Install netfilter-persistent and iptables-persistent
+  apt:
+    name:
+      - netfilter-persistent
+      - iptables-persistent
+    state: present
+    update_cache: yes
+  tags: firewall
+
+- name: Save iptables rules
+  command: netfilter-persistent save
+  ignore_errors: yes
+  tags: firewall
+
+- name: Enable IP forwarding
+  sysctl:
+    name: net.ipv4.ip_forward
+    value: "1"
+    state: present
+    reload: yes
+  tags: networking
+
+    # - name: Restart NetworkManager in background
+    #   command: systemctl restart NetworkManager
+    #   async: 10
+    #   poll: 0
+    #   become: yes
+    #   tags: networkmanager

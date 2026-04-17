@@ -1,0 +1,52 @@
+---
+- name: Test GPU Validation Playbook
+  hosts: localhost
+  gather_facts: no
+  
+  tasks:
+    - name: Test GPU validation playbook syntax
+      command: ansible-playbook --syntax-check ansible/playbooks/validate_gpu_k8s.yml
+      register: syntax_check
+      changed_when: false
+      ignore_errors: yes
+
+    - name: Display syntax check result
+      debug:
+        var: syntax_check
+
+    - name: Verify GPU validation playbook exists
+      stat:
+        path: ansible/playbooks/validate_gpu_k8s.yml
+      register: playbook_stat
+
+    - name: Assert playbook exists
+      assert:
+        that:
+          - playbook_stat.stat.exists
+        msg: "GPU validation playbook does not exist"
+
+    - name: Verify required tasks in playbook
+      shell: >
+        grep -c "Create GPU test namespace" ansible/playbooks/validate_gpu_k8s.yml || 
+        grep -c "Create GPU test pod" ansible/playbooks/validate_gpu_k8s.yml || 
+        grep -c "Verify GPU access" ansible/playbooks/validate_gpu_k8s.yml
+      register: task_count
+      changed_when: false
+
+    - name: Assert required tasks exist
+      assert:
+        that:
+          - task_count.stdout | int > 0
+        msg: "Required GPU validation tasks not found in playbook"
+
+    - name: Verify GPU test pod configuration
+      shell: >
+        grep -c "nvidia/cuda:11.0-base" ansible/playbooks/validate_gpu_k8s.yml
+      register: cuda_count
+      changed_when: false
+
+    - name: Assert CUDA image is configured
+      assert:
+        that:
+          - cuda_count.stdout | int > 0
+        msg: "CUDA image not found in GPU validation playbook"

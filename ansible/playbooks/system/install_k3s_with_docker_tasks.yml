@@ -1,0 +1,134 @@
+---
+- name: Configure Docker daemon for external storage
+  copy:
+    dest: /etc/docker/daemon.json
+    content: |
+      {
+        "data-root": "/data/orin/docker",
+        "log-driver": "json-file",
+        "log-opts": {
+          "max-size": "100m",
+          "max-file": "3"
+        }        
+      }
+    owner: root
+    group: root
+    mode: '0644'
+  tags: docker
+
+- name: Configure NVIDIA runtime for Docker
+  command: nvidia-ctk runtime configure --runtime=docker --set-as-default
+  become: true
+
+- name: Ajouter options cgroup à la fin de la ligne APPEND
+  lineinfile:
+    path: /boot/extlinux/extlinux.conf
+    regexp: '^(\s*APPEND.*)$'
+    line: '\1 cgroup_enable=cpuset cgroup_memory=1 cgroup_enable=memory'
+    backrefs: yes
+
+# - name: Reboot si nécessaire
+#   reboot:
+#     msg: "Reboot après modification"
+#     reboot_timeout: 600
+
+- name: Vérifier que la machine est revenue
+  command: uptime
+
+- name: Disable swap (required by k3s)
+  command: swapoff -a
+  when: ansible_facts['swaptotal_mb'] > 0
+  tags: prepare
+
+- name: Créer le dossier K3s
+  file:
+    path: /etc/rancher/k3s
+    state: directory
+    mode: '0755'
+  become: yes
+
+- name: Configurer K3s pour Jetson
+  copy:
+    dest: /etc/rancher/k3s/config.yaml
+    mode: '0644'
+    content: |
+      # K3s server configuration for NVIDIA Jetson
+      token: "JetsonClusterToken"
+      tls-san:
+        - $(hostname -I | awk '{print $1}')
+        - $(hostname)
+
+      # Kubelet configuration for Jetson
+      kubelet-arg:
+        - "max-pods=110"
+        - "kube-reserved=cpu=500m,memory=1Gi"
+        - "system-reserved=cpu=500m,memory=512Mi"
+        - "eviction-hard=memory.available<200Mi,nodefs.available<5%"
+
+      # Node labels for GPU workload targeting
+      node-label:
+        - "device-type=jetson"
+        - "accelerator=nvidia-gpu"
+        - "nvidia.com/gpu=true"
+
+- name: Install K3s
+  shell: |
+    curl -sfL https://get.k3s.io | sudo sh -s - --docker --data-dir=/data/orin/k3s --write-kubeconfig-mode=644 --disable traefik --disable servicelb
+  args:
+    creates: /usr/local/bin/k3s
+    executable: /bin/bash
+  tags: k3s
+
+- name: Wait for K3s node ready
+  shell: |
+    k3s kubectl get node
+  register: result
+  retries: 10
+  delay: 10
+  until: result.rc == 0
+  tags: k3s
+
+- name: Create .kube directory
+  file:
+    path: "/home/nano-counter/.kube"
+    state: directory
+    owner: "nano-counter"
+    group: "nano-counter"
+    mode: '0755'
+  tags: kubectl
+
+- name: Copier le kubeconfig K3s
+  copy:
+    src: /etc/rancher/k3s/k3s.yaml
+    dest: "/home/nano-counter/.kube/config"
+    remote_src: yes
+    owner: "nano-counter"
+    group: "nano-counter"
+    mode: '0600'
+  become: yes
+
+# -------------------------
+# INSTALL NVIDIA DEVICE PLUGIN
+# -------------------------
+
+- name: Deploy NVIDIA device plugin
+  shell: |
+    k3s kubectl apply -f https://raw.githubusercontent.com/NVIDIA/k8s-device-plugin/v0.14.1/nvidia-device-plugin.yml
+  args:
+    creates: /tmp/nvidia-device-plugin-installed
+  tags: nvidia
+
+- name: Mark plugin installed
+  file:
+    path: /tmp/nvidia-device-plugin-installed
+    state: touch
+  tags: nvidia
+
+- name: Fix kubeconfig for local access
+  replace:
+    path: "/home/nano-counter/.kube/config"
+    regexp: "https://127.0.0.1:6443"
+    replace: "https://{{ ansible_host }}:6443"
+  tags: kubectl
+
+  

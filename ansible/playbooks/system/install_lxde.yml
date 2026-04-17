@@ -1,0 +1,82 @@
+---
+- name: Install LXDE + LightDM
+  apt:
+    name:
+      - lxde-core
+      - lxterminal
+      - lxappearance
+      - lightdm
+      - lightdm-gtk-greeter
+    state: present
+  tags: lxde
+
+- name: Remove GDM only
+  apt:
+    name: gdm3
+    state: absent
+    autoremove: yes
+  ignore_errors: yes
+  tags: lxde
+
+- name: Remove ScreenSaver only
+  apt:
+    name: xscreensaver
+    state: absent
+    autoremove: yes
+  ignore_errors: yes
+  tags: lxde
+
+- name: Set LightDM as default display manager
+  debconf:
+    name: lightdm
+    question: shared/default-x-display-manager
+    value: lightdm
+    vtype: select
+  tags: lxde
+
+- name: Enable LightDM
+  systemd:
+    name: lightdm
+    enabled: yes
+    state: started
+  tags: lxde
+
+- name: Enable autologin
+  copy:
+    dest: /etc/lightdm/lightdm.conf
+    content: |
+      [Seat:*]
+      autologin-user={{ ansible_user }}
+      user-session=LXDE
+  tags: lxde
+
+- name: Remove GNOME and GDM completely
+  apt:
+    name:
+      - gdm3
+      - gnome-shell
+      - ubuntu-desktop
+    state: absent
+    purge: yes
+    autoremove: yes
+  ignore_errors: yes
+  tags: lxde
+
+- name: Ensure LightDM is enabled and running
+  systemd:
+    name: lightdm
+    enabled: yes
+    state: started
+  tags: lxde
+
+- name: Configure LightDM host settings
+  become: true
+  copy:
+    dest: /etc/lightdm/lightdm.conf.d/host.conf
+    mode: '0644'
+    content: |
+      [Seat:*]
+      display-setup-script=xhost +
+      xserver-command=X -s 0 -dpms
+
+

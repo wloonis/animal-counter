@@ -1,0 +1,4 @@
+pycuda==2026.1
+trackers==2.3.0
+flask==2.0.3
+python-dotenv

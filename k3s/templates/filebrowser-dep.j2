@@ -1,0 +1,65 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app.kubernetes.io/name: filebrowser-quantum
+  name: filebrowser-quantum
+  namespace: {{ app_namespace }}
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: filebrowser-quantum
+      app.kubernetes.io/name: filebrowser-quantum
+  replicas: 1
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/instance: filebrowser-quantum
+        app.kubernetes.io/name: filebrowser-quantum
+    spec:
+      hostNetwork: true
+      containers:
+      - name: filebrowser-quantum
+        image: {{ filebrowser_image }}
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 80
+          protocol: TCP
+        # https://github.com/gtsteffaniak/filebrowser/wiki/Environment-Variables
+        env:
+        - name: FILEBROWSER_CONFIG
+          value: /data/config.yaml
+        envFrom:
+        - secretRef:
+            name: filebrowser-quantum
+        volumeMounts:
+        - name: data
+          mountPath: "/data"
+        - name: config
+          mountPath: "/data/config.yaml"
+          readOnly: true
+          subPath: config.yaml
+        - name: srv
+          mountPath: "/srv"
+      restartPolicy: Always
+      volumes:
+      - name: data
+        hostPath:
+          type: Directory
+          # Insert the name of the shared folder you want to use.
+          # Make sure the configured UID/GID the container is running
+          # with has access to that directory.
+          path: "{{ filebrowser_config_path }}"
+      - name: config
+        configMap:
+          name: filebrowser-quantum-config
+      - name: srv
+        hostPath:
+          type: Directory
+          # Insert the name of the shared folder you want to use.
+          # Make sure the configured UID/GID the container is running
+          # with has access to that directory.
+          path: "{{ files_path }}"

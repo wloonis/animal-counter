@@ -1,0 +1,467 @@
+"""
+Main application entry point for the pig counting application.
+
+This module initializes and runs the pig counting application with TensorRT inference
+and Norfair tracking.
+"""
+
+import threading
+import cv2
+import time
+import datetime
+import logging
+import sys
+import os
+import numpy as np
+from queue import Queue
+from argparse import ArgumentParser
+
+from settings import Settings
+from core.inference import Inference
+from core.tracking import Tracking
+from core.counting import Counting
+from ui.rendering import Rendering
+from utils.frame_source import FrameSource
+from utils.shared_state import SharedState
+from utils.timer_fps import TimerFps
+from trackers import ByteTrackTracker
+from supervision import Detections
+
+
+# Load settings
+settings = Settings()
+
+# Configure logging
+logging.basicConfig(format='%(levelname)s:%(message)s', level=settings.LOG_LEVEL)
+logger = logging.getLogger(__name__)
+
+# Shared state
+shared_state = SharedState()
+shared_state.draw_tracking = settings.DRAW_TRACKING
+shared_state.centroid_tracking = settings.CENTROID_TRACKING
+shared_state.box_tracking = settings.BOX_TRACKING
+
+class InferThread(threading.Thread):
+    """
+    Thread for handling inference on frames.
+    
+    Attributes:
+        frame_queue (Queue): Queue for frame processing.
+        max_queue_size (int): Maximum size of the frame queue.
+        yolo (Inference): YOLO TensorRT model.
+        video_path (str): Path to video source.
+        frame_counter (int): Current frame counter.
+        timer (TimerFps): Timer for FPS calculation.
+    """
+    
+    def __init__(self, frame_queue: Queue, max_queue_size, yolo: Inference, video_path, input_type="CAMERA"):
+        """
+        Initialize the inference thread.
+        
+        Args:
+            frame_queue (Queue): Queue for frame processing.
+            max_queue_size (int): Maximum size of the frame queue.
+            yolo (Inference): YOLO TensorRT model.
+            video_path (str): Path to video source.
+            input_type (str): Type of input (CAMERA or FILE).
+        """
+        super().__init__()
+        self.frame_queue = frame_queue
+        self.max_queue_size = max_queue_size
+        self.yolo = yolo
+        self.video_path = video_path
+        self.input_type = input_type
+        self.frame_counter = 0
+        self.timer = TimerFps()
+    
+    def run(self):
+        """Run the inference thread."""
+        frame_source = FrameSource(self.video_path, self.input_type)
+        
+        while True:
+            self.frame_counter += 1
+            if logger.isEnabledFor(logging.DEBUG):
+                logger.debug(f"Capturing: {self.frame_counter}...")
+            ret, image_raw = frame_source.read()
+            if logger.isEnabledFor(logging.DEBUG):
+                logger.debug(f"Captured: {self.frame_counter}...")
+
+            if not ret:
+                #or self.frame_counter > 550:
+                shared_state.status = 0
+                logger.info(f"------->No Frame; Value Status: {shared_state.status}")
+                break
+
+            if shared_state.status in [1,3]:
+                time_start = time.time()
+                output, use_time, origin_h, origin_w, preproc_time, r_scale, tx1, ty1 = self.yolo.infer(image_raw)
+                time_end = time.time()
+                
+                if logger.isEnabledFor(logging.DEBUG):
+                    logger.debug(f"Duration InfThread: {(time_end-time_start)*1000:.2f}ms, avg: {((time_end-time_start)*1000)/self.frame_counter:.2f}ms, use time: {use_time*1000:.2f}ms, preproc: {preproc_time*1000:.2f}ms")
+
+                results = [image_raw, output, use_time, origin_h, origin_w, self.frame_counter, r_scale, tx1, ty1]
+                self.frame_queue.put(results)
+                
+                current_time, avg_time, avg_fps = self.timer.update(self.frame_counter)
+                if logger.isEnabledFor(logging.DEBUG):
+                    logger.debug(f"Time InferThread: {current_time*1000:.2f}ms | avg: {avg_time*1000:.2f}ms | avg fps: {avg_fps:.2f}")
+            else:
+                if logger.isEnabledFor(logging.DEBUG):
+                    logger.debug("Direct to frame_queue")
+                self.frame_queue.put([image_raw])
+        
+        frame_source.release()
+
+
+class DisplayThread(threading.Thread):
+    """
+    Thread for handling display and counting.
+    
+    Attributes:
+        frame_queue (Queue): Queue for frame processing.
+        yolo (Inference): YOLO TensorRT model.
+        sort_tracker (Tracker): Norfair tracker.
+        tracking (Tracking): Tracking module.
+        counting (Counting): Counting module.
+        rendering (Rendering): Rendering module.
+        frame_counter (int): Current frame counter.
+        timer (TimerFps): Timer for FPS calculation.
+        video_writer (cv2.VideoWriter): Video writer for recording.
+        filename (str): Output video filename.
+    """
+    
+    def __init__(self, frame_queue: Queue, yolo: Inference, sort_tracker, tracking: Tracking, counting: Counting, rendering: Rendering, input_type="CAMERA"):
+        """
+        Initialize the display thread.
+        
+        Args:
+            frame_queue (Queue): Queue for frame processing.
+            yolo (Inference): YOLO TensorRT model.
+            sort_tracker (Tracker): Norfair tracker.
+            tracking (Tracking): Tracking module.
+            counting (Counting): Counting module.
+            rendering (Rendering): Rendering module.
+            input_type (str): Type of input (CAMERA or FILE).
+        """
+        super().__init__()
+        self.frame_queue = frame_queue
+        self.yolo = yolo
+        self.sort_tracker = sort_tracker
+        self.tracking = tracking
+        self.counting = counting
+        self.rendering = rendering
+        self.input_type = input_type
+        self.frame_counter = 0
+        self.timer = TimerFps()
+        self.video_writer = None
+        self.filename = None
+        self.window_name = "Counter"
+        self.x_offset = self.y_offset = 30
+
+    def mouse_click(self, event, x, y, flags, param):
+        if event == cv2.EVENT_LBUTTONUP:
+            self.rendering.handle_click(x, y, shared_state)
+            
+    def run(self):
+        """Run the display thread."""
+
+        if self.input_type == "CAMERA":
+            cv2.namedWindow(self.window_name, cv2.WND_PROP_FULLSCREEN)
+            cv2.setWindowProperty(self.window_name, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
+            cv2.setMouseCallback(self.window_name, self.mouse_click)
+
+        counter = 0
+        avg_t = 0.0
+        sum_t = 0.0
+        delay_last_class = 180
+
+        last_capture_time = time.time()  # ✅ FIX IMPORTANT
+
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug("DisplayThread started")
+
+        while True:
+            time_start = time.time()
+
+            if logger.isEnabledFor(logging.DEBUG):
+                logger.debug(f"Value Recording: {shared_state.recording}; Value Status: {shared_state.status}; Video Writer: {self.video_writer}")
+
+            # Stop video writer
+            if self.video_writer is not None and self.video_writer.isOpened() and shared_state.recording and (
+                shared_state.status == 0 or
+                (shared_state.status in [1,3] and (datetime.datetime.now() - shared_state.delay_reinit).total_seconds() > delay_last_class)
+            ):
+                self.video_writer.release()
+                self.video_writer = None
+                output_path = os.path.join(settings.OUTPUT_VIDEO_PATH, f"counting-{time.strftime('%Y%m%d-%H%M%S')}-#{shared_state.counter_to_right}.mp4")
+                os.rename(self.filename, output_path)
+                # En mode manuel on passe en mode Stop automatiquement à la fin de l'enregistrement
+                if shared_state.status == 1:
+                    shared_state.status = 0
+                shared_state.recording = False
+                logger.info(f"------->Record Stop; Value Status: {shared_state.status}: Store:{output_path}")
+
+            self.results = self.frame_queue.get()
+
+            # ✅ Toujours récupérer img AVANT tout
+            if len(self.results) > 1:
+                img, output, use_time, origin_h, origin_w, frame_counter, r_scale, tx1, ty1 = self.results
+            else:
+                img = self.results[0]
+
+            # =========================
+            # ✅ LEARNING MODE FIXÉ
+            # =========================
+            if shared_state.learning_mode and shared_state.status in [1,3]:
+
+                if shared_state.learning_start_time is None:
+                    shared_state.learning_start_time = time.time()
+                    shared_state.image_counter = 0
+
+                elif time.time() - shared_state.learning_start_time > shared_state.max_learning_duration:
+                    shared_state.learning_mode = False
+                    shared_state.status = 0
+                    shared_state.learning_start_time = None
+                    shared_state.image_counter = 0
+                    logger.info("Learning Mode ended. Returning to normal mode.")
+
+                if time.time() - last_capture_time >= settings.CAPTURE_INTERVAL:
+                    timestamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+                    image_path = os.path.join(settings.DATASET_DIR, f"{timestamp}.jpg")
+
+                    cv2.imwrite(image_path, img)
+                    last_capture_time = time.time()
+
+                    shared_state.image_counter += 1
+                    logger.info(f"Image {shared_state.image_counter} captured: {image_path}")
+
+            # =========================
+            # NORMAL PROCESSING
+            # =========================
+            if shared_state.status in [1, 2, 3] and len(self.results) > 1:
+
+                self.frame_counter += 1
+
+                if logger.isEnabledFor(logging.DEBUG):
+                    logger.debug(f"Received {frame_counter}...")
+
+                # PAUSE
+                if shared_state.status == 2:
+                    img = self.rendering.display_counter(
+                        img,
+                        shared_state.counter_to_right,
+                        shared_state,
+                        self.input_type
+                    )
+
+                    if self.input_type == "CAMERA":
+                        img = self.rendering.draw_ui(img, shared_state, self.input_type)
+                        cv2.imshow(self.window_name, cv2.resize(img, (800, 600)))
+                        cv2.waitKey(1)
+
+                    continue
+
+                # Postprocess
+                boxes_pp = self.yolo.post_process(output, origin_h, origin_w)
+
+                detections = []
+
+                if len(boxes_pp) > 0:
+                    boxes_scaled = []
+
+                    for b in boxes_pp[:, :4]:
+                        box = self.tracking.undo_letterbox(
+                            b,
+                            origin_h,
+                            origin_w,
+                            self.yolo.input_h,
+                            self.yolo.input_w
+                        )
+                        boxes_scaled.append(box)
+
+                    boxes_scaled = np.array(boxes_scaled)
+
+                    detections = Detections(
+                        xyxy=boxes_scaled,
+                        confidence=boxes_pp[:, 4],
+                        class_id=boxes_pp[:, 5].astype(int)
+                    )
+                else:
+                    detections = Detections(
+                        xyxy=np.empty((0, 4)),
+                        confidence=np.empty((0,)),
+                        class_id=np.empty((0,))
+                    )
+
+                tracked = self.sort_tracker.update(detections)
+
+                result_boxes = tracked.xyxy
+                result_trackid = tracked.tracker_id
+                result_classid = tracked.class_id
+                result_scores = tracked.confidence
+
+                valid_indices = result_trackid != -1
+
+                result_boxes = result_boxes[valid_indices]
+                result_trackid = result_trackid[valid_indices]
+                result_classid = result_classid[valid_indices]
+                result_scores = result_scores[valid_indices]
+
+                # Init video writer
+                if not shared_state.recording and self.video_writer is None and (shared_state.status==1 or (shared_state.status==3 and 0 in result_classid)):
+                    shared_state.recording = True
+                    output_path = os.path.join(settings.OUTPUT_VIDEO_PATH, f"counting-{time.strftime('%Y%m%d-%H%M%S')}.mp4")
+                    os.makedirs(settings.OUTPUT_VIDEO_PATH, exist_ok=True)
+                    self.filename = output_path
+                    logger.info("Record started: " + self.filename)
+
+                    self.video_writer = cv2.VideoWriter(
+                        self.filename,
+                        cv2.VideoWriter_fourcc(*'mp4v'),
+                        30,
+                        (640, 480)
+                    )
+
+                if 0 in result_classid:
+                    shared_state.delay_reinit = datetime.datetime.now()
+
+                # ✅ COUNT FIX
+                shared_state.counter_to_right = self.counting.count(
+                    image_raw=img,
+                    result_boxes=result_boxes,
+                    result_trackid=result_trackid,
+                    result_classid=result_classid,
+                    result_scores=result_scores,
+                    counter_to_right=shared_state.counter_to_right
+                )
+
+                # Draw
+                self.tracking.draw_counter(
+                    image=img,
+                    result_boxes=result_boxes,
+                    result_scores=result_scores,
+                    result_classid=result_classid,
+                    result_trackid=result_trackid,
+                    frame_counter=frame_counter
+                )
+
+                img = self.rendering.display_counter(
+                    img,
+                    shared_state.counter_to_right,
+                    shared_state,
+                    self.input_type
+                )
+
+                # Write video
+                if shared_state.status in [1,3] and shared_state.recording and self.video_writer is not None:
+                    self.video_writer.write(img)
+
+            else:
+                img = self.rendering.display_counter(
+                    img,
+                    shared_state.counter_to_right,
+                    shared_state,
+                    self.input_type
+                )
+
+            # Display
+            if self.input_type == "CAMERA":
+                img = cv2.resize(img, (800, 600))
+                img = self.rendering.draw_ui(img, shared_state, self.input_type)
+                cv2.imshow(self.window_name, img)
+
+                if cv2.waitKey(1) & 0xFF == ord('q'):
+                    break
+
+            self.frame_queue.task_done()
+
+def start(input_source, video_path):
+    """
+    Start the pig counting application.
+    
+    Args:
+        input_source (str): Input source (CAMERA or FILE).
+        video_path (str): Path to video file.
+    """
+    logger.info("Started!")
+    
+    if shared_state.recording:
+        return "Counting already started\nStop It if you want to start again."
+    
+    try:
+        shared_state.recording = False
+        
+        if shared_state.infer_thread is None or (shared_state.infer_thread and not shared_state.infer_thread.is_alive()):
+            engine_file_path = "./model/my_model.engine"
+            
+            yolo = Inference(engine_file_path)
+            
+            byte_tracker = ByteTrackTracker()            
+
+            tracking = Tracking(draw_box=shared_state.draw_tracking, shared_state=shared_state)
+            counting = Counting(shared_state=shared_state, pig_confidence_threshold=settings.PIG_CONFIDENCE_THRESHOLD)
+            rendering = Rendering(draw_box=shared_state.draw_tracking)
+            
+            max_queue_size = 3
+            shared_state.frame_queue = Queue(maxsize=max_queue_size)
+            
+            shared_state.infer_thread = InferThread(frame_queue=shared_state.frame_queue, max_queue_size=max_queue_size, yolo=yolo, video_path=video_path, input_type=input_source)
+            shared_state.display_thread = DisplayThread(frame_queue=shared_state.frame_queue, yolo=yolo, sort_tracker=byte_tracker, tracking=tracking, counting=counting, rendering=rendering, input_type=input_source)
+            
+            shared_state.infer_thread.start()
+            shared_state.display_thread.start()
+    except Exception as e:
+        if logger.isEnabledFor(logging.ERROR):
+            if logger.isEnabledFor(logging.ERROR):
+                logger.error(f"Exception: {repr(e)}")
+            raise
+
+
+if __name__ == "__main__":
+    # Load settings
+    settings = Settings()
+    
+    # Initialize input source and video path from settings
+    input_source = settings.INPUT_SOURCE
+    video = settings.VIDEO_PATH
+    
+    logger.info(f"All ARGs: {str(sys.argv[1:])}")
+    logger.info(cv2.getBuildInformation())
+    
+    try:
+        parser = ArgumentParser()
+        
+        parser.add_argument('-m', '--input',
+                            action='store',
+                            required=False,
+                            choices=['CAMERA', 'FILE'],
+                            help="Mode input [CAMERA, FILE]")
+        
+        parser.add_argument('-f', '--file',
+                            action='store',
+                            required=False,
+                            help="Complete path to video")
+        
+        parser.add_argument('-d', '--drawtracking',
+                            action='store',
+                            required=False,
+                            help="Draw box")
+        
+        args = parser.parse_args()
+        if args.input:
+            input_source = args.input
+            if input_source == "FILE":
+                if args.file:
+                    video = args.file
+                    shared_state.status = 1
+                else:
+                    raise Exception('Please, fill file video path')
+        if args.drawtracking:
+            shared_state.draw_tracking = args.drawtracking.lower() == "true"
+        
+        start(input_source, video)
+        logger.info("Inference Started")
+    except Exception as e:
+        logger.error(f"Exception: {repr(e)}")
+        raise

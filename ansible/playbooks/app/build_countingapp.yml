@@ -1,0 +1,39 @@
+---
+- name: Set build variables from environment
+  set_fact:
+    app_path: "{{ lookup('env', 'APP_PATH') | default('/data/orin/git/animal-counting/app', true) }}"
+    image_name: "{{ lookup('env', 'IMAGE_NAME') | default('countingapp', true) }}"
+    image_tag: "{{ lookup('env', 'IMAGE_TAG') | default('local', true) }}"
+  tags: build
+
+- name: Create application directory on Jetson
+  file:
+    path: "{{ app_path }}"
+    state: directory
+    mode: '0775'
+    owner: "{{ ansible_user }}"
+    group: "{{ ansible_user }}"
+  become: yes
+  tags: build
+
+- name: Copy application files to Jetson
+  command: >
+    rsync -avz --delete --no-owner --no-group --exclude='__pycache__' --exclude='*.pyc' --exclude='*.engine'
+    -e "sshpass -e ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
+    ../../../app/
+    {{ ansible_user }}@{{ ansible_host }}:{{ app_path }}
+  environment:
+    SSHPASS: "{{ ansible_become_password }}"
+  delegate_to: localhost
+  become: false
+  tags: build
+
+- name: Build Docker image
+  shell: |
+    cd {{ app_path }} && 
+    docker buildx build -t {{ image_name }}:{{ image_tag }} .
+  tags: build2
+#    docker buildx build --no-cache -t {{ image_name }}:{{ image_tag }} .
+
+
+

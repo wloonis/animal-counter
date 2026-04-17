@@ -1,0 +1,9 @@
+---
+all:
+  hosts:
+    jetson-01:
+      ansible_host: "{{ lookup('env', 'JETSON_IP') }}"
+      ansible_user: "{{ lookup('env', 'JETSON_USER') | default('nano-counter') }}"
+      ansible_become_password: "{{ lookup('env', 'JETSON_PASSWORD') | trim }}"
+      ansible_ssh_pass: "{{ lookup('env', 'JETSON_PASSWORD') | default(omit) }}"
+      ansible_ssh_common_args: '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'

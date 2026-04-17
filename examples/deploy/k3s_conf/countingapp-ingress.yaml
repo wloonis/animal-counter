@@ -1,0 +1,14 @@
+kind: IngressRoute
+metadata:
+  name: countingapp-ingressroute
+  namespace: countingapp-dev
+spec:
+  entryPoints:
+    - web
+  routes:
+    - kind: Rule
+      match: Host(`*`)
+      services:
+        - kind: Service
+          name: countingapp
+          port: 30501

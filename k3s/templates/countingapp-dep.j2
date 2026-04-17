@@ -1,0 +1,72 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: "{{ app_name }}"
+  namespace: "{{ app_namespace }}"
+spec:
+  selector:
+    matchLabels:
+      app: "{{ app_name }}"
+
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+
+  template:
+    metadata:
+      labels:
+        app: "{{ app_name }}"
+    spec:
+      terminationGracePeriodSeconds: 0
+      containers:
+      - name: "{{ app_name }}"
+        image: "{{ app_name }}:{{ app_version }}"
+        imagePullPolicy: Never
+        env:
+        - name: DISPLAY
+          value: ":0"
+        ports:
+        - name: web
+          containerPort: {{ app_port }}
+        volumeMounts:
+        - name: dev-video0
+          mountPath: /dev/video0
+        - name: dev-app
+          mountPath: /app
+        - name: filebrowser
+          mountPath: /files
+        - name: dev-x11
+          mountPath: /tmp/.X11-unix
+        - name: docker-sock
+          mountPath: /var/run/docker.sock
+        securityContext:
+          privileged: true
+        # Request GPU resource
+        resources:
+          requests:
+            cpu: "500m"
+            memory: "2Gi"
+            nvidia.com/gpu: 1
+          limits:
+            cpu: "2"
+            memory: "4Gi"
+            nvidia.com/gpu: 1
+      volumes:
+      - name: dev-app
+        hostPath:
+          path: "{{ app_path }}"
+          type: Directory
+      - name: dev-video0
+        hostPath:
+          path: "{{ video_device }}"
+      - name: filebrowser
+        hostPath:
+          path: "{{ files_path }}"
+          type: Directory
+      - name: dev-x11
+        hostPath:
+          path: /tmp/.X11-unix
+      - name: docker-sock
+        hostPath:
+          path: /var/run/docker.sock

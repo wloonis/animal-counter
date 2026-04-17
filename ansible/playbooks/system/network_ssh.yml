@@ -1,0 +1,81 @@
+---
+- name: Wait for apt lock to be released
+  shell: |
+    while sudo fuser /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock >/dev/null 2>&1; do
+      echo "Waiting for other apt process to finish..."
+      sleep 5
+    done
+  register: apt_wait
+  until: apt_wait.rc == 0
+  retries: 12
+  delay: 5
+  changed_when: false
+  tags: packages
+
+- name: Install base packages
+  apt:
+    name:
+      - sudo
+      - openssh-server
+      - curl
+      - wget
+      - vim
+      - tmux
+      - nano
+      - htop
+      - net-tools
+      - dnsmasq
+    state: present
+    update_cache: yes
+  tags: packages
+
+- name: Set SSH user from environment
+  set_fact:
+    ssh_user: "{{ lookup('env', 'JETSON_USER') | default('nano-counter', true) }}"
+  tags: ssh_config
+
+- name: Configure SSH daemon
+  lineinfile:
+    path: /etc/ssh/sshd_config
+    regexp: "^#?{{ item.key }}"
+    line: "{{ item.key }} {{ item.value }}"
+    state: present
+    backup: yes
+  loop:
+    - { key: "PermitRootLogin", value: "no" }
+    - { key: "PasswordAuthentication", value: "yes" }
+    - { key: "PubkeyAuthentication", value: "yes" }
+    - { key: "AuthorizedKeysFile", value: ".ssh/authorized_keys" }
+  tags: ssh_config
+
+- name: Create SSH directory for user
+  file:
+    path: "/home/{{ ssh_user }}/.ssh"
+    state: directory
+    owner: "{{ ssh_user }}"
+    group: "{{ ssh_user }}"
+    mode: "0700"
+  tags: ssh_keys
+
+- name: Add authorized keys
+  copy:
+    dest: "/home/{{ ssh_user }}/.ssh/authorized_keys"
+    content: "{{ lookup('file', '~/.ssh/id_rsa.pub') }}"
+    owner: "{{ ssh_user }}"
+    group: "{{ ssh_user }}"
+    mode: "0600"
+  ignore_errors: yes
+  tags: ssh_keys
+
+- name: Enable SSH service
+  systemd:
+    name: ssh
+    enabled: yes
+    state: started
+  tags: ssh_service
+
+- name: Restart SSH service
+  systemd:
+    name: ssh
+    state: restarted
+  tags: ssh_service

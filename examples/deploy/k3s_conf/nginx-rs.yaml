@@ -1,0 +1,23 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: reverse-proxy-depl
+  namespace: countingapp-dev
+spec:
+  selector:
+    matchLabels:
+      app: reverse-proxy-depl
+  template:
+    metadata:
+      labels:
+        app: reverse-proxy-depl
+    spec:
+      containers:
+      - name: reverse-proxy-depl
+        image: nginx:local
+        resources:
+          limits:
+            memory: "128Mi"
+            cpu: "200m"
+        ports:
+        - containerPort: 80

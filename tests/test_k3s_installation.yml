@@ -1,0 +1,52 @@
+---
+- name: Test k3s Installation Playbook
+  hosts: localhost
+  gather_facts: no
+  
+  tasks:
+    - name: Test k3s installation playbook syntax
+      command: ansible-playbook --syntax-check ansible/playbooks/install_k3s.yml
+      register: syntax_check
+      changed_when: false
+      ignore_errors: yes
+
+    - name: Display syntax check result
+      debug:
+        var: syntax_check
+
+    - name: Verify k3s installation playbook exists
+      stat:
+        path: ansible/playbooks/install_k3s.yml
+      register: playbook_stat
+
+    - name: Assert playbook exists
+      assert:
+        that:
+          - playbook_stat.stat.exists
+        msg: "k3s installation playbook does not exist"
+
+    - name: Verify required tasks in playbook
+      shell: >
+        grep -c "Download k3s installation script" ansible/playbooks/install_k3s.yml || 
+        grep -c "Install k3s" ansible/playbooks/install_k3s.yml || 
+        grep -c "Verify k3s node status" ansible/playbooks/install_k3s.yml
+      register: task_count
+      changed_when: false
+
+    - name: Assert required tasks exist
+      assert:
+        that:
+          - task_count.stdout | int > 0
+        msg: "Required k3s installation tasks not found in playbook"
+
+    - name: Verify k3s configuration variables
+      shell: >
+        grep -c "k3s_config" ansible/group_vars/all.yml
+      register: config_count
+      changed_when: false
+
+    - name: Assert k3s configuration exists
+      assert:
+        that:
+          - config_count.stdout | int > 0
+        msg: "k3s configuration not found in group_vars/all.yml"

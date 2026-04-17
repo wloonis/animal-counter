@@ -1,0 +1,15 @@
+---
+- name: Build and deploy countingapp
+  hosts: all
+  become: true
+  gather_facts: yes
+
+  tasks:
+    - name: Import build playbook
+      import_tasks: build_countingapp.yml
+      tags: build
+
+    - name: Import legacy deployment playbook
+      import_tasks: deploy_countingapp.yml
+      tags: deploy
+      when: use_legacy_deployment | default(true) | bool

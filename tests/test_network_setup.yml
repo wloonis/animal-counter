@@ -1,0 +1,40 @@
+---
+- name: Test Network Setup Playbook
+  hosts: localhost
+  gather_facts: no
+  
+  tasks:
+    - name: Test network setup playbook syntax
+      command: ansible-playbook --syntax-check ansible/playbooks/network_setup.yml
+      register: syntax_check
+      changed_when: false
+      ignore_errors: yes
+
+    - name: Display syntax check result
+      debug:
+        var: syntax_check
+
+    - name: Verify network setup playbook exists
+      stat:
+        path: ansible/playbooks/network_setup.yml
+      register: playbook_stat
+
+    - name: Assert playbook exists
+      assert:
+        that:
+          - playbook_stat.stat.exists
+        msg: "Network setup playbook does not exist"
+
+    - name: Verify required tasks in playbook
+      shell: >
+        grep -c "Install NetworkManager" ansible/playbooks/network_setup.yml || 
+        grep -c "Create WiFi hotspot" ansible/playbooks/network_setup.yml || 
+        grep -c "Configure Ethernet" ansible/playbooks/network_setup.yml
+      register: task_count
+      changed_when: false
+
+    - name: Assert required tasks exist
+      assert:
+        that:
+          - task_count.stdout | int > 0
+        msg: "Required network setup tasks not found in playbook"

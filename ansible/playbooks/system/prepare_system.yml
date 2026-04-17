@@ -1,0 +1,112 @@
+---
+- name: Prepare Jetson system (up to K3s installation)
+  hosts: all
+  become: true
+  gather_facts: yes
+
+  tasks:
+    - name: Display bootstrap start message
+      debug:
+        msg: "Starting Jetson system preparation..."
+      tags: info
+
+    - name: Afficher JETSON_IP
+      debug:
+        msg: "{{ lookup('env','JETSON_IP') }}"
+
+    - name: Create m/ount directory
+      file:
+        path: /data
+        state: directory
+        mode: '0755'
+
+    - name: Mount external disk
+      mount:
+        path: /data
+        src: UUID=e50fe815-5682-43e9-aaa5-ff74cd367e34
+        fstype: ext4
+        opts: defaults,nofail
+        state: mounted
+
+    - name: Replace repo version with r36.5
+      replace:
+        path: /etc/apt/sources.list.d/nvidia-l4t-apt-source.list
+        regexp: 'r[0-9]+\.[0-9]+'
+        replace: 'r36.5'
+
+    - name: Update APT package cache
+      apt:
+        update_cache: yes
+      ignore_errors: yes
+      tags: system_update
+
+    - name: Dist upgrade
+      apt:
+        upgrade: dist
+
+    # - name: Reboot if needed
+    #   reboot:
+    #     msg: "Reboot after NVIDIA L4T upgrade"
+    #     reboot_timeout: 600
+
+    - name: Ensure Docker service is running
+      service:
+        name: docker
+        state: started
+        enabled: yes
+      become: yes
+
+    - name: Import SSH configuration playbook
+      import_tasks: network_ssh.yml
+      tags: ssh
+
+    - name: Import network setup playbook
+      import_tasks: network_setup.yml
+      tags: network
+
+    - name: Import LXDE installation playbook
+      import_tasks: install_lxde.yml
+      tags: lxde
+
+    - name: Optimize Jetson system
+      block:
+        - name: Disable unnecessary services
+          systemd:
+            name: "{{ item }}"
+            enabled: no
+            state: stopped
+          loop:
+            - bluetooth
+            - avahi-daemon
+            - ModemManager
+            - packagekit
+            - kerneloops
+          tags: optimize
+
+        - name: Disable snapd completely
+          systemd:
+            name: "{{ item }}"
+            enabled: no
+            state: stopped
+          loop:
+            - snapd
+            - snapd.socket
+          tags: optimize
+
+        - name: Set Jetson to MAXN mode (Super Orin)
+          command: sudo nvpmodel -m 2
+          tags: optimize
+
+        - name: Enable maximum CPU/GPU clocks
+          command: sudo jetson_clocks
+          tags: optimize
+
+    - name: Import k3s installation playbook (Jetson optimized)
+      import_tasks: install_k3s_with_docker_tasks.yml
+      tags: k3s
+
+    - name: Display system preparation completion message
+      debug:
+        msg: "Jetson system preparation completed successfully!"
+      tags: info
+

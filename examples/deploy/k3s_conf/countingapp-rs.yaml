@@ -1,0 +1,58 @@
+apiVersion: apps/v1
+kind: Deployment
+#kind: ReplicaSet
+metadata:
+  name: countingapp
+  namespace: countingapp-dev
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: countingapp
+  template:
+    metadata:
+      labels:
+        app: countingapp
+    spec:
+      containers:
+      - name: countingapp
+        image: countingapp:local
+        env:
+        - name: DISPLAY
+#          value: ":0"
+          value: ${DISPLAY}
+        - name: INPUT
+          value: ${INPUT}
+        - name: FILE
+          value: ${FILE}
+        - name: DRAWTRACKING
+          value: ${DRAWTRACKING}
+        ports:
+        - name: web
+          containerPort: 31501
+        volumeMounts:
+        - name: dev-video0
+          mountPath: /dev/video0
+        - name: dev-app
+          mountPath: /app
+        - name: filebrowser
+          mountPath: /files
+        - name: dev-x11
+          mountPath: /tmp/.X11-unix
+        securityContext:
+          privileged: true
+      volumes:
+      - name: dev-app
+        hostPath:
+          path: /data/orin/git/animal-counting/app
+          type: Directory     
+      - name: dev-video0
+        hostPath:
+          path: /dev/video0
+      - name: filebrowser
+        hostPath:
+          path: /data/orin/files
+          type: Directory     
+      - name: dev-x11
+        hostPath:
+          path: /tmp/.X11-unix

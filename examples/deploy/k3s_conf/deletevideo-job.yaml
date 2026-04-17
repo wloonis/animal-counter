@@ -1,0 +1,32 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: rollingvideofile
+  namespace: countingapp-dev
+spec:
+  schedule: "0 * * * *"
+  successfulJobsHistoryLimit: 0
+  failedJobsHistoryLimit: 0
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+          - name: rollingvideofile
+            image: busybox:1.28
+            imagePullPolicy: IfNotPresent
+            command:
+            - /bin/sh
+            - -c
+            - |
+              cd /data
+              ls -t | awk 'NR>50' | xargs rm -f
+            volumeMounts:
+            - name: filebrowser
+              mountPath: /data
+          restartPolicy: OnFailure
+          volumes:
+          - name: filebrowser
+            hostPath:
+              path: /data/orin/files
+              type: Directory     

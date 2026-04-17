@@ -1,0 +1,18 @@
+apiVersion: helm.cattle.io/v1
+kind: HelmChartConfig
+metadata:
+  name: traefik
+  namespace: kube-system
+spec:
+  valuesContent: |-
+    ports:
+      countingapp:
+        port: 30501
+        expose: true
+        exposedPort: 30501
+        protocol: TCP
+      filebrowser:
+        port: 30500
+        expose: true
+        exposedPort: 30500
+        protocol: TCP
