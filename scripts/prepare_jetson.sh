@@ -105,10 +105,29 @@ if ansible-playbook -i ansible/inventory/jetsons.yml ansible/playbooks/app/deplo
     echo "3. Access Jetson via SSH: ssh $JETSON_USER@$JETSON_ETH_IP"
     echo "4. Access countingapp: http://$JETSON_IP:31501"
     echo ""
-    exit 0
 else
     echo ""
     echo "❌ Error: Application deployment failed"
     echo "Check the logs above for details"
     exit 1
 fi
+
+#Step 5: Run Ansible HotSpot Setup (commented for now)
+echo ""
+echo "Step 3: Running Ansible HotSpot Setup..."
+echo "This may take several minutes depending on network speed and Jetson performance..."
+
+# Run Ansible playbook for system preparation
+if ansible-playbook -i ansible/inventory/jetsons.yml ansible/playbooks/system/hotspot_setup.yml; then
+    echo ""
+    echo "✅ HotSpot Setup completed successfully!"
+    echo ""
+else
+    echo ""
+    echo "❌ Error: HotSpot Setup failed"
+    echo "Check the logs above for details"
+    exit 1
+fi
+
+
+exit 0

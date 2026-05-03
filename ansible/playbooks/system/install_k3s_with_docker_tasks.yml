@@ -1,10 +1,28 @@
 ---
+- name: Set docker and k3s variables from environment
+  set_fact:
+    docker_path: "{{ lookup('env', 'DOCKER_PATH') | default('/data/orin/docker', true) }}"
+    ethernet:
+      ip: "{{ lookup('env', 'JETSON_ETH_IP') | default('192.168.50.10/24', true) }}"
+      gateway: "{{ lookup('env', 'JETSON_ETH_GATEWAY') | default('192.168.50.1', true) }}"
+      dns: "{{ lookup('env', 'JETSON_ETH_DNS') | default('192.168.50.1', true) }}"
+      interface: "{{ lookup('env', 'JETSON_ETH_INTERFACE') | default('enP8p1s0', true) }}"
+      name: "{{ lookup('env', 'JETSON_ETH_NAME') | default('JetsonEthernet', true) }}"
+  tags: always
+
+- name: Créer le dossier K3s
+  file:
+    path: "{{ docker_path}}"
+    state: directory
+    mode: '0755'
+  become: yes
+
 - name: Configure Docker daemon for external storage
   copy:
     dest: /etc/docker/daemon.json
     content: |
       {
-        "data-root": "/data/orin/docker",
+        "data-root": "{{ docker_path}}",
         "log-driver": "json-file",
         "log-opts": {
           "max-size": "100m",
@@ -15,6 +33,34 @@
     group: root
     mode: '0644'
   tags: docker
+
+# --------------------------------------------------
+# 4. Override systemd pour Docker
+# --------------------------------------------------
+- name: Create docker systemd override directory
+  file:
+    path: /etc/systemd/system/docker.service.d
+    state: directory
+    mode: '0755'
+
+- name: Ensure Docker waits for mounted disk
+  copy:
+    dest: /etc/systemd/system/docker.service.d/override.conf
+    content: |
+      [Unit]
+      RequiresMountsFor=/data
+      After=network-online.target
+      Wants=network-online.target
+
+# --------------------------------------------------
+# 5. Activer Docker au boot
+# --------------------------------------------------
+- name: Ensure Docker is enabled
+  service:
+    name: docker
+    enabled: true
+    state: started
+
 
 - name: Configure NVIDIA runtime for Docker
   command: nvidia-ctk runtime configure --runtime=docker --set-as-default
@@ -27,10 +73,10 @@
     line: '\1 cgroup_enable=cpuset cgroup_memory=1 cgroup_enable=memory'
     backrefs: yes
 
-# - name: Reboot si nécessaire
-#   reboot:
-#     msg: "Reboot après modification"
-#     reboot_timeout: 600
+- name: Reboot si nécessaire
+  reboot:
+    msg: "Reboot après modification"
+    reboot_timeout: 600
 
 - name: Vérifier que la machine est revenue
   command: uptime
@@ -39,6 +85,68 @@
   command: swapoff -a
   when: ansible_facts['swaptotal_mb'] > 0
   tags: prepare
+
+# Il faut absolument une IP réseau pour que K3s puisse fonctionner
+- name: Check if connection exists
+  command: nmcli -t -f NAME connection show
+  register: nmcli_connections
+  changed_when: false
+
+- name: Create ethernet connection if not exists
+  command: >
+    nmcli connection add
+    type ethernet
+    ifname {{ ethernet.interface }}
+    con-name {{ ethernet.name }}
+    autoconnect yes
+  when: ethernet.name not in nmcli_connections.stdout
+
+- name: Configure ethernet static IP
+  command: >
+    nmcli connection modify {{ ethernet.name }}
+    ipv4.method manual
+    ipv4.addresses {{ ethernet.ip }}
+    ipv4.gateway {{ ethernet.gateway }}
+    ipv4.dns "{{ ethernet.dns }}"
+    ipv6.method ignore
+    connection.autoconnect-priority 999
+
+- name: Create systemd service file
+  copy:
+    dest: /etc/systemd/system/jetson-eth.service
+    content: |
+      [Unit]
+      Description=Force Ethernet connection up
+      After=NetworkManager.service network-online.target
+      Wants=network-online.target
+
+      [Service]
+      Type=oneshot
+      ExecStart=/usr/bin/nmcli connection up {{ ethernet.name }}
+      RemainAfterExit=yes
+
+      [Install]
+      WantedBy=multi-user.target
+
+- name: Create systemd override directory for k3s
+  file:
+    path: /etc/systemd/system/k3s.service.d
+    state: directory
+
+- name: Configure k3s to wait for network and ethernet
+  copy:
+    dest: /etc/systemd/system/k3s.service.d/override.conf
+    content: |
+      [Unit]
+      After=network-online.target jetson-eth.service
+      Wants=network-online.target
+      Requires=jetson-eth.service          
+
+- name: Reload systemd
+  command: systemctl daemon-reexec
+
+- name: Enable service
+  command: systemctl enable jetson-eth.service
 
 - name: Créer le dossier K3s
   file:
@@ -54,9 +162,14 @@
     content: |
       # K3s server configuration for NVIDIA Jetson
       token: "JetsonClusterToken"
-      tls-san:
-        - $(hostname -I | awk '{print $1}')
-        - $(hostname)
+      
+      node-ip: {{ ethernet.ip.split('/')[0] }}
+      advertise-address: {{ ethernet.ip.split('/')[0] }}
+      flannel-iface: {{ ethernet.interface }}
+
+      #tls-san:
+      #  - $(hostname -I | awk '{print $1}')
+      #  - $(hostname)
 
       # Kubelet configuration for Jetson
       kubelet-arg:
@@ -70,6 +183,21 @@
         - "device-type=jetson"
         - "accelerator=nvidia-gpu"
         - "nvidia.com/gpu=true"
+
+# Docker doit absolument être lancé avant k3s
+- name: Create systemd override directory for k3s
+  file:
+    path: /etc/systemd/system/k3s.service.d
+    state: directory
+    mode: '0755'
+
+- name: Add override to make k3s depend on Docker
+  copy:
+    dest: /etc/systemd/system/k3s.service.d/override.conf
+    content: |
+      [Unit]
+      After=docker.service
+      Requires=docker.service
 
 - name: Install K3s
   shell: |
@@ -88,26 +216,26 @@
   until: result.rc == 0
   tags: k3s
 
-- name: Create .kube directory
-  file:
-    path: "/home/nano-counter/.kube"
-    state: directory
-    owner: "nano-counter"
-    group: "nano-counter"
-    mode: '0755'
-  tags: kubectl
+# - name: Create .kube directory
+#   file:
+#     path: "/home/nano-counter/.kube"
+#     state: directory
+#     owner: "nano-counter"
+#     group: "nano-counter"
+#     mode: '0755'
+#   tags: kubectl
 
-- name: Copier le kubeconfig K3s
-  copy:
-    src: /etc/rancher/k3s/k3s.yaml
-    dest: "/home/nano-counter/.kube/config"
-    remote_src: yes
-    owner: "nano-counter"
-    group: "nano-counter"
-    mode: '0600'
-  become: yes
+# - name: Copier le kubeconfig K3s
+#   copy:
+#     src: /etc/rancher/k3s/k3s.yaml
+#     dest: "/home/nano-counter/.kube/config"
+#     remote_src: yes
+#     owner: "nano-counter"
+#     group: "nano-counter"
+#     mode: '0600'
+#   become: yes
 
-# -------------------------
+# --------------/-----------
 # INSTALL NVIDIA DEVICE PLUGIN
 # -------------------------
 
@@ -124,11 +252,11 @@
     state: touch
   tags: nvidia
 
-- name: Fix kubeconfig for local access
-  replace:
-    path: "/home/nano-counter/.kube/config"
-    regexp: "https://127.0.0.1:6443"
-    replace: "https://{{ ansible_host }}:6443"
-  tags: kubectl
+# - name: Fix kubeconfig for local access
+#   replace:
+#     path: "/home/nano-counter/.kube/config"
+#     regexp: "https://127.0.0.1:6443"
+#     replace: "https://{{ ansible_host }}:6443"
+#   tags: kubectl
 
   

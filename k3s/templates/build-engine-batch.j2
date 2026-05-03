@@ -1,0 +1,41 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: "build-engine"
+  namespace: "{{ app_namespace }}"
+spec:
+  backoffLimit: 1
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+      - name: "build-engine"
+        image: "{{ app_name }}:{{ app_version }}"
+        image: "countingapp:local"
+        args: ["build-engine"]
+        imagePullPolicy: Never
+        volumeMounts:
+        - name: dev-app
+          mountPath: /app
+        - name: docker-sock
+          mountPath: /var/run/docker.sock
+        securityContext:
+          privileged: true
+        # Request GPU resource
+        resources:
+          requests:
+            cpu: "500m"
+            memory: "2Gi"
+            nvidia.com/gpu: 1
+          limits:
+            cpu: "2"
+            memory: "4Gi"
+            nvidia.com/gpu: 1
+      volumes:
+      - name: dev-app
+        hostPath:
+          path: "{{ app_path }}"
+          type: Directory
+      - name: docker-sock
+        hostPath:
+          path: /var/run/docker.sock

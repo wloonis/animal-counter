@@ -24,7 +24,8 @@ from ui.rendering import Rendering
 from utils.frame_source import FrameSource
 from utils.shared_state import SharedState
 from utils.timer_fps import TimerFps
-from trackers import ByteTrackTracker
+# Avec ByteTrackTracker, on perd le tracking avec un switch d'ID. Problèmatique pour le comptage
+from trackers import OCSORTTracker
 from supervision import Detections
 
 
@@ -163,6 +164,13 @@ class DisplayThread(threading.Thread):
         if event == cv2.EVENT_LBUTTONUP:
             self.rendering.handle_click(x, y, shared_state)
             
+    def has_class0_high_score(self, class_ids, scores, threshold=0.8):
+        thresh = threshold
+        for i in range(len(class_ids)):
+            if class_ids[i] == 0 and scores[i] >= thresh:
+                return True
+        return False
+            
     def run(self):
         """Run the display thread."""
 
@@ -176,7 +184,7 @@ class DisplayThread(threading.Thread):
         sum_t = 0.0
         delay_last_class = 180
 
-        last_capture_time = time.time()  # ✅ FIX IMPORTANT
+        last_capture_time = time.time()
 
         if logger.isEnabledFor(logging.DEBUG):
             logger.debug("DisplayThread started")
@@ -188,38 +196,36 @@ class DisplayThread(threading.Thread):
                 logger.debug(f"Value Recording: {shared_state.recording}; Value Status: {shared_state.status}; Video Writer: {self.video_writer}")
 
             # Stop video writer
-            if self.video_writer is not None and self.video_writer.isOpened() and shared_state.recording and (
-                shared_state.status == 0 or
-                (shared_state.status in [1,3] and (datetime.datetime.now() - shared_state.delay_reinit).total_seconds() > delay_last_class)
-            ):
+            if self.video_writer is not None and self.video_writer.isOpened() and shared_state.recording and ((
+                shared_state.status == 0 or shared_state.learning_mode or shared_state.reset or
+                (shared_state.status in [1,3] and 
+                (datetime.datetime.now() - shared_state.delay_reinit).total_seconds() > shared_state.delay_last_class)
+            )):
                 self.video_writer.release()
                 self.video_writer = None
-                output_path = os.path.join(settings.OUTPUT_VIDEO_PATH, f"counting-{time.strftime('%Y%m%d-%H%M%S')}-#{shared_state.counter_to_right}.mp4")
+                output_path = os.path.join(settings.OUTPUT_VIDEO_PATH, f"tocompress-counting-{time.strftime('%Y%m%d-%H%M%S')}-#{shared_state.counter_to_right}.mp4")
                 os.rename(self.filename, output_path)
                 # En mode manuel on passe en mode Stop automatiquement à la fin de l'enregistrement
                 if shared_state.status == 1:
                     shared_state.status = 0
                 shared_state.recording = False
+                shared_state.reset = False
                 logger.info(f"------->Record Stop; Value Status: {shared_state.status}: Store:{output_path}")
 
             self.results = self.frame_queue.get()
 
-            # ✅ Toujours récupérer img AVANT tout
+            # Toujours récupérer img AVANT tout
             if len(self.results) > 1:
                 img, output, use_time, origin_h, origin_w, frame_counter, r_scale, tx1, ty1 = self.results
             else:
                 img = self.results[0]
 
             # =========================
-            # ✅ LEARNING MODE FIXÉ
+            # LEARNING MODE FIXÉ
             # =========================
             if shared_state.learning_mode and shared_state.status in [1,3]:
 
-                if shared_state.learning_start_time is None:
-                    shared_state.learning_start_time = time.time()
-                    shared_state.image_counter = 0
-
-                elif time.time() - shared_state.learning_start_time > shared_state.max_learning_duration:
+                if time.time() - shared_state.learning_start_time > shared_state.max_learning_duration:
                     shared_state.learning_mode = False
                     shared_state.status = 0
                     shared_state.learning_start_time = None
@@ -257,7 +263,8 @@ class DisplayThread(threading.Thread):
 
                     if self.input_type == "CAMERA":
                         img = self.rendering.draw_ui(img, shared_state, self.input_type)
-                        cv2.imshow(self.window_name, cv2.resize(img, (800, 600)))
+#                        cv2.imshow(self.window_name, cv2.resize(img, (800, 600)))
+                        cv2.imshow(self.window_name, img)
                         cv2.waitKey(1)
 
                     continue
@@ -307,9 +314,16 @@ class DisplayThread(threading.Thread):
                 result_trackid = result_trackid[valid_indices]
                 result_classid = result_classid[valid_indices]
                 result_scores = result_scores[valid_indices]
+                
+                logger.debug("Score: " + str(result_scores) + " TrackID: " + str(result_trackid))
+
 
                 # Init video writer
-                if not shared_state.recording and self.video_writer is None and (shared_state.status==1 or (shared_state.status==3 and 0 in result_classid)):
+                if not shared_state.recording and not shared_state.learning_mode and self.video_writer is None and (
+                        shared_state.status==1 or
+                        (shared_state.status==3 and self.has_class0_high_score(result_classid, result_scores))
+                    ):
+                    
                     shared_state.recording = True
                     output_path = os.path.join(settings.OUTPUT_VIDEO_PATH, f"counting-{time.strftime('%Y%m%d-%H%M%S')}.mp4")
                     os.makedirs(settings.OUTPUT_VIDEO_PATH, exist_ok=True)
@@ -320,13 +334,13 @@ class DisplayThread(threading.Thread):
                         self.filename,
                         cv2.VideoWriter_fourcc(*'mp4v'),
                         30,
-                        (640, 480)
+                        (settings.OUTPUT_WIDTH, settings.OUTPUT_HEIGHT)
                     )
 
                 if 0 in result_classid:
                     shared_state.delay_reinit = datetime.datetime.now()
 
-                # ✅ COUNT FIX
+                # COUNT FIX
                 shared_state.counter_to_right = self.counting.count(
                     image_raw=img,
                     result_boxes=result_boxes,
@@ -367,7 +381,7 @@ class DisplayThread(threading.Thread):
 
             # Display
             if self.input_type == "CAMERA":
-                img = cv2.resize(img, (800, 600))
+                img = cv2.resize(img, (settings.OUTPUT_SCREEN_WIDTH, settings.OUTPUT_SCREEN_HEIGHT))
                 img = self.rendering.draw_ui(img, shared_state, self.input_type)
                 cv2.imshow(self.window_name, img)
 
@@ -397,7 +411,7 @@ def start(input_source, video_path):
             
             yolo = Inference(engine_file_path)
             
-            byte_tracker = ByteTrackTracker()            
+            byte_tracker = OCSORTTracker()            
 
             tracking = Tracking(draw_box=shared_state.draw_tracking, shared_state=shared_state)
             counting = Counting(shared_state=shared_state, pig_confidence_threshold=settings.PIG_CONFIDENCE_THRESHOLD)

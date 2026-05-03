@@ -131,7 +131,6 @@ class Tracking:
 
         return [x1, y1, x2, y2]
 
-    
     def draw_counter(self, image, result_boxes, result_scores, result_classid, result_trackid, frame_counter, categories=['pig']):
         """
         Draw counting results on the image.
@@ -154,11 +153,11 @@ class Tracking:
             color = (0, 255, 0)
             # Draw boundaring box
             if self.shared_state.box_tracking:
-                self.plot_one_box(box, image, color, "{}:{:.2f}".format(categories[int(result_classid[j])], result_scores[j]), line_thickness=1)
+                self.plot_one_box(box, image, color, "{}:{}:{:.2f}".format(categories[int(result_classid[j])], str(track_id), result_scores[j]), line_thickness=1)
             
             # Always display the current centroid (regardless of centroid_tracking)
             center = (c_x, c_y)
-            color = (0, 255, 0)
+            color = (255, 255, 0)
             radius = 1
             cv2.circle(image, center, radius, color, thickness=1)
 
@@ -166,15 +165,17 @@ class Tracking:
                 # historique des positions
                 if track_id not in self.prev_positions:
                     self.prev_positions[track_id] = c_x
-                    continue
+                    # continue
 
                 prev_x = self.prev_positions[track_id]
 
                 # FILTRE ANTI-SAUT
-                if abs(c_x - prev_x) > self.MAX_JUMP:
-                    # ignore cette frame pour cet objet
-                    continue
-
+                # if abs(c_x - prev_x) > self.MAX_JUMP:
+                #     # ignore cette frame pour cet objet
+                #     continue
+                if abs(c_x - prev_x) <= self.MAX_JUMP:
+                    self.prev_positions[track_id] = c_x
+    
                 # update position
                 self.prev_positions[track_id] = c_x
 

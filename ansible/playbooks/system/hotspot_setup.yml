@@ -1,0 +1,68 @@
+- name: Hotspot Setup
+  hosts: all
+  become: true
+  gather_facts: yes
+
+  tasks:
+    - name: Install NetworkManager and nmcli
+      apt:
+        name:
+          - network-manager
+          - network-manager-config-connectivity-ubuntu
+        state: present
+      tags: packages
+
+    - name: Set network variables from environment
+      set_fact:
+        wifi_hotspot:
+          ssid: "{{ lookup('env', 'JETSON_HOTSPOT_SSID') | default('JetsonHotspot', true) }}"
+          password: "{{ lookup('env', 'JETSON_HOTSPOT_PASSWORD') | default('ChangeMe123', true) }}"
+          ip: "{{ lookup('env', 'JETSON_HOTSPOT_IP') | default('10.42.0.10/24', true) }}"
+          interface: "{{ lookup('env', 'JETSON_HOTSPOT_INTERFACE') | default('wlP1p1s0', true) }}"
+          name: "{{ lookup('env', 'JETSON_HOTSPOT_NAME') | default('JetsonHotspot', true) }}"
+      tags: always
+
+    - name: Ensure NetworkManager is running
+      systemd:
+        name: NetworkManager
+        state: started
+        enabled: yes
+      tags: networkmanager
+
+    - name: Enable WiFi radio
+      command: nmcli radio wifi on
+      changed_when: false
+      tags: wifi
+
+    - name: Check if connection exists
+      command: nmcli -t -f NAME connection show
+      register: nmcli_connections
+      changed_when: false
+
+    - name: Create WiFi AP connection if not exists
+      command: >
+        nmcli connection add
+        type wifi
+        ifname {{ wifi_hotspot.interface }}
+        con-name {{ wifi_hotspot.name }}
+        ssid {{ wifi_hotspot.ssid }}
+        autoconnect yes
+      when: wifi_hotspot.name not in nmcli_connections.stdout
+
+    - name: Configure WiFi AP settings
+      command: >
+        nmcli connection modify {{ wifi_hotspot.name }}
+        802-11-wireless.mode ap
+        802-11-wireless.band bg
+        ipv4.method shared
+        wifi-sec.key-mgmt wpa-psk
+        wifi-sec.psk {{ wifi_hotspot.password }}
+        ipv4.addresses {{ wifi_hotspot.ip }}
+        autoconnect yes
+        connection.autoconnect-priority 100
+
+    - name: Reboot
+      reboot:
+        msg: "Reboot after Hotspot"
+        reboot_timeout: 600
+

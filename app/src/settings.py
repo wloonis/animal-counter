@@ -40,6 +40,10 @@ class Settings:
         # Output Resolution
         self.OUTPUT_WIDTH = int(os.getenv("OUTPUT_WIDTH", 640))
         self.OUTPUT_HEIGHT = int(os.getenv("OUTPUT_HEIGHT", 480))
+
+        # Output Resolution
+        self.OUTPUT_SCREEN_WIDTH = int(os.getenv("OUTPUT_SCREEN_WIDTH", 640))
+        self.OUTPUT_SCREEN_HEIGHT = int(os.getenv("OUTPUT_SCREEN_HEIGHT", 480))
         
         # FPS Settings
         self.FPS_OUTPUT = int(os.getenv("FPS_OUTPUT", 30))

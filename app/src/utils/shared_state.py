@@ -35,13 +35,15 @@ class SharedState:
         self.infer_thread = None
         self.display_thread = None
         self.delay_reinit = datetime.datetime.now()
+        self.delay_last_class = 180
         self.trails = {}
         ### MODIFICATION: Learning Mode - Start
         self.learning_mode = False
         self.learning_start_time = None
-        self.max_learning_duration = 600
+        self.max_learning_duration = 1200
         self.image_counter = 0  # Counter for captured images
         ### MODIFICATION: Learning Mode - End
         ### MODIFICATION: Auto Mode - Start
         self.auto_mode = True
+        self.reset = False
         ### MODIFICATION: Learning Mode - End

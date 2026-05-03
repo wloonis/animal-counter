@@ -5,7 +5,10 @@ This module provides a unified interface for frame sources (camera or video file
 """
 
 import cv2
+from settings import Settings
 
+# Load settings
+settings = Settings()
 
 class FrameSource:
     """
@@ -31,8 +34,8 @@ class FrameSource:
         if input_type == "CAMERA":
             self.cap = cv2.VideoCapture(source, cv2.CAP_V4L2)
             self.cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'mp4v'))
-            self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-            self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+            self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, settings.OUTPUT_WIDTH)
+            self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, settings.OUTPUT_HEIGHT)
             self.cap.set(cv2.CAP_PROP_FPS, 30)
             # pipeline = (
             #     "v4l2src device=/dev/video0 ! "

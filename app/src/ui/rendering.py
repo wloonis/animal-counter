@@ -7,6 +7,7 @@ This module handles visualization of tracking and counting results.
 import cv2
 import numpy as np
 import datetime
+import time
 import logging 
 from settings import Settings
 
@@ -75,36 +76,61 @@ class Rendering:
 
         return overlay_premult, inv_alpha, overlay.shape[:2]
     
-    def plot_one_box(self, x, img, color=None, label=None, line_thickness=None):
-        """
-        Plot one bounding box on the image.
+    # def plot_one_box(self, x, img, color=None, label=None, line_thickness=None):
+    #     """
+    #     Plot one bounding box on the image.
         
-        Args:
-            x (list): Bounding box coordinates [x1, y1, x2, y2].
-            img (numpy.ndarray): Image to plot on.
-            color (list, optional): Color for the bounding box. Defaults to random.
-            label (str, optional): Label for the bounding box. Defaults to None.
-            line_thickness (int, optional): Thickness of the bounding box line. Defaults to 1.
-        """
-        tl = line_thickness or 1
-        color = color or [np.random.randint(0, 255) for _ in range(3)]
-        c1, c2 = (int(x[0]), int(x[1])), (int(x[2]), int(x[3]))
-        cv2.rectangle(img, c1, c2, color, thickness=tl, lineType=cv2.LINE_AA)
-        if label:
-            tf = max(tl - 1, 1)
-            t_size = cv2.getTextSize(label, 0, fontScale=tl / 3, thickness=tf)[0]
-            c2 = c1[0] + t_size[0], c1[1] - t_size[1] - 3
-            cv2.rectangle(img, c1, c2, color, -1, cv2.LINE_AA)
-            cv2.putText(
-                img,
-                label,
-                (c1[0], c1[1] - 2),
-                0,
-                tl / 3,
-                [225, 255, 255],
-                thickness=tf,
-                lineType=cv2.LINE_AA,
-            )
+    #     Args:
+    #         x (list): Bounding box coordinates [x1, y1, x2, y2].
+    #         img (numpy.ndarray): Image to plot on.
+    #         color (list, optional): Color for the bounding box. Defaults to random.
+    #         label (str, optional): Label for the bounding box. Defaults to None.
+    #         line_thickness (int, optional): Thickness of the bounding box line. Defaults to 1.
+    #     """
+    #     tl = line_thickness or 1
+    #     color = color or [np.random.randint(0, 255) for _ in range(3)]
+    #     c1, c2 = (int(x[0]), int(x[1])), (int(x[2]), int(x[3]))
+    #     cv2.rectangle(img, c1, c2, color, thickness=tl, lineType=cv2.LINE_AA)
+    #     if label:
+    #         tf = max(tl - 1, 1)
+    #         t_size = cv2.getTextSize(label, 0, fontScale=tl / 3, thickness=tf)[0]
+    #         c2 = c1[0] + t_size[0], c1[1] - t_size[1] - 3
+    #         cv2.rectangle(img, c1, c2, color, -1, cv2.LINE_AA)
+    #         cv2.putText(
+    #             img,
+    #             label,
+    #             (c1[0], c1[1] - 2),
+    #             0,
+    #             tl / 3,
+    #             [225, 255, 255],
+    #             thickness=tf,
+    #             lineType=cv2.LINE_AA,
+    #         )
+
+    def _draw_button(self, img, btn, inv, x, y, target_width, button_name=None, is_sprite=False):
+        """Helper method to draw a button with consistent scaling and overlay."""
+        if btn is not None:
+            h_btn, w_btn = btn.shape[:2]
+            scale = target_width / w_btn
+            new_w = int(w_btn * scale)
+            new_h = int(h_btn * scale)
+
+            btn_resized = cv2.resize(btn, (new_w, new_h))
+            inv_resized = cv2.resize(inv, (new_w, new_h))
+
+            if len(inv_resized.shape) == 2:
+                inv_resized = inv_resized[:, :, None]
+
+            self.overlay_alpha(img, btn_resized, inv_resized, x, y)
+
+            if is_sprite:
+                # Special handling for play/pause/stop sprite (3 buttons in one)
+                third = new_w // 3
+                self.buttons["play"] = (x, y, x + third, y + new_h)
+                self.buttons["pause"] = (x + third, y, x + 2 * third, y + new_h)
+                self.buttons["stop"] = (x + 2 * third, y, x + new_w, y + new_h)
+            elif button_name:
+                self.buttons[button_name] = (x, y, x + new_w, y + new_h)
     
     def draw_ui(self, img, shared_state, input_type):
         if input_type != "CAMERA":
@@ -117,7 +143,6 @@ class Rendering:
         # ===== CONFIG =====
         margin_x = int(0.03 * w)
         margin_y = int(0.05 * h)
-
         base_width = int(0.25 * w)  # largeur du sprite (important)
 
         # =========================
@@ -137,27 +162,7 @@ class Rendering:
             inv = self.play_2_inv
 
         if btn is not None:
-            h_btn, w_btn = btn.shape[:2]
-
-            scale = base_width / w_btn
-            new_w = int(w_btn * scale)
-            new_h = int(h_btn * scale)
-
-            btn_resized = cv2.resize(btn, (new_w, new_h))
-            inv_resized = cv2.resize(inv, (new_w, new_h))
-
-            # garder le canal alpha
-            if len(inv_resized.shape) == 2:
-                inv_resized = inv_resized[:, :, None]
-
-            self.overlay_alpha(img, btn_resized, inv_resized, x, y)
-
-            # découpage zones (3 boutons dans le sprite)
-            third = new_w // 3
-
-            self.buttons["play"] = (x, y, x + third, y + new_h)
-            self.buttons["pause"] = (x + third, y, x + 2 * third, y + new_h)
-            self.buttons["stop"] = (x + 2 * third, y, x + new_w, y + new_h)
+            self._draw_button(img, btn, inv, x, y, base_width, is_sprite=True)
 
         # =========================
         # BOUTON LEARNING
@@ -165,59 +170,25 @@ class Rendering:
         x_learning = w - base_width // 3 - margin_x
 
         if shared_state.learning_mode:
-            btn = self.btn_learning_on
-            inv = self.btn_learning_on_inv_alpha
+            self._draw_button(img, self.btn_learning_on, self.btn_learning_on_inv_alpha, x_learning, y, base_width // 3, button_name="learning")
         else:
-            btn = self.btn_learning_off
-            inv = self.btn_learning_off_inv_alpha
-
-        if btn is not None:
-            h_btn, w_btn = btn.shape[:2]
-
-            scale = (base_width // 3) / w_btn
-            new_w = int(w_btn * scale)
-            new_h = int(h_btn * scale)
-
-            btn_resized = cv2.resize(btn, (new_w, new_h))
-            inv_resized = cv2.resize(inv, (new_w, new_h))
-
-            if len(inv_resized.shape) == 2:
-                inv_resized = inv_resized[:, :, None]
-
-            self.overlay_alpha(img, btn_resized, inv_resized, x_learning, y)
-
-            self.buttons["learning"] = (x_learning, y, x_learning + new_w, y + new_h)
+            self._draw_button(img, self.btn_learning_off, self.btn_learning_off_inv_alpha, x_learning, y, base_width // 3, button_name="learning")
 
         # =========================
         # BOUTON AUTO
         # =========================
-        x_auto = w - base_width // 3 * 3 - margin_x
+        x_auto = w - base_width // 3 * 2 - margin_x * 2
 
-        if shared_state.auto_mode:
-            btn = self.btn_auto_on
-            inv = self.btn_auto_on_inv_alpha
+        if shared_state.status == 3:
+            self._draw_button(img, self.btn_auto_on, self.btn_auto_on_inv_alpha, x_auto, y, base_width // 3, button_name="auto")
+            # Position du bouton reset (à côté et avant le bouton auto)
+            x_reset = w - base_width // 3 * 3 - margin_x * 3
+            self._draw_button(img, self.btn_reset, self.btn_reset_inv_alpha, x_reset, y, base_width // 3, button_name="reset")
         else:
-            btn = self.btn_auto_off
-            inv = self.btn_auto_off_inv_alpha
-
-        if btn is not None:
-            h_btn, w_btn = btn.shape[:2]
-
-            scale = (base_width // 3) / w_btn
-            new_w = int(w_btn * scale)
-            new_h = int(h_btn * scale)
-
-            btn_resized = cv2.resize(btn, (new_w, new_h))
-            inv_resized = cv2.resize(inv, (new_w, new_h))
-
-            if len(inv_resized.shape) == 2:
-                inv_resized = inv_resized[:, :, None]
-
-            self.overlay_alpha(img, btn_resized, inv_resized, x_auto, y)
-
-            self.buttons["auto"] = (x_auto, y, x_auto + new_w, y + new_h)
-
+            self._draw_button(img, self.btn_auto_off, self.btn_auto_off_inv_alpha, x_auto, y, base_width // 3, button_name="auto")
+    
         return img
+
 
     def handle_click(self, x, y, shared_state):
 
@@ -227,9 +198,12 @@ class Rendering:
 
                 if name == "learning":
                     shared_state.learning_mode = not shared_state.learning_mode
+                    shared_state.learning_start_time = time.time()
+                    shared_state.image_counter = 0
 
                     if not shared_state.learning_mode:
-                        shared_state.status = 0
+                        shared_state.status = 3
+                        shared_state.auto_mode = True
 
                 elif name == "auto":
 
@@ -241,6 +215,12 @@ class Rendering:
                     else:
                         shared_state.status = 0
 
+                elif name == "reset":
+
+                    if shared_state.auto_mode:
+                        shared_state.counter_to_right = 0
+                        shared_state.reset = True
+                        shared_state.delay_reinit = datetime.datetime.now()
 
                 elif name == "play":
 
@@ -280,7 +260,7 @@ class Rendering:
         text = str(counter_to_right)
         
         # Display recording message in Learning Mode (only for CAMERA input)
-        if input_type == "CAMERA" and shared_state:
+        if shared_state:
             
             if  shared_state.learning_mode:
                 cv2.putText(img, "Recording images in progress...", (img_width // 2 - 200, img_height // 2),

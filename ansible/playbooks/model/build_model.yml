@@ -1,0 +1,128 @@
+- name: Train YOLO locally
+  hosts: all
+  become: true
+  gather_facts: yes
+
+  vars:
+    project_dir: "{{ lookup('env', 'TRAINING_PROJECT_DIR') }}"
+    local_app_path: "{{ lookup('env', 'LOCAL_APP_PATH') }}"
+    app_path: "{{ lookup('env', 'APP_PATH') | default('/data/orin/git/animal-counting/app', true) }}"
+    data_path: "{{ lookup('env', 'TRAINING_DATA_PATH') }}"
+    model: "{{ lookup('env', 'TRAINING_MODEL') }}"
+    epochs: "{{ lookup('env', 'TRAINING_EPOCHS') }}"
+    imgsz: "{{ lookup('env', 'TRAINING_IMGSZ') }}"
+    device: "{{ lookup('env', 'TRAINING_DEVICE') | default('gpu') }}"
+
+  tasks:
+
+    - name: Check project directory exists
+      ansible.builtin.stat:
+        path: "{{ project_dir }}"
+      register: project_dir_stat
+      delegate_to: localhost
+      become: false
+
+    - name: Fail if project directory missing
+      ansible.builtin.fail:
+        msg: "Project directory {{ project_dir }} does not exist"
+      when: not project_dir_stat.stat.exists
+      delegate_to: localhost
+      become: false
+
+    - name: Run YOLO training
+      ansible.builtin.shell: |
+        source /mnt/c/Dev/venv/ultralytics/bin/activate
+        yolo detect train \
+          data={{ data_path }} \
+          model=../{{ model }} \
+          epochs={{ epochs }} \
+          imgsz={{ imgsz }}
+      args:
+        chdir: "{{ project_dir }}"
+        executable: /bin/bash
+      delegate_to: localhost
+      become: false
+
+    - name: Copy trained model to app directory
+      ansible.builtin.copy:
+        src: "{{ project_dir }}/runs/detect/train/weights/best.pt"
+        dest: "{{ local_app_path }}/model/my_model.pt"
+      delegate_to: localhost
+      become: false
+
+    - name: Run YOLO onnx export
+      ansible.builtin.shell: |
+        source /mnt/c/Dev/venv/ultralytics/bin/activate
+        yolo export \
+          model="{{ local_app_path }}/model/my_model.pt" \
+          opset=13 \
+          simplify=True \
+          format=onnx \
+          half=True
+      args:
+        chdir: "{{ local_app_path }}/model/"
+        executable: /bin/bash
+      delegate_to: localhost
+      become: false
+
+    - name: Copy onnx to Jetson
+      command: >
+        rsync -avz --delete --no-owner --no-group --exclude='*.engine'
+        -e "sshpass -e ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
+        "{{ local_app_path }}/model"
+        {{ ansible_user }}@{{ ansible_host }}:{{ app_path }}
+      environment:
+        SSHPASS: "{{ ansible_become_password }}"
+      delegate_to: localhost
+      become: false
+      tags: build
+
+    - name: Disable counting app (delete k3s deployment)
+      ansible.builtin.command: >
+        kubectl delete -f {{ app_path }}/../k3s/countingapp-dep.yaml --ignore-not-found
+      become: true
+
+    - name: Check if engine exists
+      ansible.builtin.stat:
+        path: "{{ app_path }}/model/my_model.engine"
+      register: engine_file
+      become: true
+
+    - name: Backup engine with timestamp (shell)
+      ansible.builtin.shell: >
+        mv {{ app_path }}/model/my_model.engine
+        {{ app_path }}/model/old/my_model.engine.$(date +%Y%m%d_%H%M)
+      args:
+        executable: /bin/bash
+      when: engine_file.stat.exists
+      become: true
+
+    - name: Delete previous build-engine job if exists
+      ansible.builtin.command: >
+        kubectl delete -f {{ app_path }}/../k3s/build-engine-batch.yaml --ignore-not-found
+      become: true
+
+    - name: Enable build engine (apply k3s batch)
+      ansible.builtin.command: >
+        kubectl apply -f {{ app_path }}/../k3s/build-engine-batch.yaml
+      become: true
+
+    - name: Wait for engine build job to complete
+      ansible.builtin.command: >
+        kubectl -n countingapp-dev wait --for=condition=complete
+        job/build-engine
+        --timeout=1200s
+      become: true
+
+    - name: Wait for engine file
+      ansible.builtin.wait_for:
+        path: "{{ app_path }}/model/my_model.engine"
+        timeout: 300
+      become: true
+
+    - name: Enable counting app (apply k3s deployment)
+      ansible.builtin.command: >
+        kubectl apply -f {{ app_path }}/../k3s/countingapp-dep.yaml
+      become: true
+
+

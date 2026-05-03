@@ -24,9 +24,25 @@
     filebrowser_config_path: "{{ lookup('env', 'FILEBROWSER_CONFIG_PATH') | default('/data/orin/git/animal-counting/config/filebrowser/', true) }}"
   tags: always
 
+- name: Pull Docker image
+  community.docker.docker_image:
+    name: lscr.io/linuxserver/ffmpeg
+    tag: latest
+    source: pull
+    
 - name: Create files directory on Jetson
   file:
     path: "{{ files_path }}"
+    state: directory
+    mode: '0775'
+    owner: "{{ ansible_user }}"
+    group: "{{ ansible_user }}"
+  become: yes
+  tags: always
+
+- name: Create dataset directory on Jetson
+  file:
+    path: "{{ files_path }}/dataset"
     state: directory
     mode: '0775'
     owner: "{{ ansible_user }}"
@@ -96,10 +112,10 @@
   become: yes
   tags: filebrowser
 
-- name: Render cronjob template
+- name: Render cronvideo template
   template:
-    src: ../../../k3s/templates/cronjob.j2
-    dest: "{{ k3s_app }}/cronjob.yaml"
+    src: ../../../k3s/templates/cronvideo-dep.j2
+    dest: "{{ k3s_app }}/cronvideo-dep.yaml"
   become: yes
   tags: cleanup
 
@@ -150,11 +166,11 @@
   become: yes
   tags: filebrowser
 
-# - name: Deploy video cleanup cronjob using kubectl
-#   command: >
-#     k3s kubectl apply -f {{ app_path }}/k3s/cronjob.yaml
-#   become: yes
-#   tags: cleanup
+- name: Deploy video compress cronjob using kubectl
+  command: >
+    k3s kubectl apply -f {{ k3s_app }}/cronvideo-dep.yaml
+  become: yes
+  tags: compress
 
 # - name: Configure log rotation
 #   copy:

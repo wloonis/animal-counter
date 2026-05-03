@@ -59,4 +59,4 @@ RUN chmod +x /entrypoint.sh
 ENTRYPOINT ["/entrypoint.sh"]
 
 #CMD ["sh", "-c", "python3 src/main.py"]
-#CMD ["/bin/bash"]
+#CMD ["sleep", "infinity"]

@@ -14,7 +14,7 @@
       debug:
         msg: "{{ lookup('env','JETSON_IP') }}"
 
-    - name: Create m/ount directory
+    - name: Create mount directory
       file:
         path: /data
         state: directory
@@ -27,6 +27,19 @@
         fstype: ext4
         opts: defaults,nofail
         state: mounted
+
+    - name: Clean /data/orin directory
+      file:
+        path: /data/orin
+        state: absent
+
+    - name: Recreate /data/orin directory
+      file:
+        path: /data/orin
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
 
     - name: Replace repo version with r36.5
       replace:
@@ -44,25 +57,30 @@
       apt:
         upgrade: dist
 
-    # - name: Reboot if needed
-    #   reboot:
-    #     msg: "Reboot after NVIDIA L4T upgrade"
-    #     reboot_timeout: 600
+    - name: Reboot if needed
+      reboot:
+        msg: "Reboot after NVIDIA L4T upgrade"
+        reboot_timeout: 600
 
-    - name: Ensure Docker service is running
-      service:
-        name: docker
-        state: started
-        enabled: yes
-      become: yes
+    - name: Install basic utilities
+      apt:
+        name:
+          - nano
+          - htop
+          - net-tools
+          - iftop
+          - iotop
+          - tmux
+          - curl
+          - wget
+          - git
+          - netplan.io
+        state: present
+      tags: utils
 
     - name: Import SSH configuration playbook
       import_tasks: network_ssh.yml
       tags: ssh
-
-    - name: Import network setup playbook
-      import_tasks: network_setup.yml
-      tags: network
 
     - name: Import LXDE installation playbook
       import_tasks: install_lxde.yml
