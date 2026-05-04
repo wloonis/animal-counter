@@ -5,35 +5,47 @@ MODE=$1
 
 echo "Mode: $MODE"
 
-if [ "$MODE" = "build-engine" ]; then
-  echo "Building TensorRT engine..."
-  #while true; do
-  #  sleep 3600
-  #done
+case "$MODE" in
 
-  echo "Initializing GPU..."
+  build-engine)
+    echo "Building TensorRT engine..."
+    echo "Initializing GPU..."
 
-  python3 - <<EOF
+    python3 - <<EOF
 import torch
 torch.cuda.init()
 EOF
 
-  sleep 5
+    sleep 5
 
-  echo "Building TensorRT engine..."
+    /usr/src/tensorrt/bin/trtexec \
+      --onnx="/app/model/my_model.onnx" \
+      --saveEngine="/app/model/my_model.engine"
 
-  /usr/src/tensorrt/bin/trtexec \
-    --onnx="/app/model/my_model.onnx" \
-    --saveEngine="/app/model/my_model.engine" \
+    echo "Engine build complete"
+    ;;
 
-  echo "Engine build complete"
-  exit 0
-fi
+  serve)
+    echo "Starting application..."
+    exec python3 src/main.py
+    ;;
 
-if [ "$MODE" = "serve" ]; then
-  echo "Starting application..."
-  exec python3 src/main.py
-fi
+  debug)
+    echo "Starting debug mode (container will stay alive)..."
+    exec tail -f /dev/null
+    ;;
 
-echo "Unknown mode: $MODE"
-exit 1
+  test)
+    echo "Running test mode..."
+    exec python3 src/main.py \
+      --input=FILE \
+      --file=./video/test_640.mp4 \
+      --drawtracking=True
+    ;;
+
+  *)
+    echo "Unknown mode: $MODE"
+    exit 1
+    ;;
+
+esac

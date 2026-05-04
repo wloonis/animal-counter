@@ -76,37 +76,6 @@ class Rendering:
 
         return overlay_premult, inv_alpha, overlay.shape[:2]
     
-    # def plot_one_box(self, x, img, color=None, label=None, line_thickness=None):
-    #     """
-    #     Plot one bounding box on the image.
-        
-    #     Args:
-    #         x (list): Bounding box coordinates [x1, y1, x2, y2].
-    #         img (numpy.ndarray): Image to plot on.
-    #         color (list, optional): Color for the bounding box. Defaults to random.
-    #         label (str, optional): Label for the bounding box. Defaults to None.
-    #         line_thickness (int, optional): Thickness of the bounding box line. Defaults to 1.
-    #     """
-    #     tl = line_thickness or 1
-    #     color = color or [np.random.randint(0, 255) for _ in range(3)]
-    #     c1, c2 = (int(x[0]), int(x[1])), (int(x[2]), int(x[3]))
-    #     cv2.rectangle(img, c1, c2, color, thickness=tl, lineType=cv2.LINE_AA)
-    #     if label:
-    #         tf = max(tl - 1, 1)
-    #         t_size = cv2.getTextSize(label, 0, fontScale=tl / 3, thickness=tf)[0]
-    #         c2 = c1[0] + t_size[0], c1[1] - t_size[1] - 3
-    #         cv2.rectangle(img, c1, c2, color, -1, cv2.LINE_AA)
-    #         cv2.putText(
-    #             img,
-    #             label,
-    #             (c1[0], c1[1] - 2),
-    #             0,
-    #             tl / 3,
-    #             [225, 255, 255],
-    #             thickness=tf,
-    #             lineType=cv2.LINE_AA,
-    #         )
-
     def _draw_button(self, img, btn, inv, x, y, target_width, button_name=None, is_sprite=False):
         """Helper method to draw a button with consistent scaling and overlay."""
         if btn is not None:

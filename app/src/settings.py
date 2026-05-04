@@ -42,8 +42,8 @@ class Settings:
         self.OUTPUT_HEIGHT = int(os.getenv("OUTPUT_HEIGHT", 480))
 
         # Output Resolution
-        self.OUTPUT_SCREEN_WIDTH = int(os.getenv("OUTPUT_SCREEN_WIDTH", 640))
-        self.OUTPUT_SCREEN_HEIGHT = int(os.getenv("OUTPUT_SCREEN_HEIGHT", 480))
+        self.OUTPUT_SCREEN_WIDTH = int(os.getenv("OUTPUT_SCREEN_WIDTH", 1024))
+        self.OUTPUT_SCREEN_HEIGHT = int(os.getenv("OUTPUT_SCREEN_HEIGHT", 600))
         
         # FPS Settings
         self.FPS_OUTPUT = int(os.getenv("FPS_OUTPUT", 30))
@@ -56,6 +56,7 @@ class Settings:
         ### MODIFICATION: Pig Detection Threshold - Start
         # Minimum confidence threshold to consider an object as a pig
         self.PIG_CONFIDENCE_THRESHOLD = float(os.getenv("PIG_CONFIDENCE_THRESHOLD", 0.7))
+        self.PIG_CONFIDENCE_THRESHOLD_START_VIDEO = float(os.getenv("PIG_CONFIDENCE_THRESHOLD_START_VIDEO", 0.8))
         ### MODIFICATION: Pig Detection Threshold - End
         
         # Output Video Path
@@ -69,3 +70,6 @@ class Settings:
         self.CAPTURE_INTERVAL = int(os.getenv("CAPTURE_INTERVAL", 5))
         self.MAX_LEARNING_DURATION = int(os.getenv("MAX_LEARNING_DURATION", 600))
         ### MODIFICATION: Learning Mode - End
+
+        self.MAX_VIDEO_DURATION = int(os.getenv("MAX_VIDEO_DURATION", 3600))
+        

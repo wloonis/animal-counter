@@ -12,10 +12,12 @@ import datetime
 import logging
 import sys
 import os
+import signal
 import numpy as np
 from queue import Queue
 from argparse import ArgumentParser
 
+from threading import Event
 from settings import Settings
 from core.inference import Inference
 from core.tracking import Tracking
@@ -42,6 +44,22 @@ shared_state.draw_tracking = settings.DRAW_TRACKING
 shared_state.centroid_tracking = settings.CENTROID_TRACKING
 shared_state.box_tracking = settings.BOX_TRACKING
 
+# Stop cleanly
+def stop():
+    logger.info("Stopping threads...")
+
+    shared_state.stop_event.set()
+
+    if shared_state.infer_thread and shared_state.infer_thread.is_alive():
+        shared_state.infer_thread.join(timeout=5)
+
+    if shared_state.display_thread and shared_state.display_thread.is_alive():
+        shared_state.display_thread.join(timeout=5)
+
+    cv2.destroyAllWindows()
+
+    logger.info("Stopped cleanly")
+
 class InferThread(threading.Thread):
     """
     Thread for handling inference on frames.
@@ -55,7 +73,7 @@ class InferThread(threading.Thread):
         timer (TimerFps): Timer for FPS calculation.
     """
     
-    def __init__(self, frame_queue: Queue, max_queue_size, yolo: Inference, video_path, input_type="CAMERA"):
+    def __init__(self, frame_queue: Queue, max_queue_size, yolo: Inference, video_path, stop_event, input_type="CAMERA"):
         """
         Initialize the inference thread.
         
@@ -74,12 +92,13 @@ class InferThread(threading.Thread):
         self.input_type = input_type
         self.frame_counter = 0
         self.timer = TimerFps()
+        self.stop_event = stop_event
     
     def run(self):
         """Run the inference thread."""
         frame_source = FrameSource(self.video_path, self.input_type)
         
-        while True:
+        while not self.stop_event.is_set():
             self.frame_counter += 1
             if logger.isEnabledFor(logging.DEBUG):
                 logger.debug(f"Capturing: {self.frame_counter}...")
@@ -88,7 +107,6 @@ class InferThread(threading.Thread):
                 logger.debug(f"Captured: {self.frame_counter}...")
 
             if not ret:
-                #or self.frame_counter > 550:
                 shared_state.status = 0
                 logger.info(f"------->No Frame; Value Status: {shared_state.status}")
                 break
@@ -102,7 +120,11 @@ class InferThread(threading.Thread):
                     logger.debug(f"Duration InfThread: {(time_end-time_start)*1000:.2f}ms, avg: {((time_end-time_start)*1000)/self.frame_counter:.2f}ms, use time: {use_time*1000:.2f}ms, preproc: {preproc_time*1000:.2f}ms")
 
                 results = [image_raw, output, use_time, origin_h, origin_w, self.frame_counter, r_scale, tx1, ty1]
-                self.frame_queue.put(results)
+                
+                try:
+                    self.frame_queue.put(results, timeout=1)
+                except:
+                    continue
                 
                 current_time, avg_time, avg_fps = self.timer.update(self.frame_counter)
                 if logger.isEnabledFor(logging.DEBUG):
@@ -132,7 +154,7 @@ class DisplayThread(threading.Thread):
         filename (str): Output video filename.
     """
     
-    def __init__(self, frame_queue: Queue, yolo: Inference, sort_tracker, tracking: Tracking, counting: Counting, rendering: Rendering, input_type="CAMERA"):
+    def __init__(self, frame_queue: Queue, yolo: Inference, sort_tracker, tracking: Tracking, counting: Counting, rendering: Rendering, stop_event, input_type="CAMERA"):
         """
         Initialize the display thread.
         
@@ -159,12 +181,13 @@ class DisplayThread(threading.Thread):
         self.filename = None
         self.window_name = "Counter"
         self.x_offset = self.y_offset = 30
+        self.stop_event = stop_event
 
     def mouse_click(self, event, x, y, flags, param):
         if event == cv2.EVENT_LBUTTONUP:
             self.rendering.handle_click(x, y, shared_state)
             
-    def has_class0_high_score(self, class_ids, scores, threshold=0.8):
+    def has_class0_high_score(self, class_ids, scores, threshold=settings.PIG_CONFIDENCE_THRESHOLD_START_VIDEO):
         thresh = threshold
         for i in range(len(class_ids)):
             if class_ids[i] == 0 and scores[i] >= thresh:
@@ -182,20 +205,25 @@ class DisplayThread(threading.Thread):
         counter = 0
         avg_t = 0.0
         sum_t = 0.0
-        delay_last_class = 180
+        delay_last_class = 120
 
         last_capture_time = time.time()
 
         if logger.isEnabledFor(logging.DEBUG):
             logger.debug("DisplayThread started")
 
-        while True:
+        while not self.stop_event.is_set():
             time_start = time.time()
 
             if logger.isEnabledFor(logging.DEBUG):
-                logger.debug(f"Value Recording: {shared_state.recording}; Value Status: {shared_state.status}; Video Writer: {self.video_writer}")
+                logger.debug(f"Value Recording: {shared_state.recording}; Value Status: {shared_state.status}; Video Writer: {self.video_writer}; delay reinit: {shared_state.delay_reinit}")
 
             # Stop video writer
+            # Si l'enregistrement et en cours
+            # Et que l'on a demandé de stopper la vidéo
+            # Ou que l'on est passé en mode learning
+            # Ou que le comptage a été réinitialisé
+            # Ou que l'on est en mode automatique et que l'on a plus détecté d'animaux
             if self.video_writer is not None and self.video_writer.isOpened() and shared_state.recording and ((
                 shared_state.status == 0 or shared_state.learning_mode or shared_state.reset or
                 (shared_state.status in [1,3] and 
@@ -211,14 +239,25 @@ class DisplayThread(threading.Thread):
                 shared_state.recording = False
                 shared_state.reset = False
                 logger.info(f"------->Record Stop; Value Status: {shared_state.status}: Store:{output_path}")
+                if self.input_type == "FILE":
+                    logger.info(f"------->MODE TEST. STOP.")
+                    self.stop_event.set()
+                    break
 
-            self.results = self.frame_queue.get()
+            try:
+                self.results = self.frame_queue.get(timeout=1)
+            except:
+                continue
 
             # Toujours récupérer img AVANT tout
             if len(self.results) > 1:
                 img, output, use_time, origin_h, origin_w, frame_counter, r_scale, tx1, ty1 = self.results
             else:
                 img = self.results[0]
+
+            # Recording without tracking
+            if not shared_state.draw_tracking and shared_state.status in [1,3] and shared_state.recording and self.video_writer is not None:
+                self.video_writer.write(img)
 
             # =========================
             # LEARNING MODE FIXÉ
@@ -263,7 +302,6 @@ class DisplayThread(threading.Thread):
 
                     if self.input_type == "CAMERA":
                         img = self.rendering.draw_ui(img, shared_state, self.input_type)
-#                        cv2.imshow(self.window_name, cv2.resize(img, (800, 600)))
                         cv2.imshow(self.window_name, img)
                         cv2.waitKey(1)
 
@@ -315,8 +353,8 @@ class DisplayThread(threading.Thread):
                 result_classid = result_classid[valid_indices]
                 result_scores = result_scores[valid_indices]
                 
-                logger.debug("Score: " + str(result_scores) + " TrackID: " + str(result_trackid))
-
+                if logger.isEnabledFor(logging.DEBUG):
+                    logger.debug(f"Score: {result_scores} TrackID: {result_trackid}")
 
                 # Init video writer
                 if not shared_state.recording and not shared_state.learning_mode and self.video_writer is None and (
@@ -325,10 +363,10 @@ class DisplayThread(threading.Thread):
                     ):
                     
                     shared_state.recording = True
-                    output_path = os.path.join(settings.OUTPUT_VIDEO_PATH, f"counting-{time.strftime('%Y%m%d-%H%M%S')}.mp4")
+                    output_path = os.path.join(settings.OUTPUT_VIDEO_PATH, f"tmp-counting-{time.strftime('%Y%m%d-%H%M%S')}.mp4")
                     os.makedirs(settings.OUTPUT_VIDEO_PATH, exist_ok=True)
                     self.filename = output_path
-                    logger.info("Record started: " + self.filename)
+                    logger.info(f"Record started: {self.filename}")
 
                     self.video_writer = cv2.VideoWriter(
                         self.filename,
@@ -337,7 +375,11 @@ class DisplayThread(threading.Thread):
                         (settings.OUTPUT_WIDTH, settings.OUTPUT_HEIGHT)
                     )
 
-                if 0 in result_classid:
+                # On réinitialise le delay uniquement si le score de l'objet détecté est très bon
+                continue_recording = (result_classid == 0) & (result_scores > settings.PIG_CONFIDENCE_THRESHOLD_START_VIDEO)
+
+                if continue_recording.any():
+                #if 0 in result_classid and result_scores > settings.PIG_CONFIDENCE_THRESHOLD_START_VIDEO :
                     shared_state.delay_reinit = datetime.datetime.now()
 
                 # COUNT FIX
@@ -368,7 +410,7 @@ class DisplayThread(threading.Thread):
                 )
 
                 # Write video
-                if shared_state.status in [1,3] and shared_state.recording and self.video_writer is not None:
+                if shared_state.draw_tracking and shared_state.status in [1,3] and shared_state.recording and self.video_writer is not None:
                     self.video_writer.write(img)
 
             else:
@@ -386,6 +428,7 @@ class DisplayThread(threading.Thread):
                 cv2.imshow(self.window_name, img)
 
                 if cv2.waitKey(1) & 0xFF == ord('q'):
+                    self.stop_event.set()
                     break
 
             self.frame_queue.task_done()
@@ -410,6 +453,8 @@ def start(input_source, video_path):
             engine_file_path = "./model/my_model.engine"
             
             yolo = Inference(engine_file_path)
+    
+            shared_state.stop_event.clear()        
             
             byte_tracker = OCSORTTracker()            
 
@@ -420,8 +465,8 @@ def start(input_source, video_path):
             max_queue_size = 3
             shared_state.frame_queue = Queue(maxsize=max_queue_size)
             
-            shared_state.infer_thread = InferThread(frame_queue=shared_state.frame_queue, max_queue_size=max_queue_size, yolo=yolo, video_path=video_path, input_type=input_source)
-            shared_state.display_thread = DisplayThread(frame_queue=shared_state.frame_queue, yolo=yolo, sort_tracker=byte_tracker, tracking=tracking, counting=counting, rendering=rendering, input_type=input_source)
+            shared_state.infer_thread = InferThread(frame_queue=shared_state.frame_queue, max_queue_size=max_queue_size, yolo=yolo, video_path=video_path, stop_event=shared_state.stop_event, input_type=input_source)
+            shared_state.display_thread = DisplayThread(frame_queue=shared_state.frame_queue, yolo=yolo, sort_tracker=byte_tracker, tracking=tracking, counting=counting, rendering=rendering, stop_event=shared_state.stop_event, input_type=input_source)
             
             shared_state.infer_thread.start()
             shared_state.display_thread.start()
@@ -435,6 +480,13 @@ def start(input_source, video_path):
 if __name__ == "__main__":
     # Load settings
     settings = Settings()
+    
+    def handle_sigterm(signum, frame):
+        logger.info("SIGTERM received")
+        stop()
+
+    signal.signal(signal.SIGTERM, handle_sigterm)
+    signal.signal(signal.SIGINT, handle_sigterm)
     
     # Initialize input source and video path from settings
     input_source = settings.INPUT_SOURCE
@@ -473,6 +525,8 @@ if __name__ == "__main__":
                     raise Exception('Please, fill file video path')
         if args.drawtracking:
             shared_state.draw_tracking = args.drawtracking.lower() == "true"
+            shared_state.centroid_tracking = True
+            shared_state.box_tracking = True
         
         start(input_source, video)
         logger.info("Inference Started")

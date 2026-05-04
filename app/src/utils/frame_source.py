@@ -37,15 +37,6 @@ class FrameSource:
             self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, settings.OUTPUT_WIDTH)
             self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, settings.OUTPUT_HEIGHT)
             self.cap.set(cv2.CAP_PROP_FPS, 30)
-            # pipeline = (
-            #     "v4l2src device=/dev/video0 ! "
-            #     "video/x-raw, width=640, height=480, framerate=30/1 ! "
-            #     "nvvidconv ! "
-            #     "video/x-raw, format=BGRx ! "
-            #     "videoconvert ! "
-            #     "video/x-raw, format=BGR ! appsink drop=true"
-            # )
-            # self.cap = cv2.VideoCapture(pipeline, cv2.CAP_GSTREAMER)
         else:
             self.cap = cv2.VideoCapture(source)
         

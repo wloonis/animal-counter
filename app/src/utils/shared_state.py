@@ -6,7 +6,7 @@ This module provides a shared state object to replace global variables.
 
 import datetime
 from queue import Queue
-
+from threading import Event
 
 class SharedState:
     """
@@ -41,9 +41,11 @@ class SharedState:
         self.learning_mode = False
         self.learning_start_time = None
         self.max_learning_duration = 1200
+        self.max_video_duration = 3600
         self.image_counter = 0  # Counter for captured images
         ### MODIFICATION: Learning Mode - End
         ### MODIFICATION: Auto Mode - Start
         self.auto_mode = True
         self.reset = False
         ### MODIFICATION: Learning Mode - End
+        self.stop_event = Event()

@@ -1,59 +1,67 @@
-apiVersion: batch/v1
-kind: CronJob
+apiVersion: apps/v1
+kind: Deployment
 metadata:
   name: video-compress-fast
   namespace: "{{ app_namespace }}"
 spec:
-  schedule: "*/10 * * * *"
-  successfulJobsHistoryLimit: 1
-  failedJobsHistoryLimit: 1
-  startingDeadlineSeconds: 300
-  jobTemplate:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: video-compress-fast
+  template:
+    metadata:
+      labels:
+        app: video-compress-fast
     spec:
-      ttlSecondsAfterFinished: 300
-      template:
-        spec:
-          restartPolicy: OnFailure
-          containers:
-          - name: ffmpeg
-            image: lscr.io/linuxserver/ffmpeg:latest
-            imagePullPolicy: IfNotPresent
-            resources:
-              requests:
-                cpu: "100m"
-                memory: "128Mi"
-              limits:
-                cpu: "500m"
-                memory: "512Mi"            
-            command:
-              - /bin/sh
-              - -c
-              - |
-                for f in /videos/tocompress-*; do
-                  [ -e "$f" ] || continue
+      restartPolicy: Always
+      containers:
+      - name: ffmpeg
+        image: lscr.io/linuxserver/ffmpeg:latest
+        imagePullPolicy: IfNotPresent
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "128Mi"
+          limits:
+            cpu: "500m"
+            memory: "512Mi"
+        command:
+          - /bin/sh
+          - -c
+          - |
+            while true; do
+              echo "=== Début cycle compression ==="
 
-                  out="/videos/$(basename "$f" | sed 's/^tocompress-//')"
+              for f in /videos/tocompress-*; do
+                [ -e "$f" ] || continue
 
-                  ffmpeg -y -i "$f" \
-                    -vf "scale=640:-2" \
-                    -c:v libx264 \
-                    -preset ultrafast \
-                    -crf 23 \
-                    -c:a aac \
-                    -b:a 64k \
-                    "$out"
+                out="/videos/$(basename "$f" | sed 's/^tocompress-//')"
 
-                  rm -f "$f"
-                done
-                cd /videos
-                ls -t count* 2>/dev/null | awk 'NR>50' | xargs -r rm -f
-                find . -type f -size +1G -delete
-            volumeMounts:
-            - name: videos
-              mountPath: /videos
+                ffmpeg -y -i "$f" \
+                  -vf "scale=640:-2" \
+                  -c:v libx264 \
+                  -preset ultrafast \
+                  -crf 23 \
+                  -c:a aac \
+                  -b:a 64k \
+                  "$out"
 
-          volumes:
-          - name: videos
-            hostPath:
-              path: {{ files_path }}
-              type: Directory
+                rm -f "$f"
+              done
+
+              cd /videos
+              ls -t count* 2>/dev/null | awk 'NR>50' | xargs -r rm -f
+              find . -type f -size +2G -delete
+
+              echo "=== Fin cycle, pause 10 min ==="
+              sleep 600
+            done
+        volumeMounts:
+        - name: videos
+          mountPath: /videos
+
+      volumes:
+      - name: videos
+        hostPath:
+          path: {{ files_path }}
+          type: Directory

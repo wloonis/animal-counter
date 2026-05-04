@@ -169,10 +169,6 @@ class Tracking:
 
                 prev_x = self.prev_positions[track_id]
 
-                # FILTRE ANTI-SAUT
-                # if abs(c_x - prev_x) > self.MAX_JUMP:
-                #     # ignore cette frame pour cet objet
-                #     continue
                 if abs(c_x - prev_x) <= self.MAX_JUMP:
                     self.prev_positions[track_id] = c_x
     

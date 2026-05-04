@@ -62,10 +62,6 @@ class Counting:
                 track_id = element[2]
                 class_id = element[3]
                 
-                # Skip if the confidence is below the threshold for pig detection
-                # if result_scores is not None and len(element) > 4 and class_id == 0 and element[4] < self.pig_confidence_threshold:
-                #     continue
-                
                 if track_id in self.detections:
                     last_x, last_y = self.detections[track_id][2], self.detections[track_id][3]
                     self.detections[track_id] = [last_x, last_y, element[0], element[1], self.detections[track_id][4]]

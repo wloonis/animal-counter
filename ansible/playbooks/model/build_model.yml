@@ -36,6 +36,7 @@
           data={{ data_path }} \
           model=../{{ model }} \
           epochs={{ epochs }} \
+          batch=-1 \
           imgsz={{ imgsz }}
       args:
         chdir: "{{ project_dir }}"
