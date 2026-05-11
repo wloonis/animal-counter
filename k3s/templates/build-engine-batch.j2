@@ -5,9 +5,9 @@ metadata:
   namespace: "{{ app_namespace }}"
 spec:
   backoffLimit: 1
+  ttlSecondsAfterFinished: 120
   template:
     spec:
-      ttlSecondsAfterFinished: 120
       restartPolicy: Never
       containers:
       - name: "build-engine"

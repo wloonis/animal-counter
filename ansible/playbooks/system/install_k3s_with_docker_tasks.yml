@@ -48,7 +48,6 @@
     dest: /etc/systemd/system/docker.service.d/override.conf
     content: |
       [Unit]
-      RequiresMountsFor=/data
       After=network-online.target
       Wants=network-online.target
 
@@ -148,9 +147,16 @@
 - name: Enable service
   command: systemctl enable jetson-eth.service
 
-- name: Créer le dossier K3s
+- name: Créer le dossier K3s pour la config rancher
   file:
     path: /etc/rancher/k3s
+    state: directory
+    mode: '0755'
+  become: yes
+
+- name: Créer le dossier de stockage K3s
+  file:
+    path: /data/orin/k3s
     state: directory
     mode: '0755'
   become: yes
@@ -216,25 +222,6 @@
   until: result.rc == 0
   tags: k3s
 
-# - name: Create .kube directory
-#   file:
-#     path: "/home/nano-counter/.kube"
-#     state: directory
-#     owner: "nano-counter"
-#     group: "nano-counter"
-#     mode: '0755'
-#   tags: kubectl
-
-# - name: Copier le kubeconfig K3s
-#   copy:
-#     src: /etc/rancher/k3s/k3s.yaml
-#     dest: "/home/nano-counter/.kube/config"
-#     remote_src: yes
-#     owner: "nano-counter"
-#     group: "nano-counter"
-#     mode: '0600'
-#   become: yes
-
 # --------------/-----------
 # INSTALL NVIDIA DEVICE PLUGIN
 # -------------------------
@@ -251,12 +238,5 @@
     path: /tmp/nvidia-device-plugin-installed
     state: touch
   tags: nvidia
-
-# - name: Fix kubeconfig for local access
-#   replace:
-#     path: "/home/nano-counter/.kube/config"
-#     regexp: "https://127.0.0.1:6443"
-#     replace: "https://{{ ansible_host }}:6443"
-#   tags: kubectl
 
   

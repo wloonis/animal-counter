@@ -1,17 +1,58 @@
-# Pig Counting Application
+# Animal Counter Application
 
 ## Overview
 
-This application performs real-time pig counting using TensorRT for inference and Norfair for tracking. It is designed to run on Jetson Orin Nano devices with JetPack 6.1 and Ubuntu 22.04.
+The JetPack installed is the 6.2.2
 
 ## Features
 
-- **Real-time Inference:** Uses TensorRT for optimized YOLOv7 inference.
-- **Object Tracking:** Implements Norfair for tracking objects across frames.
-- **Counting Logic:** Counts objects crossing a vertical line.
-- **Unified Input Handling:** Supports both camera and video file inputs.
-- **Configuration Management:** Uses `.env` for configurable parameters.
-- **Structured Logging:** Implements logging with levels (DEBUG, INFO, WARNING, ERROR).
+* The Real-Time Inference is optimised with YOLO26
+* New feature with the Learning mode allowing to record videos or images to improve learning.
+* Full automated installation with Ansible for deployment on a Jetson Orin.
+* Tooling for training a model based on a training dataset (labelled images). The training is done using yolo26
+* User interface to upload videos with FileBrowser
+* Offline operation and activation of a HotSpot to connect to the Jetson
+
+## Installation
+
+### Setting up local environment
+
+To prepare your local environment, you need to install Ansible:
+
+```bash
+./scripts/install_ansible.sh
+```
+
+### Installing on Jetson Orin
+
+To install the application on a Jetson Orin:
+
+```bash
+./scripts/prepare_jetson.sh
+```
+
+### Training a new model
+
+To train and install a new model:
+
+```bash
+./scripts/training_model.sh
+```
+
+#### Required Environment Variables
+
+The training script requires the following environment variables:
+
+| Variable | Description | Default | Required |
+|---------|-------------|---------|---------|
+| `TRAINING_PROJECT_DIR` | Path to the training project directory | - | Yes |
+| `LOCAL_APP_PATH` | Path to the local app directory | - | Yes |
+| `APP_PATH` | Path to the app on the target device | `/data/orin/git/animal-counting/app` | No |
+| `TRAINING_DATA_PATH` | Path to the training data directory | - | Yes |
+| `TRAINING_MODEL` | Model name or configuration | - | Yes |
+| `TRAINING_EPOCHS` | Number of training epochs | - | Yes |
+| `TRAINING_IMGSZ` | Training image size | - | Yes |
+| `TRAINING_DEVICE` | Training device (gpu/cpu) | `gpu` | No |
 
 ## Project Structure
 
@@ -21,7 +62,7 @@ This application performs real-time pig counting using TensorRT for inference an
 │   └── src/                     # Source code
 │       ├── config/              # Configuration management
 │       ├── inference/           # TensorRT inference module
-│       ├── tracking/            # Norfair tracking module
+│       ├── tracking/            # Trackers tracking module
 │       ├── counting/            # Counting logic module
 │       ├── rendering/           # Visualization module
 │       ├── utils/               # Utility functions
@@ -50,7 +91,7 @@ This application performs real-time pig counting using TensorRT for inference an
 Install the required dependencies:
 
 ```bash
-pip install numpy opencv-python norfair python-dotenv tensorrt pytest
+pip install numpy opencv-python trackers python-dotenv tensorrt pytest
 ```
 
 ## Configuration
@@ -119,7 +160,7 @@ pytest tests/ -v
 ## Documentation
 
 - **OpenCV Video I/O:** [OpenCV Video Capture](https://docs.opencv.org/master/dd/d43/tutorial_py_video_display.html)
-- **Norfair Tracking Library:** [Norfair Documentation](https://tryolabs.github.io/norfair/)
+- **Trackers Library:** [Trackers Documentation](https://github.com/JonC3900/Trackers)
 - **TensorRT Python API:** [TensorRT API](https://docs.nvidia.com/deeplearning/tensorrt/api/python_api/index.html)
 - **Python Logging Best Practices:** [Python Logging](https://docs.python.org/3/howto/logging.html)
 - **python-dotenv:** [python-dotenv Documentation](https://pypi.org/project/python-dotenv/)

@@ -4,6 +4,9 @@
   gather_facts: yes
 
   vars:
+    app_namespace: "{{ lookup('env', 'APP_NAMESPACE') | default('countingapp-dev', true) }}"
+    app_name: "{{ lookup('env', 'APP_NAME') | default('countingapp', true) }}"
+    app_version: "{{ lookup('env', 'APP_VERSION') | default('local', true) }}"
     project_dir: "{{ lookup('env', 'TRAINING_PROJECT_DIR') }}"
     local_app_path: "{{ lookup('env', 'LOCAL_APP_PATH') }}"
     app_path: "{{ lookup('env', 'APP_PATH') | default('/data/orin/git/animal-counting/app', true) }}"
@@ -89,6 +92,13 @@
       register: engine_file
       become: true
 
+    - name: Créer le répertoire old
+      file:
+        path: "{{ app_path }}/model/old/"
+        state: directory
+        mode: '0755'
+      become: yes
+
     - name: Backup engine with timestamp (shell)
       ansible.builtin.shell: >
         mv {{ app_path }}/model/my_model.engine
@@ -97,6 +107,18 @@
         executable: /bin/bash
       when: engine_file.stat.exists
       become: true
+
+    - name: Check if k3s file exists
+      stat:
+        path: "{{ app_path }}/../k3s/build-engine-batch.yaml"
+      register: build_engine_file
+
+    - name: Render build-engine template
+      template:
+        src: "../../../k3s/templates/build-engine-batch.j2"
+        dest: "{{ app_path }}/../k3s/build-engine-batch.yaml"
+      become: yes
+      when: not build_engine_file.stat.exists
 
     - name: Delete previous build-engine job if exists
       ansible.builtin.command: >

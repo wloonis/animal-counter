@@ -62,7 +62,9 @@
         connection.autoconnect-priority 100
 
     - name: Reboot
-      reboot:
-        msg: "Reboot after Hotspot"
-        reboot_timeout: 600
+      command: >
+        systemd-run --on-active=3 /usr/bin/systemctl reboot
+      async: 1
+      poll: 0
+      changed_whenx: true
 

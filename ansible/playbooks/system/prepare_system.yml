@@ -20,13 +20,18 @@
         state: directory
         mode: '0755'
 
-    - name: Mount external disk
-      mount:
-        path: /data
-        src: UUID=e50fe815-5682-43e9-aaa5-ff74cd367e34
-        fstype: ext4
-        opts: defaults,nofail
-        state: mounted
+    # - name: Mount external disk
+    #   mount:
+    #     path: /data
+    #     src: UUID=e50fe815-5682-43e9-aaa5-ff74cd367e34
+    #     fstype: ext4
+    #     opts: defaults,nofail
+    #     state: mounted
+
+    - name: Stop docker
+      service:
+        name: docker
+        state: stopped
 
     - name: Clean /data/orin directory
       file:

@@ -111,15 +111,23 @@ class InferThread(threading.Thread):
                 logger.info(f"------->No Frame; Value Status: {shared_state.status}")
                 break
 
+            TOP_IGNORE = 100
+            BOTTOM_IGNORE = 50
+
+            h, w = image_raw.shape[:2]
+
+            frame_roi = image_raw[TOP_IGNORE:h-BOTTOM_IGNORE, :]
+            y_offset = TOP_IGNORE
+
             if shared_state.status in [1,3]:
                 time_start = time.time()
-                output, use_time, origin_h, origin_w, preproc_time, r_scale, tx1, ty1 = self.yolo.infer(image_raw)
+                output, use_time, origin_h, origin_w, preproc_time, r_scale, tx1, ty1 = self.yolo.infer(frame_roi)
                 time_end = time.time()
                 
                 if logger.isEnabledFor(logging.DEBUG):
                     logger.debug(f"Duration InfThread: {(time_end-time_start)*1000:.2f}ms, avg: {((time_end-time_start)*1000)/self.frame_counter:.2f}ms, use time: {use_time*1000:.2f}ms, preproc: {preproc_time*1000:.2f}ms")
 
-                results = [image_raw, output, use_time, origin_h, origin_w, self.frame_counter, r_scale, tx1, ty1]
+                results = [image_raw, output, use_time, origin_h, origin_w, self.frame_counter, r_scale, tx1, ty1, y_offset]
                 
                 try:
                     self.frame_queue.put(results, timeout=1)
@@ -251,7 +259,7 @@ class DisplayThread(threading.Thread):
 
             # Toujours récupérer img AVANT tout
             if len(self.results) > 1:
-                img, output, use_time, origin_h, origin_w, frame_counter, r_scale, tx1, ty1 = self.results
+                img, output, use_time, origin_h, origin_w, frame_counter, r_scale, tx1, ty1, y_offset = self.results
             else:
                 img = self.results[0]
 
@@ -323,6 +331,10 @@ class DisplayThread(threading.Thread):
                             self.yolo.input_h,
                             self.yolo.input_w
                         )
+
+                        box[1] += y_offset
+                        box[3] += y_offset
+
                         boxes_scaled.append(box)
 
                     boxes_scaled = np.array(boxes_scaled)
