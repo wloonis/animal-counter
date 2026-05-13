@@ -16,6 +16,18 @@
     epochs: "{{ lookup('env', 'TRAINING_EPOCHS') }}"
     imgsz: "{{ lookup('env', 'TRAINING_IMGSZ') }}"
     device: "{{ lookup('env', 'TRAINING_DEVICE') | default('gpu') }}"
+    roboflow_workspace: "{{ lookup('env', 'TRAINING_ROBOFLOW_WORKSPACE') }}"
+    roboflow_project: "{{ lookup('env', 'TRAINING_ROBOFLOW_PROJECT') }}"
+    roboflow_version: "{{ lookup('env', 'TRAINING_ROBOFLOW_VERSION') }}"
+    roboflow_format: "{{ lookup('env', 'TRAINING_ROBOFLOW_FORMAT') }}"
+    roboflow_api_key: "{{ lookup('env', 'TRAINING_ROBOFLOW_API_KEY') }}"
+
+    files_to_move:
+      - train
+      - valid
+      - test
+      - data.yaml
+      - dataset.zip
 
   tasks:
 
@@ -30,6 +42,55 @@
       ansible.builtin.fail:
         msg: "Project directory {{ project_dir }} does not exist"
       when: not project_dir_stat.stat.exists
+      delegate_to: localhost
+      become: false
+
+    - name: Check if runs directory exists
+      stat:
+        path: "{{ project_dir }}/runs"
+      delegate_to: localhost
+      become: false
+      register: runs_dir
+
+    - name: Move previous dataset files into runs directory
+      command: >
+        mv {{ project_dir }}/{{ item }}
+        {{ project_dir }}/runs/
+      loop: "{{ files_to_move }}"
+      args:
+        removes: "{{ project_dir }}/{{ item }}"
+      when: runs_dir.stat.exists
+      ignore_errors: true
+      delegate_to: localhost
+      become: false
+
+    - name: Retrieve Roboflow export metadata
+      uri:
+        url: >-
+          https://api.roboflow.com/{{ roboflow_workspace }}/{{ roboflow_project }}/{{ roboflow_version }}/{{ roboflow_format }}?api_key={{ roboflow_api_key }}
+        method: GET
+        return_content: true
+      register: roboflow_metadata
+      delegate_to: localhost
+      become: false
+
+    - name: Extract dataset download URL
+      set_fact:
+        roboflow_download_url: "{{ roboflow_metadata.json.export.link }}"
+
+    - name: Download dataset zip
+      get_url:
+        url: "{{ roboflow_download_url }}"
+        dest: "{{ project_dir }}/dataset.zip"
+        mode: '0644'
+      delegate_to: localhost
+      become: false
+
+    - name: Unarchive dataset
+      unarchive:
+        src: "{{ project_dir }}/dataset.zip"
+        dest: "{{ project_dir }}"
+        remote_src: true
       delegate_to: localhost
       become: false
 
