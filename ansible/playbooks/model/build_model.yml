@@ -7,9 +7,10 @@
     app_namespace: "{{ lookup('env', 'APP_NAMESPACE') | default('countingapp-dev', true) }}"
     app_name: "{{ lookup('env', 'APP_NAME') | default('countingapp', true) }}"
     app_version: "{{ lookup('env', 'APP_VERSION') | default('local', true) }}"
+    app_path: "{{ lookup('env', 'APP_PATH') | default('/data/orin/git/animal-counting/app', true) }}"
+    files_path: "{{ lookup('env', 'FILES_PATH') | default('/data/orin/files', true) }}"
     project_dir: "{{ lookup('env', 'TRAINING_PROJECT_DIR') }}"
     local_app_path: "{{ lookup('env', 'LOCAL_APP_PATH') }}"
-    app_path: "{{ lookup('env', 'APP_PATH') | default('/data/orin/git/animal-counting/app', true) }}"
     data_path: "{{ lookup('env', 'TRAINING_DATA_PATH') }}"
     model: "{{ lookup('env', 'TRAINING_MODEL') }}"
     epochs: "{{ lookup('env', 'TRAINING_EPOCHS') }}"
@@ -29,6 +30,16 @@
       ansible.builtin.fail:
         msg: "Project directory {{ project_dir }} does not exist"
       when: not project_dir_stat.stat.exists
+      delegate_to: localhost
+      become: false
+
+    - name: Backup existing runs directory
+      ansible.builtin.shell: |
+        if [ -d "{{ project_dir }}/runs" ]; then
+          mv "{{ project_dir }}/runs" "{{ project_dir }}/runs-$(date +%Y%m%d_%H%M%S)"
+        fi
+      args:
+        executable: /bin/bash
       delegate_to: localhost
       become: false
 
@@ -69,12 +80,12 @@
       delegate_to: localhost
       become: false
 
-    - name: Copy onnx to Jetson
+    - name: Copy ONNX model to Jetson
       command: >
-        rsync -avz --delete --no-owner --no-group --exclude='*.engine'
+        rsync -avz --no-owner --no-group
         -e "sshpass -e ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
-        "{{ local_app_path }}/model"
-        {{ ansible_user }}@{{ ansible_host }}:{{ app_path }}
+        "{{ local_app_path }}/model/my_model.onnx"
+        {{ ansible_user }}@{{ ansible_host }}:{{ app_path }}/model/
       environment:
         SSHPASS: "{{ ansible_become_password }}"
       delegate_to: localhost
@@ -143,9 +154,20 @@
         timeout: 300
       become: true
 
-    - name: Enable counting app (apply k3s deployment)
+    - name: Render counting app test
+      template:
+        src: "../../../k3s/templates/countingapp-test.j2"
+        dest: "{{ app_path }}/../k3s/countingapp-test.yaml"
+      become: yes
+
+    - name: Enable counting app test (apply k3s deployment)
       ansible.builtin.command: >
-        kubectl apply -f {{ app_path }}/../k3s/countingapp-dep.yaml
+        kubectl apply -f {{ app_path }}/../k3s/countingapp-test.yaml
       become: true
+
+    # - name: Enable counting app (apply k3s deployment)
+    #   ansible.builtin.command: >
+    #     kubectl apply -f {{ app_path }}/../k3s/countingapp-dep.yaml
+    #   become: true
 
 
