@@ -5,9 +5,10 @@ This module handles TensorRT-based inference for object detection.
 """
 
 import time
+import gc
 import numpy as np
 import cv2
-import pycuda.autoinit
+#import pycuda.autoinit
 import pycuda.driver as cuda
 import tensorrt as trt
 import logging
@@ -41,6 +42,7 @@ class Inference:
         Args:
             engine_file_path (str): Path to the TensorRT engine file.
         """
+        cuda.init()
         self.ctx = cuda.Device(0).make_context()
         self.stream = cuda.Stream()
 
@@ -105,32 +107,87 @@ class Inference:
         self.engine = engine
 
     def infer(self, image):
-        self.ctx.push()
+
         start_pre = time.time()
-        
-        # récupère scale et padding aussi
+
         input_image, image_raw, origin_h, origin_w, r_scale, tx1, ty1 = self.preprocess_image(image)
-        
+
         end_pre = time.time()
         start = time.time()
 
         np.copyto(self.host_inputs[0], input_image.ravel())
-        cuda.memcpy_htod_async(self.cuda_inputs[0], self.host_inputs[0], self.stream)
-        self.context.execute_async_v3(stream_handle=self.stream.handle)
-        cuda.memcpy_dtoh_async(self.host_outputs[0], self.cuda_outputs[0], self.stream)
+
+        cuda.memcpy_htod_async(
+            self.cuda_inputs[0],
+            self.host_inputs[0],
+            self.stream
+        )
+
+        self.context.execute_async_v3(
+            stream_handle=self.stream.handle
+        )
+
+        cuda.memcpy_dtoh_async(
+            self.host_outputs[0],
+            self.cuda_outputs[0],
+            self.stream
+        )
+
         self.stream.synchronize()
-        self.ctx.pop()
 
         output = self.host_outputs[0]
+
         end = time.time()
 
-        # retourne aussi r_scale et padding
         return output, end - start, origin_h, origin_w, end_pre - start_pre, r_scale, tx1, ty1
 
     def destroy(self):
-        """Release resources."""
-        self.ctx.pop()
 
+        logger.info("Destroying TensorRT resources")
+
+        try:
+
+            # IMPORTANT
+            self.stream.synchronize()
+
+            # Release TensorRT context
+            if self.context is not None:
+                del self.context
+                self.context = None
+
+            # Release engine
+            if self.engine is not None:
+                del self.engine
+                self.engine = None
+
+            # Free CUDA buffers
+            for mem in self.cuda_inputs:
+                mem.free()
+
+            for mem in self.cuda_outputs:
+                mem.free()
+
+            self.cuda_inputs = []
+            self.cuda_outputs = []
+
+            # Release stream
+            if self.stream is not None:
+                del self.stream
+                self.stream = None
+
+            logger.info("Detaching CUDA context")
+
+            # VERY IMPORTANT:
+            self.ctx.detach()
+            self.ctx = None
+            
+            gc.collect()
+
+            logger.info("TensorRT cleanup done")
+
+        except Exception as e:
+            logger.error(f"Destroy error: {e}")
+                
     def preprocess_image(self, raw_bgr_image):
         image_raw = raw_bgr_image
         h, w, c = image_raw.shape

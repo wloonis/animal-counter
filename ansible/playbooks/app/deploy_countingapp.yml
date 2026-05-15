@@ -77,6 +77,12 @@
   become: yes
   tags: namespace
 
+- name: Render counting app test
+  template:
+    src: "../../../k3s/templates/countingapp-test.j2"
+    dest: "{{ app_path }}/../k3s/countingapp-test.yaml"
+  become: yes
+
 - name: Render deployment template
   template:
     src: ../../../k3s/templates/countingapp-dep.j2
@@ -135,6 +141,11 @@
     k3s kubectl apply -f {{ k3s_app }}/countingapp-ns.yaml
   become: yes
   tags: namespace
+
+- name: Deploy counting app test (test)
+  ansible.builtin.command: >
+    kubectl apply -f {{ app_path }}/../k3s/countingapp-test.yaml
+  become: yes
 
 - name: Deploy countingapp deployment using kubectl
   command: >

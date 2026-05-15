@@ -226,9 +226,9 @@
         kubectl apply -f {{ app_path }}/../k3s/countingapp-test.yaml
       become: true
 
-    # - name: Enable counting app (apply k3s deployment)
-    #   ansible.builtin.command: >
-    #     kubectl apply -f {{ app_path }}/../k3s/countingapp-dep.yaml
-    #   become: true
+    - name: Enable counting app (apply k3s deployment)
+      ansible.builtin.command: >
+        kubectl apply -f {{ app_path }}/../k3s/countingapp-dep.yaml
+      become: true
 
 

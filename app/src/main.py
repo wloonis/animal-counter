@@ -73,76 +73,104 @@ class InferThread(threading.Thread):
         timer (TimerFps): Timer for FPS calculation.
     """
     
-    def __init__(self, frame_queue: Queue, max_queue_size, yolo: Inference, video_path, stop_event, input_type="CAMERA"):
-        """
-        Initialize the inference thread.
-        
-        Args:
-            frame_queue (Queue): Queue for frame processing.
-            max_queue_size (int): Maximum size of the frame queue.
-            yolo (Inference): YOLO TensorRT model.
-            video_path (str): Path to video source.
-            input_type (str): Type of input (CAMERA or FILE).
-        """
+class InferThread(threading.Thread):
+
+    def __init__(
+        self,
+        frame_queue: Queue,
+        max_queue_size,
+        engine_file_path,
+        video_path,
+        stop_event,
+        input_type="CAMERA"
+    ):
         super().__init__()
+
         self.frame_queue = frame_queue
         self.max_queue_size = max_queue_size
-        self.yolo = yolo
+
+        self.engine_file_path = engine_file_path
+
+        self.yolo = None
+
         self.video_path = video_path
         self.input_type = input_type
         self.frame_counter = 0
         self.timer = TimerFps()
         self.stop_event = stop_event
-    
+            
     def run(self):
         """Run the inference thread."""
+        
+        self.yolo = Inference(self.engine_file_path)
+        
         frame_source = FrameSource(self.video_path, self.input_type)
         
-        while not self.stop_event.is_set():
-            self.frame_counter += 1
-            if logger.isEnabledFor(logging.DEBUG):
-                logger.debug(f"Capturing: {self.frame_counter}...")
-            ret, image_raw = frame_source.read()
-            if logger.isEnabledFor(logging.DEBUG):
-                logger.debug(f"Captured: {self.frame_counter}...")
-
-            if not ret:
-                shared_state.status = 0
-                logger.info(f"------->No Frame; Value Status: {shared_state.status}")
-                break
-
-            TOP_IGNORE = 100
-            BOTTOM_IGNORE = 50
-
-            h, w = image_raw.shape[:2]
-
-            frame_roi = image_raw[TOP_IGNORE:h-BOTTOM_IGNORE, :]
-            y_offset = TOP_IGNORE
-
-            if shared_state.status in [1,3]:
-                time_start = time.time()
-                output, use_time, origin_h, origin_w, preproc_time, r_scale, tx1, ty1 = self.yolo.infer(frame_roi)
-                time_end = time.time()
-                
+        try:
+            while not self.stop_event.is_set():
+                self.frame_counter += 1
                 if logger.isEnabledFor(logging.DEBUG):
-                    logger.debug(f"Duration InfThread: {(time_end-time_start)*1000:.2f}ms, avg: {((time_end-time_start)*1000)/self.frame_counter:.2f}ms, use time: {use_time*1000:.2f}ms, preproc: {preproc_time*1000:.2f}ms")
+                    logger.debug(f"Capturing: {self.frame_counter}...")
+                ret, image_raw = frame_source.read()
+                if logger.isEnabledFor(logging.DEBUG):
+                    logger.debug(f"Captured: {self.frame_counter}...")
 
-                results = [image_raw, output, use_time, origin_h, origin_w, self.frame_counter, r_scale, tx1, ty1, y_offset]
-                
-                try:
-                    self.frame_queue.put(results, timeout=1)
-                except:
-                    continue
-                
-                current_time, avg_time, avg_fps = self.timer.update(self.frame_counter)
-                if logger.isEnabledFor(logging.DEBUG):
-                    logger.debug(f"Time InferThread: {current_time*1000:.2f}ms | avg: {avg_time*1000:.2f}ms | avg fps: {avg_fps:.2f}")
-            else:
-                if logger.isEnabledFor(logging.DEBUG):
-                    logger.debug("Direct to frame_queue")
-                self.frame_queue.put([image_raw])
-        
-        frame_source.release()
+                if not ret:
+                    shared_state.status = 0
+                    logger.info(f"------->No Frame; Value Status: {shared_state.status}")
+                    break
+
+                TOP_IGNORE = 100
+                BOTTOM_IGNORE = 50
+
+                h, w = image_raw.shape[:2]
+
+                frame_roi = image_raw[TOP_IGNORE:h-BOTTOM_IGNORE, :]
+                y_offset = TOP_IGNORE
+
+                if shared_state.status in [1,3]:
+                    time_start = time.time()
+                    output, use_time, origin_h, origin_w, preproc_time, r_scale, tx1, ty1 = self.yolo.infer(frame_roi)
+                    time_end = time.time()
+                    
+                    if logger.isEnabledFor(logging.DEBUG):
+                        logger.debug(f"Duration InfThread: {(time_end-time_start)*1000:.2f}ms, avg: {((time_end-time_start)*1000)/self.frame_counter:.2f}ms, use time: {use_time*1000:.2f}ms, preproc: {preproc_time*1000:.2f}ms")
+
+                    boxes_pp = self.yolo.post_process(
+                        output,
+                        origin_h,
+                        origin_w
+                    )
+
+                    results = [image_raw, boxes_pp, output, use_time, origin_h, origin_w, self.frame_counter, r_scale, tx1, ty1, y_offset, self.yolo.input_h, self.yolo.input_w]
+                    
+                    try:
+                        self.frame_queue.put(results, timeout=1)
+                    except:
+                        continue
+                    
+                    current_time, avg_time, avg_fps = self.timer.update(self.frame_counter)
+                    if logger.isEnabledFor(logging.DEBUG):
+                        logger.debug(f"Time InferThread: {current_time*1000:.2f}ms | avg: {avg_time*1000:.2f}ms | avg fps: {avg_fps:.2f}")
+                else:
+                    if logger.isEnabledFor(logging.DEBUG):
+                        logger.debug("Direct to frame_queue")
+                    self.frame_queue.put([image_raw])
+
+        finally:
+            logger.info("InferThread cleanup started")
+
+            self.stop_event.set()
+
+            time.sleep(0.5)
+
+            if self.yolo is not None:
+                self.yolo.destroy()
+
+            frame_source.release()
+
+            logger.info("InferThread cleanup done")            
+#        frame_source.release()
 
 
 class DisplayThread(threading.Thread):
@@ -162,7 +190,7 @@ class DisplayThread(threading.Thread):
         filename (str): Output video filename.
     """
     
-    def __init__(self, frame_queue: Queue, yolo: Inference, sort_tracker, tracking: Tracking, counting: Counting, rendering: Rendering, stop_event, input_type="CAMERA"):
+    def __init__(self, frame_queue: Queue, sort_tracker, tracking: Tracking, counting: Counting, rendering: Rendering, stop_event, input_type="CAMERA"):
         """
         Initialize the display thread.
         
@@ -177,7 +205,6 @@ class DisplayThread(threading.Thread):
         """
         super().__init__()
         self.frame_queue = frame_queue
-        self.yolo = yolo
         self.sort_tracker = sort_tracker
         self.tracking = tracking
         self.counting = counting
@@ -259,7 +286,7 @@ class DisplayThread(threading.Thread):
 
             # Toujours récupérer img AVANT tout
             if len(self.results) > 1:
-                img, output, use_time, origin_h, origin_w, frame_counter, r_scale, tx1, ty1, y_offset = self.results
+                img, boxes_pp, output, use_time, origin_h, origin_w, frame_counter, r_scale, tx1, ty1, y_offset, input_h, input_w = self.results
             else:
                 img = self.results[0]
 
@@ -316,7 +343,7 @@ class DisplayThread(threading.Thread):
                     continue
 
                 # Postprocess
-                boxes_pp = self.yolo.post_process(output, origin_h, origin_w)
+                #boxes_pp = self.yolo.post_process(output, origin_h, origin_w)
 
                 detections = []
 
@@ -328,8 +355,8 @@ class DisplayThread(threading.Thread):
                             b,
                             origin_h,
                             origin_w,
-                            self.yolo.input_h,
-                            self.yolo.input_w
+                            input_h,
+                            input_w
                         )
 
                         box[1] += y_offset
@@ -464,8 +491,6 @@ def start(input_source, video_path):
         if shared_state.infer_thread is None or (shared_state.infer_thread and not shared_state.infer_thread.is_alive()):
             engine_file_path = "./model/my_model.engine"
             
-            yolo = Inference(engine_file_path)
-    
             shared_state.stop_event.clear()        
             
             byte_tracker = OCSORTTracker()            
@@ -477,8 +502,15 @@ def start(input_source, video_path):
             max_queue_size = 3
             shared_state.frame_queue = Queue(maxsize=max_queue_size)
             
-            shared_state.infer_thread = InferThread(frame_queue=shared_state.frame_queue, max_queue_size=max_queue_size, yolo=yolo, video_path=video_path, stop_event=shared_state.stop_event, input_type=input_source)
-            shared_state.display_thread = DisplayThread(frame_queue=shared_state.frame_queue, yolo=yolo, sort_tracker=byte_tracker, tracking=tracking, counting=counting, rendering=rendering, stop_event=shared_state.stop_event, input_type=input_source)
+            shared_state.infer_thread = InferThread(
+                frame_queue=shared_state.frame_queue,
+                max_queue_size=max_queue_size,
+                engine_file_path=engine_file_path,
+                video_path=video_path,
+                stop_event=shared_state.stop_event,
+                input_type=input_source
+            )
+            shared_state.display_thread = DisplayThread(frame_queue=shared_state.frame_queue, sort_tracker=byte_tracker, tracking=tracking, counting=counting, rendering=rendering, stop_event=shared_state.stop_event, input_type=input_source)
             
             shared_state.infer_thread.start()
             shared_state.display_thread.start()
