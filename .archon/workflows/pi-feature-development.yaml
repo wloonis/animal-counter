@@ -1,0 +1,85 @@
+# PI-Optimized Feature Development Workflow
+# Uses PI + Ollama/minimax-m2.5
+name: pi-feature-development
+description: |
+  Implement a feature from an existing plan using PI + Ollama.
+  
+  Use when: You have a plan file and want to implement it.
+  
+  NOT for: Creating plans (use pi-piv-loop or pi-plan-to-pr).
+  NOT for: Bug fixes (use pi-fix-issue).
+  
+  Workflow:
+  1. Read and understand the plan
+  2. Implement tasks sequentially
+  3. Validate each task
+  4. Run tests and verify
+
+provider: pi
+model: ollama/minimax-m2.5:cloud
+effort: high
+
+nodes:
+  - id: read-plan
+    prompt: |
+      # Feature Development — Read Plan
+      
+      Read the implementation plan from $ARGUMENTS (either a file path or the plan content).
+      
+      The plan should contain:
+      - Overview of the feature
+      - List of tasks to implement
+      - Dependencies between tasks
+      
+      Summarize the plan and confirm understanding.
+    allowed_tools: [read, grep, find, ls]
+    denied_tools: []
+
+  - id: implement-tasks
+    depends_on: [read-plan]
+    loop:
+      max_iterations: 20
+      prompt: |
+        # Feature Development — Implementation
+        
+        Read the plan and implement the next task.
+        
+        For each task:
+        1. Read the task description from $ARTIFACTS_DIR/plan.md
+        2. Implement the code changes
+        3. Verify the implementation works
+        4. Mark task as complete
+        
+        Continue until all tasks are done.
+      until: ALL_TASKS_COMPLETE
+      fresh_context: true
+    allowed_tools: [read, write, edit, grep, find, ls, bash]
+    denied_tools: []
+
+  - id: validate
+    depends_on: [implement-tasks]
+    prompt: |
+      # Feature Development — Validation
+      
+      Run validation to ensure the implementation is correct:
+      1. Check syntax/errors
+      2. Verify all tasks completed
+      3. Run tests if available
+      
+      Report validation results.
+    allowed_tools: [read, bash, grep, ls]
+    denied_tools: []
+
+  - id: create-pr-summary
+    depends_on: [validate]
+    prompt: |
+      # Feature Development — PR Summary
+      
+      Create a summary of the implementation:
+      1. List of changes made
+      2. How to test the feature
+      3. Any known limitations
+      
+      Output to $ARTIFACTS_DIR/pr-summary.md
+    allowed_tools: [read, write, grep, ls]
+    denied_tools: []

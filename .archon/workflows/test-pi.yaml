@@ -1,0 +1,12 @@
+name: test-pi
+description: Test workflow to verify Pi provider works with Ollama and minimax-m2.5
+provider: pi
+model: ollama/minimax-m2.5:cloud
+# Thinking effort: low (faster), medium, high, max (deep reasoning)
+effort: medium
+
+nodes:
+  - id: test-node
+    prompt: "Say hello in French and introduce yourself briefly"
+    allowed_tools: [read, bash, grep, ls]
+    denied_tools: []

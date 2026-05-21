@@ -66,5 +66,5 @@
         systemd-run --on-active=3 /usr/bin/systemctl reboot
       async: 1
       poll: 0
-      changed_whenx: true
+      changed_when: true
 

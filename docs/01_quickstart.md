@@ -1,128 +1,145 @@
-# Jetson Automation Framework - Quick Start Guide
+# Animal Counter Application - Quick Start Guide
 
 ## Overview
 
-This guide provides a step-by-step process for technicians to prepare and deploy a Jetson Orin Nano device with the automation framework.
+The Animal Counter Application is a real-time animal counting system designed for edge deployment on Jetson Orin devices. It uses YOLO26 with TensorRT for high-performance inference, OCSORT tracker for accurate object tracking, and features a multi-threaded architecture separating inference and display tasks for optimal performance.
+
+### Key Features
+
+- **YOLO26 + TensorRT**: Optimized inference on Jetson Orin
+- **OCSORT Tracker**: Advanced object tracking for precise counting
+- **Multi-threaded Architecture**: Separate inference and display threads
+- **K3s Kubernetes**: Containerized deployment
+- **FileBrowser**: Web-based video management interface
+- **Ansible Automation**: Automated deployment and configuration
+
+---
 
 ## Prerequisites
 
 ### Hardware
-- Jetson Orin Nano Developer Kit
-- JetPack 6.1 SD card image
-- MicroSD card (32GB or larger)
-- Power supply
-- Ethernet cable (optional)
-- WiFi network access
+
+| Component | Requirement |
+|-----------|-------------|
+| Device | Jetson Orin (Nano, NX, or AGX) |
+| Camera | USB webcam or RTSP stream |
+| Storage | SD card or NVMe with ≥32GB |
 
 ### Software
-- PC with Balena Etcher or similar SD card flashing tool
-- Ubuntu 22.04 or WSL2 on Windows
-- Git
-- Ansible (2.10+)
-- nmap (for device discovery)
 
-## Step 1: Flash JetPack 6.1
+| Component | Minimum Version |
+|-----------|------------------|
+| JetPack | 6.1+ |
+| Python | 3.10+ |
+| TensorRT | 8.x (included with JetPack) |
+| Docker | 24.x+ |
+| Kubernetes (K3s) | v1.28+ |
 
-1. Download JetPack 6.1 image from NVIDIA website
-2. Flash the image to microSD card using Balena Etcher
-3. Insert microSD card into Jetson
-4. Power on the Jetson
+---
 
-## Step 2: Initial Setup
+## Quick Start Steps
 
-1. Connect Jetson to your WiFi network (via GUI or CLI)
-2. Note the IP address assigned to the Jetson
-3. Ensure SSH is enabled:
-   ```bash
-   sudo systemctl enable ssh
-   sudo systemctl start ssh
-   ```
-
-## Step 3: Install Prerequisites
-
-Install Ansible and required tools:
+### 1. Flash JetPack
 
 ```bash
-# Install Ansible and dependencies
-sudo bash scripts/install_ansible.sh
+sudo ./flash.sh jetson-orin-nano mmcblk0p1
 ```
 
-This will install:
-- Ansible (latest version)
-- sshpass (for SSH password authentication)
-- nmap (for device discovery)
-- curl, wget, git (utility tools)
-
-## Step 4: Clone Repository
+### 2. Install Dependencies
 
 ```bash
-git clone https://github.com/your-org/jetson-automation-framework.git
-cd jetson-automation-framework
+# Install Python dependencies
+pip install -r requirements.txt
+
+# Install TensorRT bindings
+pip install tensorrt
 ```
 
-## Step 4: Configure Environment
+### 3. Deploy with Ansible
 
-Copy the example environment file:
 ```bash
-cp .env.example .env.local
+ansible-playbook -i inventory deploy.yml
 ```
 
-Edit `.env.local` with your Jetson credentials:
+### 4. Deploy to K3s
+
 ```bash
-JETSON_USER="nano-counter"
-JETSON_PASSWORD="your-password"
-JETSON_HOTSPOT_SSID="JetsonCounter"
-JETSON_HOTSPOT_PASSWORD="ChangeMe123"
+kubectl apply -f k8s/
 ```
 
-## Step 5: Prepare Jetson
+### 5. Access FileBrowser
 
-Run the one-shot preparation script:
+Open browser: `http://<device-ip>:8080`
+
+Default credentials: `admin:animalcounter`
+
+---
+
+## Running the Application
+
+### Local Execution
+
 ```bash
-./scripts/prepare_jetson.sh
+python main.py --source /dev/video0 --model yolov8n.pt
 ```
 
-This script will:
-1. Discover the Jetson on your network
-2. Test SSH connectivity
-3. Run the complete bootstrap process
+### With Docker
 
-## Step 6: Monitor Progress
-
-The script will display progress and may take 10-30 minutes depending on:
-- Network speed
-- Jetson performance
-- Package download times
-
-## Step 7: Connect to Jetson
-
-After successful completion:
-1. Connect to the Jetson hotspot: `JetsonCounter`
-2. SSH into the Jetson:
-   ```bash
-   ssh nano-counter@<jetson-ip>
-   ```
-3. Verify k3s is running:
-   ```bash
-   kubectl get nodes
-   ```
-
-## Step 8: Access Argo CD
-
-Access the Argo CD dashboard:
 ```bash
-https://<jetson-ip>:30080
+docker run -it --runtime nvidia animal-counter:latest \
+  --source rtsp://camera-ip:554/stream
 ```
 
-Username: `admin`
-Password: Displayed at the end of the bootstrap process
+### With Kubernetes
 
-## Troubleshooting
+```bash
+kubectl scale deployment animal-counter --replicas=2
+```
 
-See [Troubleshooting Guide](04_troubleshooting.md) for common issues.
+### Monitor Logs
 
-## Next Steps
+```bash
+kubectl logs -f deployment/animal-counter
+```
 
-- [Multi-Device Deployment](03_multi_jetson.md)
-- [Application Deployment](02_bootstrap_detail.md)
-- [Reset Procedure](05_reset_procedure.md)
+---
+
+## Troubleshooting Tips
+
+### Common Issues
+
+| Issue | Solution |
+|-------|----------|
+| TensorRT not found | Ensure JetPack 6.1+ is installed |
+| Low FPS | Check GPU utilization; reduce input resolution |
+| Camera not detected | Verify `/dev/video0` exists |
+| Tracking errors | Adjust confidence threshold `--conf 0.5` |
+| K3s pod crash | Check `kubectl describe pod <name>` |
+
+### Performance Tuning
+
+- Reduce inference resolution: `--imgsz 640`
+- Adjust confidence threshold: `--conf 0.3`
+- Enable FP16: `--half`
+
+### Health Check
+
+```bash
+# Check container status
+docker ps
+
+# Check GPU usage
+tegrastats
+
+# Check application logs
+journalctl -u animal-counter -f
+```
+
+---
+
+## Support
+
+For issues and questions:
+- Documentation: `/docs`
+- Logs: `/var/log/animal-counter/`
+- Email: support@animalcounter.local

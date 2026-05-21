@@ -1,0 +1,118 @@
+# PI-Optimized Safe Refactor Workflow
+# Uses PI + Ollama/minimax-m2.5
+name: pi-refactor-safely
+description: |
+  Refactor code safely with continuous validation and behavior preservation using PI + Ollama.
+  
+  Use when: You want to refactor code while preserving behavior.
+  
+  NOT for: Bug fixes (use pi-fix-issue).
+  NOT for: Feature development.
+  
+  Workflow:
+  1. Scan refactoring scope
+  2. Analyze impact (read-only)
+  3. Plan ordered task list
+  4. Execute with validation hooks
+  5. Verify behavior preservation
+
+provider: pi
+model: ollama/minimax-m2.5:cloud
+effort: high
+
+nodes:
+  - id: scan-scope
+    prompt: |
+      # Safe Refactor — Scan Scope
+      
+      Analyze refactoring scope: $ARGUMENTS
+      
+      1. Identify files/functions to refactor
+      2. Understand current implementation
+      3. Identify dependencies
+      4. Estimate complexity
+      
+      Report scope analysis.
+    allowed_tools: [read, grep, find, ls, bash]
+    denied_tools: [write, edit]
+
+  - id: analyze-impact
+    depends_on: [scan-scope]
+    prompt: |
+      # Safe Refactor — Impact Analysis
+      
+      Analyze impact (read-only):
+      1. Identify all callers/usages
+      2. Map data flows
+      3. Identify side effects
+      4. Find test coverage
+      5. Assess risk
+      
+      Report impact analysis.
+    allowed_tools: [read, grep, find, ls, bash]
+    denied_tools: [write, edit]
+
+  - id: plan-refactor
+    depends_on: [analyze-impact]
+    prompt: |
+      # Safe Refactor — Plan
+      
+      Create refactoring plan:
+      1. Ordered list of changes
+      2. Dependency order
+      3. Validation steps after each change
+      4. Rollback strategy
+      
+      Output to $ARTIFACTS_DIR/refactor-plan.md
+    allowed_tools: [read, write, grep, find, ls]
+    denied_tools: []
+
+  - id: execute-refactor
+    depends_on: [plan-refactor]
+    loop:
+      max_iterations: 15
+      prompt: |
+        # Safe Refactor — Execute
+        
+        Execute refactoring from plan:
+        1. Read next change from $ARTIFACTS_DIR/refactor-plan.md
+        2. Make the change
+        3. Run validation (type-check, lint, tests)
+        4. Verify behavior preserved
+        5. Mark complete
+        
+        Each change is validated before proceeding.
+      until: ALL_TASKS_COMPLETE
+      fresh_context: true
+    allowed_tools: [read, write, edit, grep, find, ls, bash]
+    denied_tools: []
+
+  - id: verify-behavior
+    depends_on: [execute-refactor]
+    prompt: |
+      # Safe Refactor — Verify Behavior
+      
+      Verify behavior preservation:
+      1. Run all tests
+      2. Compare output against baseline
+      3. Check error handling
+      4. Verify no logic changes
+      
+      Report verification results.
+    allowed_tools: [read, bash, grep, ls]
+    denied_tools: [write, edit]
+
+  - id: summarize
+    depends_on: [verify-behavior]
+    prompt: |
+      # Safe Refactor — Summary
+      
+      Final summary:
+      1. Changes made
+      2. Before/after comparison
+      3. Tests passing
+      4. Behavior verified
+      
+      Output to $ARTIFACTS_DIR/refactor-summary.md
+    allowed_tools: [write, read]
+    denied_tools: []

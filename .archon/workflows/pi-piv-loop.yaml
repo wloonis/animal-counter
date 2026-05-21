@@ -1,0 +1,125 @@
+# PI-Optimized PIV Loop Workflow
+# Uses PI + Ollama/minimax-m2.5
+name: pi-piv-loop
+description: |
+  Guided Plan-Implement-Validate development with human-in-the-loop using PI + Ollama.
+  
+  This is a simplified version of archon-piv-loop optimized for PI provider.
+  Use when you want structured development with human checkpoints.
+  
+  NOT for: Autonomous implementation without planning.
+  NOT for: PRD creation (use interactive-prd).
+  
+  Interactive PIV loop workflow:
+  1. EXPLORE: Iterative conversation with human to understand the problem
+  2. PLAN: Create structured plan -> human review
+  3. IMPLEMENT: Task-by-task implementation from plan
+  4. VALIDATE: Automated validation -> human feedback
+
+provider: pi
+model: ollama/minimax-m2.5:cloud
+effort: high
+interactive: true
+
+nodes:
+  # ═══════════════════════════════════════════════════════════════
+  # PHASE 1: EXPLORE — Understand the problem
+  # ═══════════════════════════════════════════════════════════════
+  
+  - id: explore
+    loop:
+      max_iterations: 10
+      prompt: |
+        # PIV Loop — Exploration Phase
+        
+        Goal: UNDERSTAND what to build before any code is written.
+        
+        **User's request**: $ARGUMENTS
+        **Your role**: Senior engineering partner
+        
+        Steps:
+        1. Explore the codebase to understand context
+        2. Ask clarifying questions to deeply understand the requirements
+        3. Propose an approach
+        
+        Available tools: read, grep, find, ls, bash
+        
+        When ready to proceed to planning, say "READY FOR PLANNING".
+      until: USER_READY
+      interactive: true
+      gate_message: "Say READY FOR PLANNING when ready to proceed to the planning phase."
+    allowed_tools: [read, grep, find, ls, bash]
+    denied_tools: []
+
+  # ═══════════════════════════════════════════════════════════════
+  # PHASE 2: PLAN — Create implementation plan
+  # ═══════════════════════════════════════════════════════════════
+  
+  - id: plan
+    depends_on: [explore]
+    loop:
+      max_iterations: 5
+      prompt: |
+        # PIV Loop — Planning Phase
+        
+        Based on the exploration, create a detailed implementation plan.
+        
+        **User's request**: $ARGUMENTS
+        **Context from exploration**: $PREVIOUS_CONTEXT
+        
+        Create a structured plan with:
+        1. Overview of what to build
+        2. List of tasks (each task = one atomic change)
+        3. Dependencies between tasks
+        4. Validation approach
+        
+        Format as a markdown plan in $ARTIFACTS_DIR/plan.md
+      until: USER_READY
+      interactive: true
+      gate_message: "Say READY FOR REVIEW when your plan is ready for human review."
+    allowed_tools: [read, write, grep, find, ls, bash]
+    denied_tools: []
+
+  # ═══════════════════════════════════════════════════════════════
+  # PHASE 3: IMPLEMENT — Execute the plan
+  # ═══════════════════════════════════════════════════════════════
+  
+  - id: implement
+    depends_on: [plan]
+    loop:
+      max_iterations: 20
+      prompt: |
+        # PIV Loop — Implementation Phase
+        
+        Read the plan at $ARTIFACTS_DIR/plan.md and implement the next task.
+        
+        Work through tasks one by one:
+        1. Read the task description
+        2. Implement the code changes
+        3. Run validation/tests if applicable
+        4. Mark task as complete
+        
+        Use fresh context for each iteration.
+      until: ALL_TASKS_COMPLETE
+      fresh_context: true
+    allowed_tools: [read, write, edit, grep, find, ls, bash]
+    denied_tools: []
+
+  # ═══════════════════════════════════════════════════════════════
+  # PHASE 4: VALIDATE — Review and verify
+  # ═══════════════════════════════════════════════════════════════
+  
+  - id: validate
+    depends_on: [implement]
+    prompt: |
+      # PIV Loop — Validation Phase
+      
+      Review all changes against the plan:
+      1. Read $ARTIFACTS_DIR/plan.md
+      2. Check all implemented tasks
+      3. Verify code quality and consistency
+      4. Fix any issues found
+      
+      Report your findings to the user.
+    allowed_tools: [read, write, edit, grep, find, ls, bash]
+    denied_tools: []

@@ -1,0 +1,98 @@
+# PI-Optimized Smart PR Review Workflow
+# Uses PI + Ollama/minimax-m2.5
+name: pi-smart-pr-review
+description: |
+  Smart, efficient PR review using PI + Ollama that adapts to PR complexity.
+  
+  Use when: You want a code review that classifies complexity first
+  and runs only relevant review agents.
+  
+  NOT for: When you explicitly want ALL review agents.
+  
+  Workflow:
+  1. Analyze PR scope and complexity
+  2. Run targeted review agents
+  3. Synthesize findings
+  4. Auto-fix CRITICAL/HIGH issues
+
+provider: pi
+model: ollama/minimax-m2.5:cloud
+effort: high
+
+nodes:
+  - id: analyze-scope
+    prompt: |
+      # Smart PR Review — Scope Analysis
+      
+      Analyze the pull request to determine:
+      1. What files were changed
+      2. What type of changes (bug fix, feature, refactor, etc.)
+      3. Complexity score (simple/medium/complex)
+      4. Which review aspects are relevant:
+         - code-quality (always)
+         - security (if changes involve auth, data, etc.)
+         - test-coverage (if changes are substantial)
+         - docs-impact (if user-facing APIs changed)
+      
+      Report your analysis.
+    allowed_tools: [read, grep, find, ls, bash]
+    denied_tools: []
+
+  - id: core-review
+    depends_on: [analyze-scope]
+    prompt: |
+      # Smart PR Review — Core Review
+      
+      Perform a code quality review focusing on:
+      - Code correctness and logic
+      - Error handling
+      - Performance considerations
+      - Code style consistency
+      
+      Read the changed files and report any issues found.
+    allowed_tools: [read, grep, find, ls, bash]
+    denied_tools: []
+
+  - id: security-review
+    depends_on: [analyze-scope]
+    prompt: |
+      # Smart PR Review — Security Review
+      
+      Perform a security-focused review:
+      - Check for vulnerabilities
+      - Verify input validation
+      - Check for injection risks
+      - Verify authentication/authorization patterns
+      
+      Report any security concerns.
+    allowed_tools: [read, grep, find, ls, bash]
+    denied_tools: []
+    # Only runs if security-relevant changes detected
+
+  - id: auto-fix
+    depends_on: [core-review, security-review]
+    prompt: |
+      # Smart PR Review — Auto-Fix
+      
+      Based on the review findings:
+      1. Fix all CRITICAL and HIGH severity issues
+      2. Leave LOW severity issues as comments for human decision
+      
+      Implement fixes directly where possible.
+    allowed_tools: [read, write, edit, grep, find, ls, bash]
+    denied_tools: []
+
+  - id: synthesize
+    depends_on: [auto-fix]
+    prompt: |
+      # Smart PR Review — Synthesis
+      
+      Summarize the review:
+      1. Total issues found
+      2. Issues auto-fixed
+      3. Remaining issues requiring human attention
+      4. Recommendations
+      
+      Present a clean report to the user.
+    allowed_tools: [read, grep]
+    denied_tools: [write, edit, bash]

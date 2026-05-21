@@ -1,0 +1,121 @@
+# PI-Optimized Idea to PR Workflow
+# Uses PI + Ollama/minimax-m2.5
+name: pi-idea-to-pr
+description: |
+  Turn a feature idea into a complete PR using PI + Ollama.
+  
+  Use when: You have a feature idea or description and want end-to-end development.
+  
+  NOT for: Executing existing plans (use pi-plan-to-pr).
+  NOT for: Quick fixes.
+  
+  Full workflow:
+  1. Create comprehensive implementation plan with codebase analysis
+  2. Setup branch and extract scope limits
+  3. Verify plan research is still valid
+  4. Implement all tasks with type-checking
+  5. Run full validation suite
+  6. Create PR with template, mark ready
+  7. Code review and fixes
+  8. Final summary
+
+provider: pi
+model: ollama/minimax-m2.5:cloud
+effort: high
+
+nodes:
+  - id: analyze-idea
+    prompt: |
+      # Idea to PR — Analyze Idea
+      
+      Analyze the feature idea: $ARGUMENTS
+      
+      Steps:
+      1. Understand what the user wants to build
+      2. Explore the codebase to understand context and constraints
+      3. Identify files that will be affected
+      4. Propose a high-level approach
+      
+      Report your analysis.
+    allowed_tools: [read, grep, find, ls, bash]
+    denied_tools: []
+
+  - id: create-plan
+    depends_on: [analyze-idea]
+    prompt: |
+      # Idea to PR — Create Plan
+      
+      Create a detailed implementation plan:
+      1. Overview of the feature
+      2. List of tasks (atomic changes)
+      3. Dependencies between tasks
+      4. Testing strategy
+      5. Risk assessment
+      
+      Write to $ARTIFACTS_DIR/plan.md
+    allowed_tools: [read, write, grep, find, ls, bash]
+    denied_tools: []
+
+  - id: implement
+    depends_on: [create-plan]
+    loop:
+      max_iterations: 30
+      prompt: |
+        # Idea to PR — Implementation
+        
+        Read $ARTIFACTS_DIR/plan.md and implement the next task.
+        
+        For each task:
+        1. Read the task description
+        2. Implement the code changes
+        3. Verify the implementation compiles/works
+        4. Mark task as complete
+        
+        Use fresh context for each iteration.
+      until: ALL_TASKS_COMPLETE
+      fresh_context: true
+    allowed_tools: [read, write, edit, grep, find, ls, bash]
+    denied_tools: []
+
+  - id: validate
+    depends_on: [implement]
+    prompt: |
+      # Idea to PR — Validation
+      
+      Run validation:
+      1. Check syntax/errors
+      2. Run tests if available
+      3. Verify all tasks completed
+      
+      Report validation results.
+    allowed_tools: [read, bash, grep, ls]
+    denied_tools: []
+
+  - id: review
+    depends_on: [validate]
+    prompt: |
+      # Idea to PR — Code Review
+      
+      Review all changes:
+      1. Read changed files
+      2. Check code quality
+      3. Identify issues
+      4. Fix critical/high issues
+      
+      Report review findings.
+    allowed_tools: [read, write, edit, grep, find, ls, bash]
+    denied_tools: []
+
+  - id: summarize
+    depends_on: [review]
+    prompt: |
+      # Idea to PR — Summary
+      
+      Create final summary:
+      1. List of changes made
+      2. How to test the feature
+      3. Any known limitations
+      
+      Output to $ARTIFACTS_DIR/pr-summary.md
+    allowed_tools: [read, write, grep]
+    denied_tools: []

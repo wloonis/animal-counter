@@ -1,0 +1,99 @@
+# PI-Optimized Create Issue Workflow
+# Uses PI + Ollama/minimax-m2.5
+name: pi-create-issue
+description: |
+  Report a problem or bug as a GitHub issue with automated reproduction using PI + Ollama.
+  
+  Use when: You want to file a bug report or issue.
+  
+  NOT for: Feature requests or enhancements.
+  
+  Workflow:
+  1. Classify problem area
+  2. Gather context (templates, git state)
+  3. Investigate relevant code
+  4. Reproduce the issue
+  5. Create issue with evidence
+
+provider: pi
+model: ollama/minimax-m2.5:cloud
+effort: high
+
+nodes:
+  - id: classify-problem
+    prompt: |
+      # Create Issue — Classification
+      
+      Classify the problem: $ARGUMENTS
+      
+      1. Determine problem type: bug, crash, performance, etc.
+      2. Identify affected area: frontend, backend, config, etc.
+      3. Estimate severity: critical, high, medium, low
+      4. Initial hypothesis
+      
+      Report classification.
+    allowed_tools: [read, grep, find, ls, bash]
+    denied_tools: [write, edit]
+
+  - id: gather-context
+    depends_on: [classify-problem]
+    prompt: |
+      # Create Issue — Gather Context
+      
+      Gather relevant context:
+      1. Check git log for recent changes
+      2. Find related files
+      3. Check for error logs
+      4. Find similar issues/patterns
+      
+      Collect evidence.
+    allowed_tools: [read, grep, find, ls, bash]
+    denied_tools: [write, edit]
+
+  - id: investigate
+    depends_on: [gather-context]
+    prompt: |
+      # Create Issue — Investigate
+      
+      Investigate the problem:
+      1. Read relevant code
+      2. Understand the flow
+      3. Identify root cause (if possible)
+      4. Document findings
+      
+      Report investigation results.
+    allowed_tools: [read, grep, find, ls, bash]
+    denied_tools: [write, edit]
+
+  - id: reproduce
+    depends_on: [investigate]
+    prompt: |
+      # Create Issue — Reproduce
+      
+      Attempt to reproduce the issue:
+      1. Set up environment
+      2. Run steps to reproduce
+      3. Document exact reproduction steps
+      4. Capture error output
+      
+      Success = issue reproduced with evidence.
+      Failure = cannot reproduce, will report findings.
+    allowed_tools: [read, write, bash, grep, find, ls]
+    denied_tools: []
+
+  - id: create-issue
+    depends_on: [reproduce]
+    prompt: |
+      # Create Issue — Create Issue
+      
+      Create GitHub issue with full evidence:
+      1. Title: clear description
+      2. Description: problem, steps, error
+      3. Environment details
+      4. Attach logs/screenshots
+      5. Suggested fix (if known)
+      
+      Output draft to $ARTIFACTS_DIR/issue-draft.md
+      Note: This workflow creates a draft, actual GitHub creation requires GitHub CLI.
+    allowed_tools: [write, read]
+    denied_tools: []

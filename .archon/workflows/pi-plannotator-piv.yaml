@@ -1,0 +1,160 @@
+# PI-Optimized PIV Loop with Plannotator
+# Uses PI + Ollama/minimax-m2.5 + Plannotator extension
+name: pi-plannotator-piv
+description: |
+  Guided Plan-Implement-Validate development with human-in-the-loop using PI + Ollama + Plannotator.
+  
+  This workflow uses Plannotator for visual plan review:
+  - Agent writes a plan and submits it for review
+  - You can approve/deny with annotations in the browser
+  - Agent iterates until you approve
+  - Then executes with full tool access
+  
+  Plans are saved in ./spec/{feature-slug}/PRD-{slug}-{timestamp}.md
+  
+  Prerequisites: Plannotator extension installed (pi install npm:@plannotator/pi-extension)
+  
+  Usage: Run in a terminal that can open a browser.
+
+provider: pi
+model: ollama/minimax-m2.5:cloud
+effort: high
+interactive: true
+
+nodes:
+  # ═══════════════════════════════════════════════════════════════
+  # PHASE 1: EXPLORE + PLAN — Create PRD in ./spec/
+  # ═══════════════════════════════════════════════════════════════
+  
+  - id: explore-plan
+    loop:
+      max_iterations: 10
+      prompt: |
+        # PIV Loop with Plannotator — Exploration & Planning
+        
+        **User's request**: $ARGUMENTS
+        
+        Your goal is to understand what to build AND create a PRD that can be reviewed visually.
+        
+        ## Plan File Location
+        
+        Save the plan to: `./spec/{feature-slug}/PRD-{feature-slug}-{timestamp}.md`
+        
+        First, create the directory structure and generate the file path:
+        ```bash
+        # Generate slug from user request
+        SLUG=$(echo "$ARGUMENTS" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9 ]+/-/g' | sed 's/^-//;s/-$//' | tr ' ' '-' | cut -c1-30)
+        mkdir -p ./spec/$SLUG
+        TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+        PLAN_FILE="./spec/$SLUG/PRD-$SLUG-$TIMESTAMP.md"
+        echo "PLAN_FILE=$PLAN_FILE"
+        ```
+        
+        ## Plan Format (PRD)
+        
+        Create a structured PRD in markdown format:
+        
+        ```markdown
+        # PRD: [Feature Name]
+        
+        ## Overview
+        [Brief description of what to build]
+        
+        ## Context
+        - Why this feature is needed
+        - Related features or existing code
+        
+        ## Tasks
+        
+        - [ ] Task 1: [Description]
+        - [ ] Task 2: [Description]
+        - [ ] Task 3: [Description]
+        
+        ## Files to Change
+        - [ ] file1.py
+        - [ ] file2.js
+        
+        ## Acceptance Criteria
+        - [ ] Criterion 1
+        - [ ] Criterion 2
+        ```
+        
+        **Important**: After writing the PRD file to the spec directory, inform the user about the file location and say:
+        "Say APPROVE to proceed with implementation, or describe what needs to change."
+        
+        The PRD file should be saved in the format: ./spec/{slug}/PRD-{slug}-{timestamp}.md
+      until: USER_READY
+      interactive: true
+      gate_message: "Say APPROVE to proceed with implementation, or describe what needs to change."
+    allowed_tools: [read, grep, find, ls, bash, write]
+    denied_tools: []
+
+  # ═══════════════════════════════════════════════════════════════
+  # PHASE 2: IMPLEMENT — Execute the plan
+  # ═══════════════════════════════════════════════════════════════
+  
+  - id: implement
+    depends_on: [explore-plan]
+    loop:
+      max_iterations: 20
+      prompt: |
+        # PIV Loop — Implementation Phase
+        
+        Read the PRD plan from ./spec/{feature-slug}/PRD-*.md and implement the remaining tasks.
+        
+        First, find the PRD file:
+        ```bash
+        ls -la ./spec/*/PRD-*.md 2>/dev/null | tail -1
+        ```
+        
+        Mark completed tasks in your response with [DONE:n] where n is the task number.
+        
+        Steps:
+        1. Find and read the PRD file in ./spec/
+        2. Identify the next incomplete task
+        3. Implement it
+        4. Mark it as done in your response
+        
+        Use fresh context for each iteration.
+      until: ALL_TASKS_COMPLETE
+      fresh_context: true
+    allowed_tools: [read, write, edit, grep, find, ls, bash]
+    denied_tools: []
+
+  # ═══════════════════════════════════════════════════════════════
+  # PHASE 3: VALIDATE — Review and verify
+  # ═══════════════════════════════════════════════════════════════
+  
+  - id: validate
+    depends_on: [implement]
+    prompt: |
+      # PIV Loop — Validation Phase
+      
+      Review all changes against the PRD:
+      1. Find and read the PRD from ./spec/*/PRD-*.md
+      2. Check all implemented tasks
+      3. Verify code quality and consistency
+      4. Fix any issues found
+      
+      Report your findings to the user.
+    allowed_tools: [read, write, edit, grep, find, ls, bash]
+    denied_tools: []
+
+  # ═══════════════════════════════════════════════════════════════
+  # PHASE 4: FINALIZE — Summary
+  # ═══════════════════════════════════════════════════════════════
+  
+  - id: finalize
+    depends_on: [validate]
+    prompt: |
+      # PIV Loop — Final Summary
+      
+      Create a final summary:
+      1. List of changes made
+      2. How to test the feature
+      3. Any known limitations
+      4. Path to the PRD: ./spec/{feature-slug}/PRD-*.md
+      
+      Output to $ARTIFACTS_DIR/pr-summary.md
+    allowed_tools: [read, write, grep]
+    denied_tools: []

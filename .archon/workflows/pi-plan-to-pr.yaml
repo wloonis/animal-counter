@@ -1,0 +1,103 @@
+# PI-Optimized Plan to PR Workflow
+# Uses PI + Ollama/minimax-m2.5
+name: pi-plan-to-pr
+description: |
+  Execute an existing implementation plan and create a PR using PI + Ollama.
+  
+  Use when: You have an existing plan file and want to implement it end-to-end.
+  
+  NOT for: Creating plans from scratch (use pi-idea-to-pr).
+  NOT for: Quick fixes.
+  
+  Full workflow:
+  1. Read plan, setup branch, extract scope limits
+  2. Implement all tasks with validation
+  3. Run full validation suite
+  4. Create PR summary
+  5. Code review and fixes
+  6. Final summary
+
+provider: pi
+model: ollama/minimax-m2.5:cloud
+effort: high
+
+nodes:
+  - id: read-plan
+    prompt: |
+      # Plan to PR — Read Plan
+      
+      Read the implementation plan from $ARGUMENTS (file path or description).
+      
+      The plan should contain:
+      - Overview of what to build
+      - List of tasks
+      - Dependencies
+      - Testing strategy
+      
+      Confirm understanding and start implementation.
+    allowed_tools: [read, grep, find, ls]
+    denied_tools: []
+
+  - id: implement
+    depends_on: [read-plan]
+    loop:
+      max_iterations: 20
+      prompt: |
+        # Plan to PR — Implementation
+        
+        Read $ARTIFACTS_DIR/plan.md and implement the next task.
+        
+        Each iteration implements one task:
+        1. Read task description
+        2. Implement code changes
+        3. Validate the implementation
+        4. Mark task complete
+        
+        Use fresh context each iteration.
+      until: ALL_TASKS_COMPLETE
+      fresh_context: true
+    allowed_tools: [read, write, edit, grep, find, ls, bash]
+    denied_tools: []
+
+  - id: validate
+    depends_on: [implement]
+    prompt: |
+      # Plan to PR — Validation
+      
+      Run full validation:
+      1. Check for syntax errors
+      2. Run tests if available
+      3. Verify all tasks completed
+      
+      Report validation status.
+    allowed_tools: [read, bash, grep, ls]
+    denied_tools: []
+
+  - id: review
+    depends_on: [validate]
+    prompt: |
+      # Plan to PR — Code Review
+      
+      Review changes against the plan:
+      1. Read changed files
+      2. Verify implementation matches plan
+      3. Check code quality
+      4. Fix any issues found
+      
+      Report review results.
+    allowed_tools: [read, write, edit, grep, find, ls, bash]
+    denied_tools: []
+
+  - id: summarize
+    depends_on: [review]
+    prompt: |
+      # Plan to PR — Summary
+      
+      Create PR summary:
+      1. Changes implemented
+      2. How to test
+      3. Limitations/notes
+      
+      Output to $ARTIFACTS_DIR/pr-summary.md
+    allowed_tools: [read, write, grep]
+    denied_tools: []
