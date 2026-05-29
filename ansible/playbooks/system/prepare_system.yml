@@ -62,10 +62,10 @@
       apt:
         upgrade: dist
 
-    - name: Reboot if needed
-      reboot:
-        msg: "Reboot after NVIDIA L4T upgrade"
-        reboot_timeout: 600
+    # - name: Reboot if needed
+    #   reboot:
+    #     msg: "Reboot after NVIDIA L4T upgrade"
+    #     reboot_timeout: 600
 
     - name: Install basic utilities
       apt:

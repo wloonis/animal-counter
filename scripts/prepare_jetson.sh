@@ -46,35 +46,35 @@ if ! bash scripts/jetson_first_access.sh; then
     exit 1
 fi
 
-echo "SSH access successful!"
+# echo "SSH access successful!"
 
-#Step 3: Run Ansible system preparation (commented for now)
-echo ""
-echo "Step 3: Running Ansible system preparation..."
-echo "This may take several minutes depending on network speed and Jetson performance..."
+# #Step 3: Run Ansible system preparation (commented for now)
+# echo ""
+# echo "Step 3: Running Ansible system preparation..."
+# echo "This may take several minutes depending on network speed and Jetson performance..."
 
-# Set environment variables for Ansible
-if [ -z "${JETSON_USER}" ]; then
-    export JETSON_USER="nano-counter"
-fi
+# # Set environment variables for Ansible
+# if [ -z "${JETSON_USER}" ]; then
+#     export JETSON_USER="nano-counter"
+# fi
 
-if [ -z "${JETSON_PASSWORD}" ]; then
-    echo "Warning: JETSON_PASSWORD not set. Using SSH key authentication."
-fi
+# if [ -z "${JETSON_PASSWORD}" ]; then
+#     echo "Warning: JETSON_PASSWORD not set. Using SSH key authentication."
+# fi
 
-export ANSIBLE_HOST_KEY_CHECKING=False
+# export ANSIBLE_HOST_KEY_CHECKING=False
 
-# Run Ansible playbook for system preparation
-if ansible-playbook -i ansible/inventory/jetsons.yml ansible/playbooks/system/prepare_system.yml; then
-    echo ""
-    echo "✅ System preparation completed successfully!"
-    echo ""
-else
-    echo ""
-    echo "❌ Error: System preparation failed"
-    echo "Check the logs above for details"
-    exit 1
-fi
+# # Run Ansible playbook for system preparation
+# if ansible-playbook -i ansible/inventory/jetsons.yml ansible/playbooks/system/prepare_system.yml; then
+#     echo ""
+#     echo "✅ System preparation completed successfully!"
+#     echo ""
+# else
+#     echo ""
+#     echo "❌ Error: System preparation failed"
+#     echo "Check the logs above for details"
+#     exit 1
+# fi
 
 # Step 4: Build and deploy countingapp
 echo ""
@@ -112,22 +112,74 @@ else
     exit 1
 fi
 
-#Step 5: Run Ansible HotSpot Setup (commented for now)
-echo ""
-echo "Step 3: Running Ansible HotSpot Setup..."
-echo "This may take several minutes depending on network speed and Jetson performance..."
+# #Step 5: Run Ansible HotSpot Setup (commented for now)
+# echo ""
+# echo "Step 3: Running Ansible HotSpot Setup..."
+# echo "This may take several minutes depending on network speed and Jetson performance..."
 
-# Run Ansible playbook for system preparation
-if ansible-playbook -i ansible/inventory/jetsons.yml ansible/playbooks/system/hotspot_setup.yml; then
-    echo ""
-    echo "✅ HotSpot Setup completed successfully!"
-    echo ""
-else
-    echo ""
-    echo "❌ Error: HotSpot Setup failed"
-    echo "Check the logs above for details"
-    exit 1
-fi
+# # Run Ansible playbook for system preparation
+# if ansible-playbook -i ansible/inventory/jetsons.yml ansible/playbooks/system/hotspot_setup.yml; then
+#     echo ""
+#     echo "✅ HotSpot Setup completed successfully!"
+#     echo ""
+# else
+#     echo ""
+#     echo "❌ Error: HotSpot Setup failed"
+#     echo "Check the logs above for details"
+#     exit 1
+# fi
 
+# #Step 6: Configure Splash Screen and LXDE Protection
+# echo ""
+# echo "Step 6: Configuring Splash Screen and LXDE Protection..."
+# echo "This will:"
+# echo "- Display splash.png while countingapp is loading"
+# echo "- Block LXDE access until countingapp service is running in k3s"
+# echo ""
+
+# # Set environment variables for Ansible
+# if [ -z "${JETSON_USER}" ]; then
+#     export JETSON_USER="nano-counter"
+# fi
+
+# if [ -z "${JETSON_PASSWORD}" ]; then
+#     echo "Warning: JETSON_PASSWORD not set. Using SSH key authentication."
+# fi
+
+# export ANSIBLE_HOST_KEY_CHECKING=False
+
+# # Run Ansible playbook for splash screen configuration
+# if ansible-playbook -i ansible/inventory/jetsons.yml ansible/playbooks/system/configure_splash_screen.yml; then
+#     echo ""
+#     echo "✅ Splash Screen Configuration completed successfully!"
+#     echo ""
+# else
+#     echo ""
+#     echo "❌ Error: Splash Screen Configuration failed"
+#     echo "Check the logs above for details"
+#     exit 1
+# fi
+
+
+# echo ""
+# echo "=========================================="
+# echo "ALL STEPS COMPLETED SUCCESSFULLY!"
+# echo "=========================================="
+# echo ""
+# echo "Summary:"
+# echo "1. ✅ System preparation"
+# echo "2. ✅ Application deployment"
+# echo "3. ✅ HotSpot Setup"
+# echo "4. ✅ Splash Screen & LXDE Protection"
+# echo ""
+# echo "The Jetson is now ready!"
+# echo "- Splash screen will show during countingapp startup"
+# echo "- LXDE is blocked until countingapp is running"
+# echo ""
+# echo "Next steps:"
+# echo "1. Connect to Jetson hotspot: $JETSON_HOTSPOT_SSID"
+# echo "2. Access Jetson via SSH: ssh $JETSON_USER@$JETSON_IP"
+# echo "3. Access countingapp: http://$JETSON_IP:31501"
+# echo ""
 
 exit 0

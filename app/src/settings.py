@@ -48,6 +48,9 @@ class Settings:
         # FPS Settings
         self.FPS_OUTPUT = int(os.getenv("FPS_OUTPUT", 30))
         
+        # Offset of the counting line in percent
+        self.OFFSET_PERCENT_COUNTING_LINE = int(os.getenv("OFFSET_PERCENT_COUNTING_LINE", 0))
+        
         # Visualization Options
         self.DRAW_TRACKING = os.getenv("DRAW_TRACKING", "True").lower() == "true"
         self.CENTROID_TRACKING = os.getenv("CENTROID_TRACKING", "True").lower() == "true"

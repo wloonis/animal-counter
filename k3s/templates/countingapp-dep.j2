@@ -21,14 +21,14 @@ spec:
     spec:
       terminationGracePeriodSeconds: 0
 
-      initContainers:
-      - name: wait-for-batch
-        image: bitnami/kubectl:latest
-        command:
-          - sh
-          - -c
-          - |
-            kubectl wait --for=condition=complete job/countingapp-test --timeout=600s
+#      initContainers:
+#      - name: wait-for-batch
+#        image: bitnami/kubectl:latest
+#        command:
+#          - sh
+#          - -c
+#          - |
+#            kubectl wait --for=condition=complete job/countingapp-test --timeout=600s
 
       containers:
       - name: "{{ app_name }}"

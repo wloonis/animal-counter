@@ -21,7 +21,7 @@ class Counting:
         area_out_list (list): List to store track IDs in the "out" area.
     """
     
-    def __init__(self, shared_state=None, pig_confidence_threshold=0.7):
+    def __init__(self, shared_state=None, pig_confidence_threshold=0.7, offset_counting_line=0):
         """Initialize the counting object."""
         self.detections = {}
         self.trails = shared_state.trails if shared_state else {}
@@ -29,6 +29,7 @@ class Counting:
         self.area_out_list = []
         self.shared_state = shared_state
         self.pig_confidence_threshold = pig_confidence_threshold
+        self.offset_counting_line=offset_counting_line
     
     def count(self, image_raw, result_boxes, result_trackid, result_classid, result_scores=None, counting_class=0, counter_to_right=0):
         """
@@ -47,7 +48,7 @@ class Counting:
             int: Updated count of objects moving to the right.
         """
         img_height, img_width = image_raw.shape[:2]
-        x = img_width // 2
+        x = int((img_width // 2) * (1 + self.offset_counting_line / 100))
         
         if len(result_boxes) > 0:
             center_x = (result_boxes[:, 0] + result_boxes[:, 2]) / 2
@@ -95,7 +96,7 @@ class Counting:
                     self.trails[track_id] = []
                 self.trails[track_id].append((int(cx), int(cy)))
 
-                if len(self.trails[track_id]) > 30:
+                if len(self.trails[track_id]) > 60:
                     self.trails[track_id].pop(0)
         
         return counter_to_right

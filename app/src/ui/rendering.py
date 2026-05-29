@@ -27,7 +27,7 @@ class Rendering:
         draw_box (bool): Whether to draw bounding boxes.
     """
     
-    def __init__(self, draw_box=False):
+    def __init__(self, draw_box=False, offset_counting_line=0):
         """
         Initialize the rendering object.
         
@@ -38,6 +38,7 @@ class Rendering:
         self.centroid_tracking = True
         self.box_tracking = True
         self.buttons = {}
+        self.offset_counting_line=offset_counting_line
         
         self.btn_learning_on, self.btn_learning_on_inv_alpha, self.btn_learning_on_size = self.load_button("/app/img/learning_on.png")
         self.btn_learning_off, self.btn_learning_off_inv_alpha, self.btn_learning_off_size = self.load_button("/app/img/learning_off.png")
@@ -219,8 +220,8 @@ class Rendering:
             numpy.ndarray: Image with counter displayed.
         """
         img_height, img_width = img.shape[:2]
-        x = img_width // 2
-        text_position = (x + 20, 100)
+        x = int((img_width // 2) * (1 + self.offset_counting_line / 100))
+        text_position = (x - 80, 100)
         
         font = cv2.FONT_HERSHEY_SIMPLEX
         font_scale = 3.0

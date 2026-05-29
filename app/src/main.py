@@ -493,11 +493,17 @@ def start(input_source, video_path):
             
             shared_state.stop_event.clear()        
             
-            byte_tracker = OCSORTTracker()            
+            byte_tracker = OCSORTTracker(
+                lost_track_buffer=60,
+                minimum_iou_threshold=0.15,
+                minimum_consecutive_frames=3,
+                direction_consistency_weight=0.25,
+                delta_t=5                
+            )            
 
             tracking = Tracking(draw_box=shared_state.draw_tracking, shared_state=shared_state)
-            counting = Counting(shared_state=shared_state, pig_confidence_threshold=settings.PIG_CONFIDENCE_THRESHOLD)
-            rendering = Rendering(draw_box=shared_state.draw_tracking)
+            counting = Counting(shared_state=shared_state, pig_confidence_threshold=settings.PIG_CONFIDENCE_THRESHOLD, offset_counting_line=settings.OFFSET_PERCENT_COUNTING_LINE)
+            rendering = Rendering(draw_box=shared_state.draw_tracking, offset_counting_line=settings.OFFSET_PERCENT_COUNTING_LINE)
             
             max_queue_size = 3
             shared_state.frame_queue = Queue(maxsize=max_queue_size)

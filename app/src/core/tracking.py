@@ -195,31 +195,3 @@ class Tracking:
         center_y = int((y1 + y2) / 2)
         return center_x, center_y
     
-    def display_counter(self, img, counter_to_right):
-        """
-        Display the counter on the image.
-        
-        Args:
-            img (numpy.ndarray): Image to display on.
-            counter_to_right (int): Count of objects moving to the right.
-            
-        Returns:
-            numpy.ndarray: Image with counter displayed.
-        """
-        img_height, img_width = img.shape[:2]
-        x = img_width // 2
-        text_position = (x + 20, 100)
-        
-        font = cv2.FONT_HERSHEY_SIMPLEX
-        font_scale = 3.0
-        font_color = (125, 0, 0)
-        font_thickness = 3
-        text = str(counter_to_right)
-        
-        cv2.putText(img, text, text_position, font, font_scale, font_color, font_thickness)
-        
-        line_color = (0, 255, 255)
-        line_thickness = 2
-        cv2.line(img, (x, 0), (x, img_height), line_color, line_thickness)
-        
-        return img
