@@ -220,8 +220,8 @@ class Rendering:
             numpy.ndarray: Image with counter displayed.
         """
         img_height, img_width = img.shape[:2]
-        x = int((img_width // 2) * (1 + self.offset_counting_line / 100))
-        text_position = (x - 80, 100)
+        x = int((img_width / 2) + (img_width * self.offset_counting_line / 100))
+        text_position = (x - 140, 100)
         
         font = cv2.FONT_HERSHEY_SIMPLEX
         font_scale = 3.0

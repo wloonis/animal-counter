@@ -494,11 +494,11 @@ def start(input_source, video_path):
             shared_state.stop_event.clear()        
             
             byte_tracker = OCSORTTracker(
-                lost_track_buffer=60,
-                minimum_iou_threshold=0.15,
-                minimum_consecutive_frames=3,
+                lost_track_buffer=10,
+                minimum_iou_threshold=0.25,
+                minimum_consecutive_frames=5,
                 direction_consistency_weight=0.25,
-                delta_t=5                
+                delta_t=2
             )            
 
             tracking = Tracking(draw_box=shared_state.draw_tracking, shared_state=shared_state)

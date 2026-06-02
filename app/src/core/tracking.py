@@ -178,7 +178,7 @@ class Tracking:
                 # Display trails only if centroid_tracking is True
                 if track_id in self.trails and len(self.trails[track_id]) > 1:
                     for k in range(1, len(self.trails[track_id])):
-                        cv2.line(image, self.trails[track_id][k-1], self.trails[track_id][k], color, 2)
+                        cv2.line(image, self.trails[track_id][k-1], self.trails[track_id][k], color, 1)
     
     def calculate_center(self, bbox):
         """

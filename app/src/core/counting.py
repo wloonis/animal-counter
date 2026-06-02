@@ -48,7 +48,7 @@ class Counting:
             int: Updated count of objects moving to the right.
         """
         img_height, img_width = image_raw.shape[:2]
-        x = int((img_width // 2) * (1 + self.offset_counting_line / 100))
+        x = int((img_width / 2) + (img_width * self.offset_counting_line / 100))
         
         if len(result_boxes) > 0:
             center_x = (result_boxes[:, 0] + result_boxes[:, 2]) / 2
