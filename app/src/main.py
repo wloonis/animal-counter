@@ -222,10 +222,11 @@ class DisplayThread(threading.Thread):
         if event == cv2.EVENT_LBUTTONUP:
             self.rendering.handle_click(x, y, shared_state)
             
-    def has_class0_high_score(self, class_ids, scores, threshold=settings.PIG_CONFIDENCE_THRESHOLD_START_VIDEO):
+    def has_pig_high_score(self, class_ids, scores, threshold=settings.PIG_CONFIDENCE_THRESHOLD_START_VIDEO):
+        # class_id == 1 correspond aux cochons
         thresh = threshold
         for i in range(len(class_ids)):
-            if class_ids[i] == 0 and scores[i] >= thresh:
+            if class_ids[i] == 1 and scores[i] >= thresh:
                 return True
         return False
             
@@ -398,7 +399,7 @@ class DisplayThread(threading.Thread):
                 # Init video writer
                 if not shared_state.recording and not shared_state.learning_mode and self.video_writer is None and (
                         shared_state.status==1 or
-                        (shared_state.status==3 and self.has_class0_high_score(result_classid, result_scores))
+                        (shared_state.status==3 and self.has_pig_high_score(result_classid, result_scores))
                     ):
                     
                     shared_state.recording = True
@@ -414,8 +415,9 @@ class DisplayThread(threading.Thread):
                         (settings.OUTPUT_WIDTH, settings.OUTPUT_HEIGHT)
                     )
 
-                # On réinitialise le delay uniquement si le score de l'objet détecté est très bon
-                continue_recording = (result_classid == 0) & (result_scores > settings.PIG_CONFIDENCE_THRESHOLD_START_VIDEO)
+                # On réinitialise le delay uniquement si le score du cochon détecté est très bon
+                # class_id == 1 correspond aux cochons
+                continue_recording = (result_classid == 1) & (result_scores > settings.PIG_CONFIDENCE_THRESHOLD_START_VIDEO)
 
                 if continue_recording.any():
                 #if 0 in result_classid and result_scores > settings.PIG_CONFIDENCE_THRESHOLD_START_VIDEO :
@@ -428,6 +430,7 @@ class DisplayThread(threading.Thread):
                     result_trackid=result_trackid,
                     result_classid=result_classid,
                     result_scores=result_scores,
+                    counting_class=1,
                     counter_to_right=shared_state.counter_to_right
                 )
 
@@ -438,7 +441,8 @@ class DisplayThread(threading.Thread):
                     result_scores=result_scores,
                     result_classid=result_classid,
                     result_trackid=result_trackid,
-                    frame_counter=frame_counter
+                    frame_counter=frame_counter,
+                    categories=['human', 'pig']
                 )
 
                 img = self.rendering.display_counter(

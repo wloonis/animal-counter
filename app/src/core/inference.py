@@ -244,6 +244,13 @@ class Inference:
         scores = scores[mask]
         class_ids = class_ids[mask]
 
+        # Filtrer pour ne garder que les cochons (class_id == 1)
+        # Le modèle détecte : 0 = humain, 1 = cochon
+        pig_mask = class_ids == 1
+        boxes = boxes[pig_mask]
+        scores = scores[pig_mask]
+        class_ids = class_ids[pig_mask]
+
         if len(boxes) == 0:
             return np.array([])
 
