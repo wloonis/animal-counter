@@ -101,11 +101,12 @@ class InferThread(threading.Thread):
             
     def run(self):
         """Run the inference thread."""
-        
+
         self.yolo = Inference(self.engine_file_path)
-        
+
         frame_source = FrameSource(self.video_path, self.input_type)
-        
+        settings = Settings()
+
         try:
             while not self.stop_event.is_set():
                 self.frame_counter += 1
@@ -120,8 +121,8 @@ class InferThread(threading.Thread):
                     logger.info(f"------->No Frame; Value Status: {shared_state.status}")
                     break
 
-                TOP_IGNORE = 100
-                BOTTOM_IGNORE = 50
+                TOP_IGNORE = settings.TOP_IGNORE
+                BOTTOM_IGNORE = settings.BOTTOM_IGNORE
 
                 h, w = image_raw.shape[:2]
 

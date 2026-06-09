@@ -1,0 +1,264 @@
+---
+# Diagnostic playbook for splash-screen-lock.
+# Read-only: does not modify anything on the Jetson. Run this when the splash
+# is not behaving as expected and paste the output back to the developer.
+#
+# Usage:
+#   ansible-playbook -i ansible/inventory/jetsons.yml \
+#                    ansible/playbooks/system/diagnose_splash_screen.yml
+#
+# Requires the same environment as configure_splash_screen.yml
+# (LOCAL_APP_PATH, JETSON_IP, JETSON_USER, JETSON_PASSWORD in .env.local).
+
+- name: Diagnose splash screen state
+  hosts: all
+  become: true
+  gather_facts: yes
+
+  vars:
+    lightdm_config_dir: /etc/lightdm/lightdm.conf.d
+
+  tasks:
+    # ---------------------------------------------------------------------
+    # 1. LightDM configuration files
+    # ---------------------------------------------------------------------
+    - name: List LightDM configuration files
+      find:
+        paths:
+          - /etc/lightdm
+          - "{{ lightdm_config_dir }}"
+        file_type: file
+      register: lightdm_files
+
+    - name: Dump LightDM configuration files
+      command: "cat {{ item.path }}"
+      loop: "{{ lightdm_files.files }}"
+      loop_control:
+        label: "{{ item.path }}"
+      changed_when: false
+      register: lightdm_file_contents
+      failed_when: false
+
+    - name: Show LightDM file contents
+      debug:
+        var: lightdm_file_contents.results | map(attribute='stdout_lines') | list
+
+    # ---------------------------------------------------------------------
+    # 2. Splash guard service and journal
+    # ---------------------------------------------------------------------
+    - name: Read splash guard systemd unit
+      command: systemctl cat countingapp-splash-guard
+      register: splash_unit
+      changed_when: false
+      failed_when: false
+
+    - name: Show splash guard unit
+      debug:
+        var: splash_unit.stdout_lines
+
+    - name: Status of splash guard service
+      command: systemctl status countingapp-splash-guard --no-pager -l
+      register: splash_status
+      changed_when: false
+      failed_when: false
+
+    - name: Show splash guard status
+      debug:
+        var: splash_status.stdout_lines
+
+    - name: Journal of splash guard service (last 80 lines)
+      command: journalctl -u countingapp-splash-guard --no-pager -n 80
+      register: splash_journal
+      changed_when: false
+      failed_when: false
+
+    - name: Show splash guard journal
+      debug:
+        var: splash_journal.stdout_lines
+
+    # ---------------------------------------------------------------------
+    # 3. Log files
+    # ---------------------------------------------------------------------
+    - name: Read splash guard log
+      slurp:
+        src: /var/log/countingapp-splash.log
+      register: splash_log_b64
+      failed_when: false
+
+    - name: Show splash guard log (tail 50)
+      debug:
+        msg: "{{ (splash_log_b64.content | b64decode).splitlines()[-50:] }}"
+      when: splash_log_b64.content is defined
+
+    - name: Read fbi log
+      slurp:
+        src: /var/log/countingapp-splash-fbi.log
+      register: fbi_log_b64
+      failed_when: false
+
+    - name: Show fbi log (tail 20)
+      debug:
+        msg: "{{ (fbi_log_b64.content | b64decode).splitlines()[-20:] }}"
+      when: fbi_log_b64.content is defined
+
+    # ---------------------------------------------------------------------
+    # 4. Splash image and lock file
+    # ---------------------------------------------------------------------
+    - name: Stat splash image
+      stat:
+        path: /opt/splash-screen/splash.png
+      register: splash_image
+
+    - name: Stat lock file
+      stat:
+        path: /var/run/countingapp-splash.lock
+      register: lock_file
+
+    - name: Stat fbi pid file
+      stat:
+        path: /var/run/countingapp-splash-fbi.pid
+      register: fbi_pid_file
+
+    - name: Show splash image / lock / fbi pid state
+      debug:
+        msg:
+          - "splash image present: {{ splash_image.stat.exists }} (size={{ splash_image.stat.size | default('n/a') }})"
+          - "lock file present:    {{ lock_file.stat.exists }}"
+          - "fbi pid file present: {{ fbi_pid_file.stat.exists }} (content={{ fbi_pid_file.stat.content | default('n/a') }})"
+
+    # ---------------------------------------------------------------------
+    # 5. fbi / lightdm / plymouth packages
+    # ---------------------------------------------------------------------
+    - name: Check installed packages
+      command: "dpkg -l {{ item }}"
+      loop:
+        - fbi
+        - lightdm
+        - lightdm-gtk-greeter
+        - plymouth
+        - plymouth-themes
+      register: pkg_check
+      changed_when: false
+      failed_when: false
+
+    - name: Show package versions
+      debug:
+        msg: "Package {{ item.item }}: {{ 'INSTALLED' if item.rc == 0 else 'NOT INSTALLED' }}"
+      loop: "{{ pkg_check.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+
+    # ---------------------------------------------------------------------
+    # 6. Plymouth status
+    # ---------------------------------------------------------------------
+    - name: Plymouth service status
+      command: systemctl status plymouth --no-pager -l
+      register: plymouth_status
+      changed_when: false
+      failed_when: false
+
+    - name: Show plymouth status
+      debug:
+        msg: "{{ plymouth_status.stdout_lines | default(['plymouth: ' + plymouth_status.stderr]) }}"
+
+    # ---------------------------------------------------------------------
+    # 7. Running processes
+    # ---------------------------------------------------------------------
+    - name: Running splash-related processes
+      shell: |
+        ps -eo pid,user,stat,start,cmd --sort=start | \
+          grep -E "fbi|lightdm|splash-guard|plymouth|Xorg" | \
+          grep -v grep || echo "(no matching processes)"
+      register: splash_procs
+      changed_when: false
+
+    - name: Show splash-related processes
+      debug:
+        var: splash_procs.stdout_lines
+
+    # ---------------------------------------------------------------------
+    # 8. Framebuffer and DRM
+    # ---------------------------------------------------------------------
+    - name: Framebuffer devices
+      shell: ls -la /dev/fb* 2>/dev/null || echo "(no /dev/fb* devices)"
+      register: fb_devices
+      changed_when: false
+
+    - name: Show framebuffer devices
+      debug:
+        var: fb_devices.stdout_lines
+
+    - name: DRM devices
+      shell: ls -la /dev/dri/ 2>/dev/null || echo "(no /dev/dri devices)"
+      register: dri_devices
+      changed_when: false
+
+    - name: Show DRM devices
+      debug:
+        var: dri_devices.stdout_lines
+
+    - name: Kernel command line
+      command: cat /proc/cmdline
+      register: kernel_cmdline
+      changed_when: false
+
+    - name: Show kernel command line
+      debug:
+        var: kernel_cmdline.stdout_lines
+
+    # ---------------------------------------------------------------------
+    # 9. Default X session and xinit
+    # ---------------------------------------------------------------------
+    - name: User xinitrc / xsession
+      stat:
+        path: "/home/{{ ansible_user }}/{{ item }}"
+      loop:
+        - .xinitrc
+        - .xsession
+        - .xsessionrc
+      register: user_x_files
+
+    - name: Show user x session files
+      debug:
+        msg: "/home/{{ item.item.0 }}/{{ item.item.1 }}: exists={{ item.stat.exists }}"
+      loop: "{{ user_x_files.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+
+    # ---------------------------------------------------------------------
+    # 10. k3s and countingapp pod state
+    # ---------------------------------------------------------------------
+    - name: k3s service status
+      command: systemctl status k3s --no-pager -l
+      register: k3s_status
+      changed_when: false
+      failed_when: false
+
+    - name: Show k3s status
+      debug:
+        msg: "{{ k3s_status.stdout_lines | default(['k3s: not present']) }}"
+
+    - name: countingapp pod state
+      shell: |
+        /usr/local/bin/k3s kubectl get pod -n countingapp-dev -l app=countingapp --no-headers 2>/dev/null || \
+        echo "(k3s not ready or pod not deployed)"
+      register: pod_state
+      changed_when: false
+      failed_when: false
+
+    - name: Show pod state
+      debug:
+        var: pod_state.stdout_lines
+
+    # ---------------------------------------------------------------------
+    # 11. Display manager detection
+    # ---------------------------------------------------------------------
+    - name: Active display manager
+      command: cat /etc/X11/default-display-manager
+      register: dm
+      changed_when: false
+      failed_when: false
+
+    - name: Show display manager
+      debug:
+        var: dm.stdout_lines

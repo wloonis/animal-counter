@@ -1,242 +1,201 @@
 ---
-- name: Configure Splash Screen and LXDE Protection
+# configure_splash_screen.yml
+#
+# Ultra-minimal splash-screen configuration for the Jetson target.
+#
+# What it does:
+#   1. Installs the `feh` image viewer (apt).
+#   2. Creates /opt/splash-screen and copies the local splash.png into it.
+#   3. Drops a ~/.config/autostart/splash.desktop file that runs
+#      `feh --fullscreen --hide-pointer /opt/splash-screen/splash.png`
+#      at every LXDE login.
+#   4. Installs a one-shot systemd timer that runs `pkill feh`
+#      splash_duration seconds after boot, so feh is gone before it
+#      can sit on top of the countingapp window for too long.
+#
+# No LightDM override, no Plymouth, no splash-guard script, no k3s
+# readiness polling, no HTTP healthcheck. The countingapp window
+# already paints over the splash once it comes up; the timer just
+# guarantees feh disappears after a fixed delay as a clean-up.
+#
+# Pre-requisites (validated by pre_tasks below):
+#   - LOCAL_APP_PATH must be exported in the environment (normally done by
+#     scripts/install_splash_screen_standalone.sh via `source .env.local`).
+#   - ${LOCAL_APP_PATH}/img/splash.png must exist on the controller.
+#
+# Usage:
+#   ansible-playbook -i ansible/inventory/jetsons.yml \
+#                    ansible/playbooks/system/configure_splash_screen.yml
+
+- name: Configure Splash Screen (ultra-minimal, autostart + timer)
   hosts: all
   become: true
   gather_facts: yes
 
   vars:
-    splash_image: splash.png
-    local_app_img_path: ./app/img
+    splash_image_filename: splash.png
+    splash_image: /opt/splash-screen/splash.png
+
+    # How long feh stays on screen before being killed by the systemd
+    # timer. 45s is more than enough on a single-node Jetson for the
+    # countingapp window to paint over the splash.
+    splash_duration: 45
+
+    # k3s workload name (kept here so the .env.local variables are
+    # documented in one place; the value is not consumed by the
+    # .desktop or the timer).
     app_namespace: "{{ lookup('env', 'APP_NAMESPACE') | default('countingapp-dev', true) }}"
-    app_name: "{{ lookup('env', 'APP_NAME') | default('countingapp', true) }}"
-    splash_service_name: countingapp-splash-guard
-    splash_script_path: /usr/local/bin/countingapp-splash-guard.sh
-    splash_lock_file: /var/run/countingapp-splash.lock
-    lightdm_config_dir: /etc/lightdm/lightdm.conf.d
+    app_name: "{{ lookup('env', 'APP_NAME')     | default('countingapp',     true) }}"
+
+    # Controller-side path to the local app/ directory (NOT on the Jetson).
+    local_app_path: "{{ lookup('env', 'LOCAL_APP_PATH') | default('./app', true) }}"
+    local_splash_image: "{{ local_app_path }}/img/{{ splash_image_filename }}"
+
+    # Target user for the autostart .desktop. Defaults to the ansible_user
+    # (typically 'nano-counter' from the inventory) so the file lands in the
+    # home directory of whoever LXDE autologs in.
+    target_user: "{{ ansible_user | default('jetson') }}"
+    target_user_home: "/home/{{ target_user }}"
+    autostart_dir: "{{ target_user_home }}/.config/autostart"
+    autostart_desktop: "{{ autostart_dir }}/splash.desktop"
+
+  pre_tasks:
+    - name: Verify LOCAL_APP_PATH environment variable is set
+      become: false
+      delegate_to: localhost
+      run_once: true
+      fail:
+        msg: >-
+          LOCAL_APP_PATH environment variable is not defined.
+          Export it from .env.local before running ansible-playbook, e.g.:
+            set -a; source .env.local; set +a
+      when: lookup('env', 'LOCAL_APP_PATH') | default('', true) | length == 0
+
+    - name: Verify splash.png exists on the controller
+      become: false
+      delegate_to: localhost
+      run_once: true
+      stat:
+        path: "{{ local_splash_image }}"
+      register: splash_image_stat
+
+    - name: Fail if splash.png is missing
+      become: false
+      delegate_to: localhost
+      run_once: true
+      fail:
+        msg: >-
+          splash image not found at {{ local_splash_image }}.
+          Check that LOCAL_APP_PATH points to the directory containing img/splash.png.
+      when: not splash_image_stat.stat.exists
 
   tasks:
-    # =========================================================================
-    # Task 1: Create necessary directories
-    # =========================================================================
-    - name: Create splash screen directories
-      file:
-        path: "{{ item }}"
-        state: directory
-        mode: '0755'
-      loop:
-        - /opt/splash-screen
-        - "{{ lightdm_config_dir }}"
-
-    # =========================================================================
-    # Task 2: Copy splash.png to Jetson
-    # =========================================================================
-    - name: Copy splash.png to Jetson
-      copy:
-        src: "{{ local_app_img_path }}/{{ splash_image }}"
-        dest: /opt/splash-screen/{{ splash_image }}
-        mode: '0644'
-      delegate_to: localhost
-
-    # =========================================================================
-    # Task 3: Create the splash guard monitoring script
-    # =========================================================================
-    - name: Create splash guard monitoring script
-      copy:
-        dest: "{{ splash_script_path }}"
-        mode: '0755'
-        content: |
-          #!/bin/bash
-          # Splash screen guard script
-          # Monitors countingapp service in k3s and controls LightDM access
-          
-          # Configuration
-          LOCK_FILE="{{ splash_lock_file }}"
-          SERVICE_NAME="{{ app_name }}"
-          NAMESPACE="{{ app_namespace }}"
-          K3S_BINARY="/usr/local/bin/k3s"
-          # Set KUBECONFIG for kubectl access to k3s cluster
-          export KUBECONFIG="/etc/rancher/k3s/k3s.yaml"
-          LIGHTDM_CONFIG_DIR="{{ lightdm_config_dir }}"
-          SPLASH_IMAGE="/opt/splash-screen/{{ splash_image }}"
-          NORMAL_CONFIG="${LIGHTDM_CONFIG_DIR}/50-spring.conf"
-          SPLASH_CONFIG="${LIGHTDM_CONFIG_DIR}/60-splash-lock.conf"
-          
-          # Log function
-          log() {
-              echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" | tee -a /var/log/countingapp-splash.log
-          }
-          
-          # Function to enable splash lock mode
-          enable_splash_lock() {
-              log "ENABLING splash lock mode - countingapp not ready"
-              touch "$LOCK_FILE"
-              
-              # Configure LightDM to show splash image as greeter background
-              cat > "${SPLASH_CONFIG}" << 'EOF'
-          [Seat:*]
-          greeter-background = /opt/splash-screen/splash.png
-          greeter-hide-users = false
-          greeter-show-manual-login = true
-          allow-guest = false
-          EOF
-              
-              # Restart LightDM to apply changes
-              systemctl restart lightdm
-          }
-          
-          # Function to disable splash lock mode
-          disable_splash_lock() {
-              log "DISABLING splash lock mode - countingapp is ready!"
-              rm -f "$LOCK_FILE"
-              
-              # Restore normal LightDM configuration
-              if [ -f "${SPLASH_CONFIG}" ]; then
-                  rm -f "${SPLASH_CONFIG}"
-              fi
-              
-              # Restart LightDM to apply normal configuration
-              systemctl restart lightdm
-          }
-          
-          # Function to check if countingapp is running in k3s
-          check_countingapp_status() {
-              # Run kubectl via k3s with sudo to ensure proper permissions
-              if sudo -n $K3S_BINARY kubectl get pod -n "$NAMESPACE" -l app="$SERVICE_NAME" --no-headers 2>/dev/null | grep -q "Running"; then
-                  return 0
-              fi
-              # Fallback: try without sudo (might work depending on k3s config)
-              if $K3S_BINARY kubectl get pod -n "$NAMESPACE" -l app="$SERVICE_NAME" --no-headers 2>/dev/null | grep -q "Running"; then
-                  return 0
-              fi
-              return 1
-          }
-          
-          # Main loop
-          log "Starting splash guard monitoring..."
-          
-          # Check initial state
-          if check_countingapp_status; then
-              log "countingapp is already running - normal mode"
-              disable_splash_lock
-          else
-              log "countingapp is not running - enabling splash lock"
-              enable_splash_lock
-          fi
-          
-          # Continuous monitoring loop
-          while true; do
-              sleep 10
-              
-              if check_countingapp_status; then
-                  if [ -f "$LOCK_FILE" ]; then
-                      disable_splash_lock
-                  fi
-              else
-                  if [ ! -f "$LOCK_FILE" ]; then
-                      enable_splash_lock
-                  fi
-              fi
-          done
-
-    # =========================================================================
-    # Task 4: Create systemd service for splash guard
-    # =========================================================================
-    - name: Create splash guard systemd service
-      copy:
-        dest: /etc/systemd/system/{{ splash_service_name }}.service
-        mode: '0644'
-        content: |
-          [Unit]
-          Description=Splash Screen Guard - Blocks LXDE until countingapp is ready
-          After=lightdm.service k3s.service
-          Wants=k3s.service
-          
-          [Service]
-          Type=simple
-          ExecStart={{ splash_script_path }}
-          Restart=always
-          RestartSec=10
-          StandardOutput=journal
-          StandardError=journal
-          
-          [Install]
-          WantedBy=multi-user.target
-
-    # =========================================================================
-    # Task 5: Enable and start the splash guard service
-    # =========================================================================
-    - name: Reload systemd daemon
-      systemd:
-        daemon_reload: yes
-
-    - name: Enable splash guard service
-      systemd:
-        name: "{{ splash_service_name }}"
-        enabled: yes
-        state: started
-
-    # =========================================================================
-    # Task 6: Optionally configure a custom greeter for better splash experience
-    # =========================================================================
-    - name: Install feh for wallpaper display (optional)
+    # -------------------------------------------------------------------
+    # 1. Install feh (image viewer used by the .desktop)
+    # -------------------------------------------------------------------
+    - name: Install feh
       apt:
         name: feh
         state: present
-      ignore_errors: yes
+        update_cache: yes
+        cache_valid_time: 3600
 
-    - name: Create alternative splash script using X11
-      copy:
-        dest: /usr/local/bin/countingapp-splash-x11.sh
+    # -------------------------------------------------------------------
+    # 2. Create /opt/splash-screen and copy splash.png
+    # -------------------------------------------------------------------
+    - name: Create /opt/splash-screen
+      file:
+        path: /opt/splash-screen
+        state: directory
+        owner: root
+        group: root
         mode: '0755'
-        content: |
-          #!/bin/bash
-          # Alternative splash screen using fbi or nitrogen
-          # This displays splash.png on virtual terminal during boot
-          
-          SPLASH_IMAGE="/opt/splash-screen/splash.png"
-          
-          # Install fbi if not present (for framebuffer)
-          if ! command -v fbi &> /dev/null; then
-              apt-get update && apt-get install -y fbi
-          fi
-          
-          # Show splash on framebuffer tty1
-          # This will show during boot before X11 starts
-          if [ -f "$SPLASH_IMAGE" ]; then
-              # Use fbi to show image on tty1
-              fbi -T 1 -d /dev/fb0 --noverbose "$SPLASH_IMAGE" &
-          fi
 
-    # =========================================================================
-    # Task 7: Display completion message
-    # =========================================================================
-    - name: Display splash screen configuration complete
-      debug:
-        msg: |
-          ============================================================
-          Splash Screen Configuration Complete!
-          ============================================================
-          
-          The splash screen system has been configured to:
-          - Display /opt/splash-screen/splash.png while countingapp loads
-          - Block LXDE/LightDM access until countingapp is running in k3s
-          - Automatically unlock when countingapp pod is in Running state
-          
-          Service status:
-          - Service name: {{ splash_service_name }}
-          - Monitoring script: {{ splash_script_path }}
-          - Lock file: {{ splash_lock_file }}
-          
-          To check status:
-            systemctl status {{ splash_service_name }}
-            journalctl -u {{ splash_service_name }} -f
-          
-          To manually trigger splash lock:
-            touch {{ splash_lock_file }}
-            systemctl restart lightdm
-          
-          To manually release splash lock:
-            rm -f {{ splash_lock_file }}
-            systemctl restart lightdm
-          ============================================================
-      tags: info
+    - name: Copy splash.png to /opt/splash-screen
+      copy:
+        src: "{{ local_splash_image }}"
+        dest: "{{ splash_image }}"
+        owner: root
+        group: root
+        mode: '0644'
+
+    # -------------------------------------------------------------------
+    # 3. Install a one-shot systemd service + timer that pkill feh
+    #    splash_duration seconds after boot.
+    # -------------------------------------------------------------------
+    - name: Install countingapp-splash-killer.service
+      copy:
+        dest: /etc/systemd/system/countingapp-splash-killer.service
+        owner: root
+        group: root
+        mode: '0644'
+        content: |
+          [Unit]
+          Description=Kill the splash feh process once the splash_duration has elapsed
+          After=graphical.target
+
+          [Service]
+          Type=oneshot
+          # Kill feh processes running the splash image. pkill -f matches
+          # against the full command line. The `|| true` makes the unit
+          # succeed even if no feh is running anymore.
+          ExecStart=/usr/bin/pkill -f 'feh.*splash-screen/splash.png' || true
+          # Fallback: kill any feh instance owned by the target user, in
+          # case the path matching above misses (e.g. feh was restarted
+          # with a different cwd).
+          ExecStart=/usr/bin/pkill -u {{ target_user }} -x feh || true
+
+    - name: Install countingapp-splash-killer.timer
+      copy:
+        dest: /etc/systemd/system/countingapp-splash-killer.timer
+        owner: root
+        group: root
+        mode: '0644'
+        content: |
+          [Unit]
+          Description=Fire the splash killer {{ splash_duration }}s after boot
+          After=graphical.target
+
+          [Timer]
+          OnBootSec={{ splash_duration }}s
+          AccuracySec=1s
+          Unit=countingapp-splash-killer.service
+
+          [Install]
+          WantedBy=timers.target
+
+    - name: Enable and start countingapp-splash-killer.timer
+      systemd:
+        name: countingapp-splash-killer.timer
+        enabled: yes
+        state: started
+        daemon_reload: yes
+
+    # -------------------------------------------------------------------
+    # 4. Drop the LXDE autostart .desktop for the target user
+    # -------------------------------------------------------------------
+    - name: Ensure ~/.config/autostart exists
+      file:
+        path: "{{ autostart_dir }}"
+        state: directory
+        owner: "{{ target_user }}"
+        group: "{{ target_user }}"
+        mode: '0755'
+
+    - name: Install splash.desktop in autostart
+      copy:
+        dest: "{{ autostart_desktop }}"
+        owner: "{{ target_user }}"
+        group: "{{ target_user }}"
+        mode: '0644'
+        content: |
+          [Desktop Entry]
+          Type=Application
+          Name=Splash Screen
+          # Show splash.png fullscreen at LXDE login. feh is killed
+          # {{ splash_duration }} seconds after boot by the
+          # countingapp-splash-killer.service systemd unit, so it
+          # does not stay on top of the countingapp window.
+          Exec=/usr/bin/feh --fullscreen --hide-pointer {{ splash_image }}
+          NoDisplay=true
+          X-GNOME-Autostart-enabled=true
