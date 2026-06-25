@@ -1,45 +1,46 @@
 # PI-Optimized PIV Loop with Plannotator
-# Uses PI + Ollama/minimax-m2.5 + Plannotator extension
+# Uses PI + Ollama/minimax-m3 + Plannotator extension
 name: pi-plannotator-piv
 description: |
   Guided Plan-Implement-Validate development with human-in-the-loop using PI + Ollama + Plannotator.
-  
+
   This workflow uses Plannotator for visual plan review:
   - Agent writes a plan and submits it for review
   - You can approve/deny with annotations in the browser
   - Agent iterates until you approve
   - Then executes with full tool access
-  
+
   Plans are saved in ./spec/{feature-slug}/PRD-{slug}-{timestamp}.md
-  
+
   Prerequisites: Plannotator extension installed (pi install npm:@plannotator/pi-extension)
-  
-  Usage: Run in a terminal that can open a browser.
+
+  Usage: Run in a terminal that can open a browser, OR in non-interactive mode
+  where approvals are signalled by creating a sentinel file.
 
 provider: pi
-model: ollama/minimax-m2.5:cloud
+model: ollama/minimax-m3:cloud
 effort: high
 interactive: true
 
 nodes:
-  # ═══════════════════════════════════════════════════════════════
+  # ===================================================================
   # PHASE 1: EXPLORE + PLAN — Create PRD in ./spec/
-  # ═══════════════════════════════════════════════════════════════
-  
+  # ===================================================================
+
   - id: explore-plan
     loop:
       max_iterations: 10
       prompt: |
-        # PIV Loop with Plannotator — Exploration & Planning
-        
+        # PIV Loop with Plannotator - Exploration & Planning
+
         **User's request**: $ARGUMENTS
-        
+
         Your goal is to understand what to build AND create a PRD that can be reviewed visually.
-        
+
         ## Plan File Location
-        
+
         Save the plan to: `./spec/{feature-slug}/PRD-{feature-slug}-{timestamp}.md`
-        
+
         First, create the directory structure and generate the file path:
         ```bash
         # Generate slug from user request
@@ -49,112 +50,130 @@ nodes:
         PLAN_FILE="./spec/$SLUG/PRD-$SLUG-$TIMESTAMP.md"
         echo "PLAN_FILE=$PLAN_FILE"
         ```
-        
+
         ## Plan Format (PRD)
-        
-        Create a structured PRD in markdown format:
-        
-        ```markdown
-        # PRD: [Feature Name]
-        
-        ## Overview
-        [Brief description of what to build]
-        
-        ## Context
-        - Why this feature is needed
-        - Related features or existing code
-        
-        ## Tasks
-        
-        - [ ] Task 1: [Description]
-        - [ ] Task 2: [Description]
-        - [ ] Task 3: [Description]
-        
-        ## Files to Change
-        - [ ] file1.py
-        - [ ] file2.js
-        
-        ## Acceptance Criteria
-        - [ ] Criterion 1
-        - [ ] Criterion 2
-        ```
-        
-        **Important**: After writing the PRD file to the spec directory, inform the user about the file location and say:
+
+        Create a structured PRD in markdown format with these sections:
+        - Overview (1 paragraph)
+        - Context (why + how it relates to existing code)
+        - Goal (1-3 bullets)
+        - Tasks (checkbox list, `- [ ] Task N: description`)
+        - Files to Change (checkbox list of file paths)
+        - Acceptance Criteria (checkbox list)
+        - Non-goals / Out of scope
+        - Technical Details (variables, defaults, edge cases)
+        - Commands & diagnostic (how to test locally)
+
+        **Important**: After writing the PRD file, inform the user about the file location and ask:
         "Say APPROVE to proceed with implementation, or describe what needs to change."
-        
+
         The PRD file should be saved in the format: ./spec/{slug}/PRD-{slug}-{timestamp}.md
+
+        **Loop exit signals** (use BOTH for robustness):
+        1. End your reply with the literal signal `<USER_READY>USER_READY</USER_READY>` on its own line when the user has clearly approved the plan. Do NOT emit it if the user requested changes.
+        2. As a more reliable fallback in non-interactive runs: when the user clearly approves, run `touch .archon/.piv-approved` from bash. The workflow's `until_bash` check `test -f .archon/.piv-approved` will then exit the loop on the next iteration.
+
+        Only emit the signal / create the sentinel when the user has clearly approved. If changes are requested, iterate on the PRD instead.
       until: USER_READY
-      interactive: true
+      until_bash: "test -f .archon/.piv-approved"
+      interactive: false
       gate_message: "Say APPROVE to proceed with implementation, or describe what needs to change."
     allowed_tools: [read, grep, find, ls, bash, write]
     denied_tools: []
 
-  # ═══════════════════════════════════════════════════════════════
+  # ===================================================================
   # PHASE 2: IMPLEMENT — Execute the plan
-  # ═══════════════════════════════════════════════════════════════
-  
+  # ===================================================================
+
   - id: implement
     depends_on: [explore-plan]
     loop:
       max_iterations: 20
       prompt: |
-        # PIV Loop — Implementation Phase
-        
-        Read the PRD plan from ./spec/{feature-slug}/PRD-*.md and implement the remaining tasks.
-        
-        First, find the PRD file:
+        # PIV Loop - Implementation Phase
+
+        Read the PRD plan from the MOST RECENT `./spec/*/PRD-*.md` file and implement the remaining tasks.
+
+        **Critical**: Sort by the timestamp suffix in the filename (YYYYMMDD_HHMMSS), NOT alphabetically. Using `ls | tail -1` directly returns the lexicographically-last file, which is usually the wrong (older) PRD.
+
+        First, find the CORRECT (most recent) PRD file:
         ```bash
-        ls -la ./spec/*/PRD-*.md 2>/dev/null | tail -1
+        # Sort by the timestamp suffix (field 4 after the last dash) and take the newest
+        ls -1 ./spec/*/PRD-*.md 2>/dev/null | sort -t- -k4 | tail -1
         ```
-        
-        Mark completed tasks in your response with [DONE:n] where n is the task number.
-        
+
+        Sanity check: the chosen PRD should be the one created in the previous explore-plan phase (the most recent timestamp). If unsure, check `find ./spec -name "PRD-*.md" -newer .archon/.piv-approved`.
+
+        Mark completed tasks in your response with `[DONE:n]` where n is the task number. After implementing each task, edit the PRD file to flip `- [ ]` to `- [x]` for that task so the next iteration sees progress.
+
         Steps:
-        1. Find and read the PRD file in ./spec/
-        2. Identify the next incomplete task
-        3. Implement it
-        4. Mark it as done in your response
-        
+        1. Find and read the CORRECT (most recent) PRD file in `./spec/`
+        2. Identify the next incomplete task (unchecked `- [ ]` line in the Tasks section)
+        3. Implement it (create/modify the actual files referenced in the PRD)
+        4. Edit the PRD to flip `- [ ]` to `- [x]` for that task
+        5. Respond with `[DONE:n]` describing what was done
+
         Use fresh context for each iteration.
       until: ALL_TASKS_COMPLETE
+      until_bash: "test -z \"$(grep -rE '^- \\[ \\]' ./spec/*/PRD-*.md 2>/dev/null | head -1)\""
       fresh_context: true
     allowed_tools: [read, write, edit, grep, find, ls, bash]
     denied_tools: []
 
-  # ═══════════════════════════════════════════════════════════════
+  # ===================================================================
   # PHASE 3: VALIDATE — Review and verify
-  # ═══════════════════════════════════════════════════════════════
-  
+  # ===================================================================
+
   - id: validate
     depends_on: [implement]
-    prompt: |
-      # PIV Loop — Validation Phase
-      
-      Review all changes against the PRD:
-      1. Find and read the PRD from ./spec/*/PRD-*.md
-      2. Check all implemented tasks
-      3. Verify code quality and consistency
-      4. Fix any issues found
-      
-      Report your findings to the user.
+    bash: |
+      echo "=== Validate phase ==="
+      # Find the most recent PRD by timestamp suffix
+      PRD=$(ls -1 ./spec/*/PRD-*.md 2>/dev/null | sort -t- -k4 | tail -1)
+      if [ -z "$PRD" ]; then
+        echo "No PRD found in ./spec/"
+        exit 1
+      fi
+      echo "Most recent PRD: $PRD"
+      echo ""
+      echo "=== Tasks status ==="
+      grep -E "^- \[" "$PRD" || echo "No task lines found"
+      echo ""
+      echo "=== Files to Change (from PRD) ==="
+      awk '/^## Files to Change/,/^## /' "$PRD" | head -30
+      echo ""
+      echo "=== Git status (changes in worktree) ==="
+      git status --short
+      echo ""
+      echo "=== Diff stat against HEAD ==="
+      git diff --stat HEAD 2>/dev/null | tail -20
+      echo ""
+      echo "VALIDATE_OK: tasks + git status printed above"
     allowed_tools: [read, write, edit, grep, find, ls, bash]
     denied_tools: []
 
-  # ═══════════════════════════════════════════════════════════════
+  # ===================================================================
   # PHASE 4: FINALIZE — Summary
-  # ═══════════════════════════════════════════════════════════════
-  
+  # ===================================================================
+
   - id: finalize
     depends_on: [validate]
-    prompt: |
-      # PIV Loop — Final Summary
-      
-      Create a final summary:
-      1. List of changes made
-      2. How to test the feature
-      3. Any known limitations
-      4. Path to the PRD: ./spec/{feature-slug}/PRD-*.md
-      
-      Output to $ARTIFACTS_DIR/pr-summary.md
-    allowed_tools: [read, write, grep]
+    bash: |
+      echo "=== Finalize phase ==="
+      PRD=$(ls -1 ./spec/*/PRD-*.md 2>/dev/null | sort -t- -k4 | tail -1)
+      echo "Most recent PRD: $PRD"
+      echo ""
+      echo "=== PRD first 60 lines ==="
+      head -60 "$PRD" 2>/dev/null
+      echo ""
+      echo "=== Git status ==="
+      git status --short
+      echo ""
+      echo "=== Files changed in this run (vs HEAD) ==="
+      git diff --stat HEAD 2>/dev/null | tail -20
+      echo ""
+      echo "============================================="
+      echo "Workflow pi-plannotator-piv complete"
+      echo "============================================="
+    allowed_tools: [read, write, grep, bash]
     denied_tools: []
