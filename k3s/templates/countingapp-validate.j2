@@ -16,6 +16,7 @@ spec:
       containers:
       - name: countingapp-validate
         image: "{{ app_name }}:{{ app_version }}"
+        command: ["/app/entrypoint.sh"]
         args: ["validate"]
         imagePullPolicy: Never
         env:

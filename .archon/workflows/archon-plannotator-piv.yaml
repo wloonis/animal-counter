@@ -1,15 +1,23 @@
 # Plannotator-gated PIV loop.
 #
 # Flow: Archon asks 2-3 clarifying questions via chat HITL → Pi session writes
-# PLAN.md and submits via @plannotator/pi-extension → human reviews and approves
-# (or denies with feedback, iterating inside the Pi session) over HTTP on
-# 127.0.0.1:19432 → Ollama/Kimi-k2.7 implements the approved plan task-by-task → final
-# validation + summary.
+# a plan under plans/PR_<slug>.md and submits it via @plannotator/pi-extension
+# → human reviews and approves (or denies with feedback, iterating inside the
+# Pi session) over HTTP on 127.0.0.1:19432 → GLM-5.2 implements the approved
+# plan task-by-task → final validation + summary.
+#
+# Plan storage convention (IMPORTANT):
+#   The plan is NOT written to a root PLAN.md. It is written to
+#   ./plans/PR_<slug>.md where <slug> is a short, meaningful kebab-case name
+#   describing the subject (e.g. plans/PR_jetson-autonomous-validation.md).
+#   The PR_ prefix is mandatory. The chosen path is recorded in
+#   .archon-piv-plan-path.txt by the verify-plan node so downstream nodes
+#   (implement, final-review) can locate it without re-deriving the slug.
 #
 # The URL for the plannotator review UI is emitted into the chat stream when
-# the Pi agent calls `plannotator_submit_plan`. On the CLI it prints to stdout
-# (prefixed with `[pi extension ℹ️]`); in the web UI it appears in the chat
-# transcript.
+# the Pi agent calls `plannotator_submit_plan` (with filePath pointing at the
+# plans/PR_<slug>.md file). On the CLI it prints to stdout (prefixed with
+# `[pi extension ℹ️]`); in the web UI it appears in the chat transcript.
 #
 # Prereqs (one-time per machine):
 #   pi install npm:@plannotator/pi-extension
@@ -34,16 +42,18 @@ description: |
   NOT for: Fully-chat-driven PIV (use archon-piv-loop), quick fixes, PR reviews.
 
   Four phases:
-  1. CLARIFY: Pi Ollama/Kimi-k2.7 asks 2-3 targeted questions via Archon HITL, converges on intent.
-  2. PLAN: Pi session writes PLAN.md and submits it to plannotator. The reviewer
+  1. CLARIFY: Pi (GLM-5.2) asks 2-3 targeted questions, converges on intent.
+  2. PLAN: Pi session writes a plan to plans/PR_<slug>.md (meaningful slug,
+     PR_ prefix mandatory) and submits it to plannotator. The reviewer
      receives a 127.0.0.1:19432 URL and approves (or denies with feedback — Pi
-     iterates on the plan inside its session until approved).
-  3. IMPLEMENT: Pi Ollama/Kimi-k2.7 reads the approved PLAN.md and executes task-by-task
+     iterates on the plan file inside its session until approved).
+  3. IMPLEMENT: Pi (GLM-5.2) reads the approved plans/PR_<slug>.md (path
+     resolved via .archon-piv-plan-path.txt) and executes task-by-task
      with per-task validation + commits.
   4. VALIDATE: Final full validation + summary.
 
 provider: pi
-model: ollama/kimi-k2.7-code:cloud
+model: ollama/glm-5.2
 interactive: true
 
 nodes:
@@ -129,12 +139,13 @@ nodes:
   # ═══════════════════════════════════════════════════════════════
   # PHASE 2: PLAN — Pi session submits plan via plannotator
   # Human approves/denies over HTTP on 127.0.0.1:19432.
+  # Plan is written to plans/PR_<slug>.md (NOT a root PLAN.md).
   # ═══════════════════════════════════════════════════════════════
 
   - id: plannotator-plan
     depends_on: [clarify]
     provider: pi
-    model: ollama/kimi-k2.7-code:cloud
+    model: ollama/glm-5.2
     # Human review happens over HTTP — generous idle timeout so the session
     # stays alive while the reviewer thinks.
     idle_timeout: 3600000 # 1 hour
@@ -145,19 +156,19 @@ nodes:
       ║  ⚠  YOU ARE A PLANNER. YOU ARE NOT AN IMPLEMENTER.           ║
       ║                                                              ║
       ║  Your ENTIRE job is:                                         ║
-      ║    1. Write PLAN.md                                          ║
-      ║    2. Submit it via plannotator_submit_plan                  ║
-      ║    3. Iterate on PLAN.md if denied                           ║
+      ║    1. Write the plan to plans/PR_<slug>.md                   ║
+      ║    2. Submit it via plannotator_submit_plan(filePath=...)    ║
+      ║    3. Iterate on that plan file if denied                    ║
       ║    4. On approval → PRINT ONE LINE AND EXIT                  ║
       ║                                                              ║
       ║  You will NEVER:                                             ║
-      ║    • Edit any file other than PLAN.md                        ║
+      ║    • Edit any file other than plans/PR_<slug>.md             ║
       ║    • Run bash, agent_browser, cron_create, or any tool that  ║
       ║      inspects or modifies source code                        ║
       ║    • "Get a head start" on implementation after approval     ║
       ║    • Open a browser, start a dev server, or run tests        ║
       ║                                                              ║
-      ║  A downstream node (PI) handles ALL implementation.      ║
+      ║  A downstream node (PI) handles ALL implementation.          ║
       ║  If you start coding here, you are WRONG and the workflow    ║
       ║  will fail.                                                  ║
       ╚══════════════════════════════════════════════════════════════╝
@@ -167,9 +178,24 @@ nodes:
 
       ---
 
-      ## Step 1: Write PLAN.md
+      ## Step 1: Write the plan file
 
-      Use the write tool on `PLAN.md` (and ONLY that file). Structure:
+      Choose a **short, meaningful kebab-case slug** describing the subject of
+      the plan (e.g. `jetson-autonomous-validation`, `fix-counting-offset`).
+      Then use the `write` tool to create the plan at:
+
+          plans/PR_<slug>.md
+
+      Rules for the path:
+        - It MUST live under `plans/`.
+        - The filename MUST start with `PR_`.
+        - It MUST be a `.md` file describing the subject (no generic names
+          like `PR_plan.md` — pick a descriptive slug).
+        - The `write` tool auto-creates the `plans/` directory if missing.
+        - Remember the exact path you chose — you will submit and re-edit
+          THAT file.
+
+      Plan structure:
 
       ```markdown
       # Plan: {feature name}
@@ -205,7 +231,13 @@ nodes:
 
       ## Step 2: Submit for review
 
-      Call `plannotator_submit_plan`. The tool will:
+      Call `plannotator_submit_plan` with the **filePath** argument set to the
+      exact path you just wrote, e.g.:
+
+          plannotator_submit_plan(filePath="plans/PR_jetson-autonomous-validation.md")
+
+      The tool will:
+      - Read that file and render it in the review UI.
       - Emit a review URL (127.0.0.1:19432) via notify() — the reviewer sees
         this in their Archon chat/CLI stream.
       - Block until the reviewer POSTs /api/approve or /api/deny.
@@ -230,44 +262,66 @@ nodes:
       NEXT node, not for you. Your job ended at the approval.
 
       ### Denied with feedback
-      Use the edit tool on `PLAN.md` (not write — edit) to address the feedback,
-      then call `plannotator_submit_plan` again. Repeat until approved.
+      Use the `edit` tool on the SAME `plans/PR_<slug>.md` file (not `write` —
+      `edit`) to address the feedback, then call `plannotator_submit_plan` again
+      with the same `filePath`. Repeat until approved. Do NOT change the
+      filename between iterations unless the feedback explicitly requires it.
 
       ## Rules (non-negotiable)
 
-      - PLAN.md is the ONLY file you may create or edit, ever, during this node.
-      - The only files you may READ are: PLAN.md, CLAUDE.md, README.md.
+      - A file under `plans/PR_*.md` is the ONLY file you may create or edit,
+        ever, during this node. No root `PLAN.md`.
+      - The only files you may READ are: your plan file, CLAUDE.md, README.md.
       - Do NOT call `bash`, `agent_browser`, `cron_create`, or any tool that
         inspects, modifies, or executes source code.
       - After approval, do NOT start implementing, previewing, testing, or
         "warming up" — the next node handles execution in a fresh session.
       - If `plannotator_submit_plan` errors, surface the error verbatim —
-        do not silently fall back to writing PLAN.md and hoping for the best.
+        do not silently fall back to writing the plan and hoping for the best.
       - Do not ask clarifying questions — intent was resolved in the clarify
         phase. Make reasonable assumptions and call them out in the plan.
+      - **CRITICAL**: After calling `plannotator_submit_plan`, the review URL
+        is printed to the stream. The HUMAN user reviews the plan in their
+        browser at that URL. You MUST wait for the reviewer's decision
+        (approved/denied via the Plannotator UI). Do not proceed to "approval
+        detected" on your own — only the Plannotator UI can approve. If the
+        extension returns a stale-context error, call `plannotator_submit_plan`
+        AGAIN with the same filePath (the extension retries the submit). Do
+        not continue.
 
   # ═══════════════════════════════════════════════════════════════
   # PHASE 2b: VERIFY — Sanity check the approved plan landed on disk
+  # and record its path for downstream nodes.
   # ═══════════════════════════════════════════════════════════════
 
   - id: verify-plan
     depends_on: [plannotator-plan]
     bash: |
-      if [ ! -f PLAN.md ]; then
-        echo "FAIL: PLAN.md was not created — plannotator planning phase did not produce a plan"
+      set -e
+      mkdir -p "$ARTIFACTS_DIR"
+      # Resolve the plan file written by the plannotator-plan node.
+      PLAN_PATH="$(cat .archon-piv-plan-path.txt 2>/dev/null | head -1 || true)"
+      if [ -z "$PLAN_PATH" ] || [ ! -f "$PLAN_PATH" ]; then
+        # Fallback: newest plans/PR_*.md on disk.
+        PLAN_PATH="$(ls -t plans/PR_*.md 2>/dev/null | head -1 || true)"
+      fi
+      if [ -z "$PLAN_PATH" ] || [ ! -f "$PLAN_PATH" ]; then
+        echo "FAIL: no plan file found under plans/PR_*.md — plannotator planning phase did not produce a plan"
         exit 1
       fi
-      if ! grep -qE '^- \[.\]' PLAN.md; then
-        echo "FAIL: PLAN.md has no task checkboxes — incomplete plan"
-        cat PLAN.md
+      if ! grep -qE '^- \[.\]' "$PLAN_PATH"; then
+        echo "FAIL: $PLAN_PATH has no task checkboxes — incomplete plan"
+        cat "$PLAN_PATH"
         exit 1
       fi
-      task_count=$(grep -cE '^- \[.\]' PLAN.md)
-      echo "PASS: PLAN.md has $task_count task(s)"
-      cp PLAN.md "$ARTIFACTS_DIR/PLAN.md"
+      task_count=$(grep -cE '^- \[.\]' "$PLAN_PATH")
+      echo "PASS: $PLAN_PATH has $task_count task(s)"
+      # Record the resolved path so implement / final-review can locate it.
+      printf '%s\n' "$PLAN_PATH" > .archon-piv-plan-path.txt
+      cp "$PLAN_PATH" "$ARTIFACTS_DIR/$(basename "$PLAN_PATH")"
 
   # ═══════════════════════════════════════════════════════════════
-  # PHASE 3: IMPLEMENT — Task-by-task Ralph loop against PLAN.md
+  # PHASE 3: IMPLEMENT — Task-by-task Ralph loop against the plan file
   # ═══════════════════════════════════════════════════════════════
 
   - id: implement
@@ -289,13 +343,20 @@ nodes:
 
         ## Phase 0: Load State
 
-        1. Read `PLAN.md` (the approved plan — source of truth).
+        1. Resolve and read the approved plan (source of truth):
+           ```bash
+           PLAN_PATH="$(cat .archon-piv-plan-path.txt 2>/dev/null | head -1 || true)"
+           [ -n "$PLAN_PATH" ] || PLAN_PATH="$(ls -t plans/PR_*.md 2>/dev/null | head -1)"
+           echo "PLAN_PATH=$PLAN_PATH"
+           ```
+           If `PLAN_PATH` is empty or the file is missing, STOP — no approved
+           plan found under plans/PR_*.md. Otherwise READ `$PLAN_PATH`.
         2. Check progress: `cat .archon-piv-progress.txt 2>/dev/null || true`.
         3. `git log --oneline -10` and `git status`.
 
         ## Phase 1: Select Next Task
 
-        Tasks are `- [ ]` / `- [x]` checkboxes in PLAN.md. Cross-reference
+        Tasks are `- [ ]` / `- [x]` checkboxes in `$PLAN_PATH`. Cross-reference
         with `.archon-piv-progress.txt` and recent commits to pick the next
         unchecked task.
 
@@ -304,6 +365,7 @@ nodes:
         Announce:
         ```
         -- Task Selected --
+        Plan: $PLAN_PATH
         Task: {N} — {title}
         File: {path}
         ```
@@ -312,12 +374,25 @@ nodes:
 
         1. Read the file(s) the task touches.
         2. Make changes that follow CLAUDE.md conventions.
-        3. Type-check after each file: `bun run type-check 2>&1 || true`.
+        3. Validate the file you just edited (Python project — no JS/TS tooling):
+           - shell:    `bash -n <file>`
+           - python:   `python -m py_compile <file>`
+           - yaml/yml: `python -c "import yaml,sys; yaml.safe_load(open(sys.argv[1]))" <file>`
+           Fix any error before moving on.
 
         ## Phase 3: Validate + Commit
 
         ```bash
-        bun run type-check && bun run lint && bun run test
+        # Validate all changed files (Python project — no JS/TS tooling).
+        rc=0
+        for f in $(git diff --name-only --diff-filter=ACM); do
+          case "$f" in
+            *.py)         python -m py_compile "$f" || rc=1 ;;
+            *.sh)         bash -n "$f" || rc=1 ;;
+            *.yml|*.yaml) python -c "import yaml,sys; yaml.safe_load(open(sys.argv[1]))" "$f" || rc=1 ;;
+          esac
+        done
+        [ "$rc" -eq 0 ]
         ```
 
         If validation fails, fix (up to 3 attempts). If you can't fix, note it
@@ -329,12 +404,12 @@ nodes:
         git commit -m "$(cat <<'EOF'
         {type}: {short task description}
 
-        Task {N} from PLAN.md
+        Task {N} from $PLAN_PATH
         EOF
         )"
         ```
 
-        Update PLAN.md to mark this task `- [x]` and append to
+        Update `$PLAN_PATH` to mark this task `- [x]` and append to
         `.archon-piv-progress.txt`:
         ```
         Task {N}: {title} — {commit short hash}
@@ -342,8 +417,9 @@ nodes:
 
         ## Phase 4: Complete
 
-        If every task in PLAN.md is now checked:
-        1. Run full validation: `bun run validate 2>&1 || true`
+        If every task in `$PLAN_PATH` is now checked:
+        1. Re-run the full validation loop from Phase 3 across all changed
+           files and print the result (`rc=0` = PASS).
         2. Signal: `<promise>IMPL_DONE</promise>`
 
         Otherwise, end normally — the loop starts a fresh iteration for the
@@ -367,16 +443,29 @@ nodes:
       ## Step 1: Gather context
 
       ```bash
-      bun run validate 2>&1 || (bun run type-check && bun run lint && bun run test && bun run format:check)
-      git log --oneline $(git merge-base HEAD $BASE_BRANCH)..HEAD
-      git diff --stat $(git merge-base HEAD $BASE_BRANCH)..HEAD
+      PLAN_PATH="$(cat .archon-piv-plan-path.txt 2>/dev/null | head -1 || true)"
+      [ -n "$PLAN_PATH" ] || PLAN_PATH="$(ls -t plans/PR_*.md 2>/dev/null | head -1)"
+      echo "PLAN_PATH=$PLAN_PATH"
+
+      # Python project validation (no JS/TS tooling).
+      rc=0
+      for f in $(git diff --name-only --diff-filter=ACM $(git merge-base HEAD ${BASE_BRANCH:-main})..HEAD); do
+        case "$f" in
+          *.py)         python -m py_compile "$f" || rc=1 ;;
+          *.sh)         bash -n "$f" || rc=1 ;;
+          *.yml|*.yaml) python -c "import yaml,sys; yaml.safe_load(open(sys.argv[1]))" "$f" || rc=1 ;;
+        esac
+      done
+      echo "validate rc=$rc"
+      git log --oneline $(git merge-base HEAD ${BASE_BRANCH:-main})..HEAD
+      git diff --stat $(git merge-base HEAD ${BASE_BRANCH:-main})..HEAD
       ```
 
-      Read `PLAN.md` and `.archon-piv-progress.txt`.
+      Read `$PLAN_PATH` and `.archon-piv-progress.txt`.
 
       ## Step 2: Cross-check plan vs. reality
 
-      For each task in PLAN.md:
+      For each task in `$PLAN_PATH`:
       - Is it checked?
       - Does a commit exist for it?
       - Do the changed files match what the task described?
@@ -391,20 +480,20 @@ nodes:
       PLANNOTATOR-PIV — SUMMARY
       ===============================================================
 
-      Feature: {from PLAN.md}
+      Feature: {from $PLAN_PATH}
+      Plan file: $PLAN_PATH
       Branch: {current branch}
 
       -- Tasks --
-      {tasks from PLAN.md with status}
+      {tasks from $PLAN_PATH with status}
 
       -- Commits --
       {git log}
 
       -- Validation --
-      type-check: PASS/FAIL
-      lint:       PASS/FAIL
-      tests:      PASS/FAIL
-      format:     PASS/FAIL
+      py_compile: PASS/FAIL
+      shell -n:   PASS/FAIL
+      yaml load:  PASS/FAIL
 
       -- Recommendation --
       {READY FOR PR / NEEDS FIXES — with specifics}

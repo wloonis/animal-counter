@@ -99,9 +99,11 @@ fi
 echo "📦 Rsyncing app code to Jetson..."
 rsync -avz --delete --no-owner --no-group \
   --exclude='__pycache__' --exclude='*.pyc' \
+  --exclude='model/old/' \
   -e "sshpass -p $JETSON_PASSWORD ssh $SSH_OPTS" \
   app/ \
-  $JETSON_USER@$JETSON_IP:$APP_PATH/
+  $JETSON_USER@$JETSON_IP:$APP_PATH/ \
+  || { rc=$?; [ "$rc" -eq 23 ] && echo "⚠️  rsync partial transfer (code 23) — continuing (unrelated old files skipped)" || exit "$rc"; }
 
 # ─── 4. Stop existing countingapp services (free GPU) ────────────────────────
 DEP_WAS_RUNNING=false
@@ -129,13 +131,13 @@ run_single_validation() {
   local EXPECTED_COUNT
   EXPECTED_COUNT=$(echo "$VIDEO_FILE" | sed -n 's/.*-\([0-9]\+\)\.mp4/\1/p')
   if [ -z "$EXPECTED_COUNT" ]; then
-    echo "WARNING: Cannot derive expected_count from filename: $VIDEO_FILE — skipping"
+    echo "WARNING: Cannot derive expected_count from filename: $VIDEO_FILE — skipping" >&2
     echo "{\"video_file\": \"$VIDEO_FILE\", \"validation_status\": \"execution_error\", \"error_type\": \"cannot_derive_expected_count\"}"
     return 1
   fi
 
-  echo ""
-  echo "─── Validating: $VIDEO_FILE (expected: $EXPECTED_COUNT) ───"
+  echo "" >&2
+  echo "─── Validating: $VIDEO_FILE (expected: $EXPECTED_COUNT) ───" >&2
 
   # Rsync this video to Jetson
   $SSH_CMD "mkdir -p $APP_PATH/video"
@@ -155,11 +157,11 @@ run_single_validation() {
   $SSH_CMD "rm -f $FILES_PATH/result.json" 2>/dev/null || true
 
   # Delete old job + apply new one
-  $SSH_CMD "kubectl delete job countingapp-validate -n $APP_NAMESPACE --ignore-not-found 2>/dev/null || true"
-  $SSH_CMD "kubectl apply -f /dev/stdin" < /tmp/countingapp-validate.yaml
+  $SSH_CMD "kubectl delete job countingapp-validate -n $APP_NAMESPACE --ignore-not-found 2>/dev/null || true" >/dev/null
+  $SSH_CMD "kubectl apply -f /dev/stdin" < /tmp/countingapp-validate.yaml >/dev/null
 
   # Poll for job completion
-  echo "Waiting for validation job to complete (timeout: ${TIMEOUT_SEC}s)..."
+  echo "Waiting for validation job to complete (timeout: ${TIMEOUT_SEC}s)..." >&2
   local JOB_STATUS=""
   while true; do
     local ELAPSED=$(( $(date +%s) - VIDEO_START ))
@@ -170,14 +172,14 @@ run_single_validation() {
     local COND
     COND=$($SSH_CMD "kubectl get job countingapp-validate -n $APP_NAMESPACE -o jsonpath='{.status.conditions[0].type}' 2>/dev/null || echo ''" 2>/dev/null)
     case "$COND" in
-      Complete) JOB_STATUS="complete"; break ;;
+      Complete|SuccessCriteriaMet) JOB_STATUS="complete"; break ;;
       Failed)   JOB_STATUS="failed"; break ;;
-      *) echo "  Job status: ${COND:-pending} (${ELAPSED}s)..."; sleep 5 ;;
+      *) echo "  Job status: ${COND:-pending} (${ELAPSED}s)..." >&2; sleep 5 ;;
     esac
   done
 
   if [ "$JOB_STATUS" = "timeout" ]; then
-    echo "TIMEOUT: Validation job did not complete within ${TIMEOUT_SEC}s"
+    echo "TIMEOUT: Validation job did not complete within ${TIMEOUT_SEC}s" >&2
     echo "{\"video_file\": \"$VIDEO_FILE\", \"validation_status\": \"execution_error\", \"error_type\": \"timeout\", \"expected_count\": $EXPECTED_COUNT, \"job_status\": \"timeout\", \"elapsed_seconds\": $(( $(date +%s) - VIDEO_START ))}"
     return 1
   fi
@@ -208,7 +210,7 @@ run_single_validation() {
   local VDURATION=$(( $(date +%s) - VIDEO_START ))
 
   # Output single-video result as JSON (to be collected by caller)
-  jq -n \
+  jq -c -n \
     --arg status "$VSTATUS" \
     --argjson expected "$EXPECTED_COUNT" \
     --argjson actual "$ACTUAL_COUNT" \
@@ -239,7 +241,7 @@ RESULTS_FILE="/tmp/validation-results.jsonl"
 > "$RESULTS_FILE"
 
 for VIDEO_PATH in $VIDEO_LIST; do
-  run_single_validation "$VIDEO_PATH" >> "$RESULTS_FILE" 2>/dev/null || true
+  run_single_validation "$VIDEO_PATH" >> "$RESULTS_FILE" || true
 done
 
 # ─── 7. Restart countingapp-dep if it was stopped ────────────────────────────
@@ -252,10 +254,10 @@ fi
 
 # ─── 8. Aggregate results into final report ──────────────────────────────────
 TOTAL_DURATION=$(( $(date +%s) - VALIDATION_START ))
-VIDEO_COUNT=$(wc -l < "$RESULTS_FILE" | tr -d ' ')
-PASS_COUNT=$(jq -r 'select(.validation_status == "pass")' "$RESULTS_FILE" | wc -l | tr -d ' ')
-MISMATCH_COUNT=$(jq -r 'select(.validation_status == "count_mismatch")' "$RESULTS_FILE" | wc -l | tr -d ' ')
-ERROR_COUNT=$(jq -r 'select(.validation_status == "execution_error")' "$RESULTS_FILE" | wc -l | tr -d ' ')
+VIDEO_COUNT=$(jq -s 'length' "$RESULTS_FILE")
+PASS_COUNT=$(jq -s '[.[] | select(.validation_status == "pass")] | length' "$RESULTS_FILE")
+MISMATCH_COUNT=$(jq -s '[.[] | select(.validation_status == "count_mismatch")] | length' "$RESULTS_FILE")
+ERROR_COUNT=$(jq -s '[.[] | select(.validation_status == "execution_error")] | length' "$RESULTS_FILE")
 
 # Determine overall status
 if [ "$ERROR_COUNT" -gt 0 ] && [ "$MISMATCH_COUNT" -eq 0 ] && [ "$PASS_COUNT" -eq 0 ]; then

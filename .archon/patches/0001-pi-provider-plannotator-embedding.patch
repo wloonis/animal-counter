@@ -1,0 +1,111 @@
+From 66b61047bf01a27098f38ad621df3e4be66a1609 Mon Sep 17 00:00:00 2001
+From: Wennael <wloonis@gmail.com>
+Date: Sat, 27 Jun 2026 00:58:34 +0200
+Subject: [PATCH] =?UTF-8?q?fix(pi-provider):=20Plannotator=20embedding=20?=
+ =?UTF-8?q?=E2=80=94=20neutralize=20shared-runtime/runner=20invalidation?=
+ =?UTF-8?q?=20+=20initTheme=20shim?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Enables Pi-as-library usage with extensions across multiple sequential
+sessions in the same cwd (Archon multi-node DAG workflows).
+
+Patches (provider.ts):
+1. runtime.invalidate = noop — prevent shared cached runtime poisoning
+   (loader.js state.staleMessage) across sessions via dispose().
+2. initTheme() with PI_PACKAGE_DIR repointed to real package dir — fix
+   'Theme not initialized' Proxy throw when embedded (no TUI).
+4. runner.invalidate = noop — prevent per-session runner staleMessage
+   poisoning ctx.isIdle()/getModel() post-turn (Plannotator continueWhenIdle).
+
+See upstream issues filed on earendil-works/pi.
+---
+ .../providers/src/community/pi/provider.ts    | 58 ++++++++++++++++++-
+ 1 file changed, 57 insertions(+), 1 deletion(-)
+
+diff --git a/packages/providers/src/community/pi/provider.ts b/packages/providers/src/community/pi/provider.ts
+index f1127fc4..002ab062 100644
+--- a/packages/providers/src/community/pi/provider.ts
++++ b/packages/providers/src/community/pi/provider.ts
+@@ -1,6 +1,6 @@
+ import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+ import { tmpdir } from 'node:os';
+-import { join } from 'node:path';
++import { dirname, join } from 'node:path';
+ 
+ import { createLogger } from '@archon/paths';
+ // Type-only import — erased by TS, so it does NOT trigger Pi's config.js
+@@ -484,6 +484,52 @@ export class PiProvider implements IAgentProvider {
+       ? await getOrCreateReloadedExtensionLoader(cwd, loaderOptions)
+       : createNoopResourceLoader(cwd, loaderOptions);
+ 
++    // ARCHON-PIV: Neutralize the shared extension runtime's invalidate() so that
++    // session.dispose() (called by bridgeSession after each sendQuery) does not
++    // poison the cached runtime for subsequent workflow nodes. The Pi SDK caches
++    // a single `runtime` object on the process-cached ResourceLoader and every
++    // ExtensionAPI method calls `runtime.assertActive()` which throws once
++    // `state.staleMessage` is set by invalidate(). Archon creates a fresh
++    // AgentSession + ExtensionRunner per workflow node but reuses the same
++    // shared runtime — so the first node's dispose() would invalidate the
++    // runtime and break the next node's `pi.getFlag()` / tool execute ctx
++    // ("stale ctx" / "Not in plan mode"). Per-session abort/cleanup in dispose()
++    // still runs; only the shared-runtime invalidation is suppressed. Safe for
++    // Archon's non-interactive workflow mode where each node gets a fresh
++    // session and never reuses a disposed ctx.
++    if (enableExtensions) {
++      try {
++        const extResult = resourceLoader.getExtensions();
++        if (extResult?.runtime && typeof extResult.runtime.invalidate === 'function') {
++          extResult.runtime.invalidate = (): void => {
++            /* no-op: neutralize shared-runtime poisoning across sessions, see ARCHON-PIV */
++          };
++        }
++      } catch {
++        // getExtensions() may fail if reload() never ran; non-fatal.
++      }
++      // Initialize the global Pi theme once per process so headless workflow
++      // nodes can safely use `theme` (e.g. Plannotator's browser UI imports
++      // Pi's `theme` proxy, which throws "Theme not initialized" until
++      // initTheme() runs — normally only the interactive ThemeController does
++      // this). loadTheme() resolves theme JSON files under PI_PACKAGE_DIR, which
++      // ensurePiPackageDirShim() points at a bare package.json-only shim, so we
++      // temporarily repoint it at the real installed package dir for the call.
++      try {
++        const resolvedUrl = import.meta.resolve('@earendil-works/pi-coding-agent');
++        const realPkgDir = dirname(dirname(new URL(resolvedUrl).pathname));
++        const savedPiPackageDir = process.env.PI_PACKAGE_DIR;
++        process.env.PI_PACKAGE_DIR = realPkgDir;
++        try {
++          piCodingAgent.initTheme(undefined, false);
++        } finally {
++          process.env.PI_PACKAGE_DIR = savedPiPackageDir;
++        }
++      } catch (e) {
++        console.error('[ARCHON-PIV] initTheme FAILED:', e instanceof Error ? e.message : String(e));
++      }
++    }
++
+     getLog().info(
+       {
+         piProvider: parsed.provider,
+@@ -556,6 +602,16 @@ export class PiProvider implements IAgentProvider {
+         for (const [name, value] of Object.entries(piConfig.extensionFlags)) {
+           runner.setFlagValue(name, value);
+         }
++        // ARCHON-PIV: Neutralize the per-session runner's invalidate() too.
++        // dispose() calls runner.invalidate(msg) which sets the runner's own
++        // staleMessage (checked by runner.assertActive() — used by ctx.isIdle(),
++        // ctx.getModel(), etc.). Without this, post-turn extension callbacks
++        // (e.g. Plannotator's continueWhenIdle → ctx.isIdle()) throw a stale-ctx
++        // error after the tool returns terminate. Safe in non-interactive
++        // workflow mode where each node gets a fresh runner.
++        runner.invalidate = (): void => {
++          /* no-op: neutralize per-session runner staleMessage, see ARCHON-PIV */
++        };
+       }
+     }
+ 
+-- 
+2.43.0
+

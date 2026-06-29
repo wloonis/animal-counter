@@ -1,3 +1,6 @@
+# Pig tracking module.
+# Wraps the Norfair tracker to follow detected pigs across video frames and
+# assign persistent track IDs for downstream counting and visualization.
 """
 Tracking module for the pig counting application.
 
@@ -34,6 +37,11 @@ class Tracking:
         self.shared_state = shared_state
         self.prev_positions = {}
         self.MAX_JUMP = 20  # à ajuster selon ta résolution
+        self.active_ids = set()
+        self.lost_tracks = {}
+        self.MAX_LOST_FRAMES = 30      # ~1 seconde à 30 fps
+        self.MAX_REASSOCIATE_DIST = 40 # à ajuster
+        self.frame_counter = 0
     
     def plot_one_box(self, x, img, color=None, label=None, line_thickness=None):
         """
@@ -67,38 +75,138 @@ class Tracking:
             )
     
     def process_for_tracking(self, tracking_boxes, origin_h, origin_w, input_h, input_w):
-        """
-        Process tracking boxes for counting and visualization.
-        
-        Args:
-            tracking_boxes (list): List of tracked objects.
-            origin_h (int): Original height of the image.
-            origin_w (int): Original width of the image.
-            input_h (int): Input height for inference.
-            input_w (int): Input width for inference.
-            
-        Returns:
-            tuple: Processed boxes, track IDs, class IDs, and scores.
-        """
+
+        self.frame_counter += 1
+
         result_boxes = []
         result_trackid = []
         result_classid = []
         result_scores = []
 
+        # --------------------------------------------------
+        # Détection des tracks perdus
+        # --------------------------------------------------
+        current_ids = {obj.id for obj in tracking_boxes}
+
+        lost_ids = self.active_ids - current_ids
+
+        for lost_id in lost_ids:
+
+            if lost_id in self.prev_positions:
+
+                self.lost_tracks[lost_id] = {
+                    "cx": self.prev_positions[lost_id]["cx"],
+                    "cy": self.prev_positions[lost_id]["cy"],
+                    "frame": self.frame_counter
+                }
+
+                logger.info(
+                    f"[TRACK] Lost ID={lost_id} "
+                    f"at ({self.prev_positions[lost_id]['cx']:.0f},"
+                    f"{self.prev_positions[lost_id]['cy']:.0f})"
+                )
+
+        self.active_ids = current_ids
+
+        # --------------------------------------------------
+        # Suppression des tracks perdus trop anciens
+        # --------------------------------------------------
+        expired_ids = []
+
+        for lost_id, data in self.lost_tracks.items():
+
+            age = self.frame_counter - data["frame"]
+
+            if age > self.MAX_LOST_FRAMES:
+                expired_ids.append(lost_id)
+
+        for lost_id in expired_ids:
+            del self.lost_tracks[lost_id]
+
+        # --------------------------------------------------
+        # Traitement normal
+        # --------------------------------------------------
         for obj in tracking_boxes:
+
             track_id = obj.id
 
-            # Get the true box from the Detection
+            # bbox du tracker
             if hasattr(obj.last_detection, "data") and "bbox" in obj.last_detection.data:
                 x1, y1, x2, y2 = obj.last_detection.data["bbox"]
 
-            # Correct letterbox
-            x1, y1, x2, y2 = self.undo_letterbox([x1, y1, x2, y2], origin_h, origin_w, input_h, input_w)
+            # correction letterbox
+            x1, y1, x2, y2 = self.undo_letterbox(
+                [x1, y1, x2, y2],
+                origin_h,
+                origin_w,
+                input_h,
+                input_w
+            )
 
+            cx = (x1 + x2) / 2
+            cy = (y1 + y2) / 2
+
+            # --------------------------------------------------
+            # Réassociation d'ID
+            # --------------------------------------------------
+            best_match = None
+            best_dist = float("inf")
+            
+            counting_line_x = self.shared_state.counting_line_x
+
+            for lost_id, data in self.lost_tracks.items():
+
+                age = self.frame_counter - data["frame"]
+
+                if age > 10:
+                    continue
+
+                # Ne réassocier que les tracks perdus
+                # proches de la ligne de comptage
+                if abs(data["cx"] - counting_line_x) > 100:
+                    continue
+    
+                dist = np.sqrt(
+                    (cx - data["cx"]) ** 2 +
+                    (cy - data["cy"]) ** 2
+                )
+
+                if (
+                    dist < self.MAX_REASSOCIATE_DIST
+                    and dist < best_dist
+                ):
+                    best_match = lost_id
+                    best_dist = dist
+
+            if best_match is not None:
+
+                logger.warning(
+                    f"[TRACK] ID SWITCH detected : "
+                    f"{track_id} -> {best_match} "
+                    f"(dist={best_dist:.1f})"
+                )
+
+                track_id = best_match
+
+                del self.lost_tracks[best_match]
+
+            # --------------------------------------------------
+            # Sauvegarde position courante
+            # --------------------------------------------------
+            self.prev_positions[track_id] = {
+                "cx": cx,
+                "cy": cy
+            }
+
+            # --------------------------------------------------
+            # Sortie standard
+            # --------------------------------------------------
             result_boxes.append([x1, y1, x2, y2])
             result_trackid.append(track_id)
+
             label = obj.last_detection.label
             score = obj.last_detection.scores[0]
+
             result_classid.append(label)
             result_scores.append(score)
 
@@ -108,7 +216,7 @@ class Tracking:
             np.array(result_classid),
             np.array(result_scores),
         )
-    
+        
     def undo_letterbox(self, box, origin_h, origin_w, input_h, input_w):
         x1, y1, x2, y2 = box
         r_w = input_w / origin_w

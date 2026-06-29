@@ -1,0 +1,16 @@
+# Archon per-repo config — animal-counter
+worktree:
+  baseBranch: main
+
+assistants:
+  pi:
+    extensionFlags:
+      plan: true
+    env:
+      PLANNOTATOR_REMOTE: "1"
+
+# Project-scoped env vars (managed via Web UI or here).
+# Use the `env:` block to inject secrets into AI/bash/script workflow nodes.
+# Values are NEVER committed — keep this file gitignored or store only keys.
+# env:
+#   MY_API_KEY: ${ENV:MY_API_KEY}

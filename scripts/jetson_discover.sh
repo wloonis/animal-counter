@@ -77,7 +77,6 @@ for ip in $IPS; do
             fi
         fi
     done
-=======
 
     if [ $? -eq 0 ]; then
         echo "🎯 Jetson trouvé : $ip"

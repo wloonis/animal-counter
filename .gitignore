@@ -87,3 +87,7 @@ Thumbs.db
 # Data (optionnel)
 data/
 datasets/
+
+# Archon cross-run state (never commit)
+.archon/state/
+.pi-loop.json.lock
