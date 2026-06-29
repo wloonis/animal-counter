@@ -150,6 +150,10 @@ run_single_validation() {
       -e "s|{{ validate_video }}|./video/$VIDEO_FILE|g" \
       k3s/templates/countingapp-validate.j2 > /tmp/countingapp-validate.yaml
 
+  # Delete stale result.json before launching new job (prevents false positive
+  # if the new job crashes and doesn't write a new result.json)
+  $SSH_CMD "rm -f $FILES_PATH/result.json" 2>/dev/null || true
+
   # Delete old job + apply new one
   $SSH_CMD "kubectl delete job countingapp-validate -n $APP_NAMESPACE --ignore-not-found 2>/dev/null || true"
   $SSH_CMD "kubectl apply -f /dev/stdin" < /tmp/countingapp-validate.yaml

@@ -1,5 +1,5 @@
 {
-  "reference_video": "template-validation-9.mp4",
+  "reference_video": "template-validation-23.mp4",
   "tolerance": 0,
   "timeout_seconds": 300,
   "max_iterations": 5,

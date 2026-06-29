@@ -11,7 +11,7 @@
 # This workflow is Python/Jetson-specific. It does NOT use bun run validate /
 # bun run type-check (those are JS/TS patterns that don't exist in this project).
 # The validation criterion is the counting result on the reference video
-# template-validation-9.mp4 (expected_count = 9, derived from filename).
+# (configured in validation/config.json; expected_count derived from filename).
 #
 # Prereqs (one-time per machine):
 #   pi install npm:@plannotator/pi-extension
@@ -391,9 +391,9 @@ nodes:
           "error_count": N,
           "results": [
             {
-              "video_file": "template-validation-9.mp4",
+              "video_file": "<reference_video from config>",
               "validation_status": "pass" | "count_mismatch" | "execution_error",
-              "expected_count": 9,
+              "expected_count": <derived from filename>,
               "actual_count": M,
               "diff": D,
               "job_status": "complete" | "failed" | "timeout",
@@ -559,9 +559,9 @@ nodes:
       PR: {url}
 
       -- Validation Result -------------------------------------------
-      Video: template-validation-9.mp4
-      Expected: 9
-      Actual: {from report}
+      Video: {video_file from validation-report.json}
+      Expected: {expected_count from report}
+      Actual: {actual_count from report}
       Status: PASS
 
       -- Tasks Completed -----------------------------------------------

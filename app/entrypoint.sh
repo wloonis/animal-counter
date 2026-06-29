@@ -44,7 +44,7 @@ EOF
     ;;
 
   validate)
-    VIDEO="${VALIDATE_VIDEO:-./video/template-validation-9.mp4}"
+    VIDEO="${VALIDATE_VIDEO:-./video/template-validation-23.mp4}"
     echo "Running validation mode on: $VIDEO"
     exec python3 src/main.py \
       --input=FILE \
