@@ -1,3 +1,4 @@
+# hello-plannotator
 """
 Main application entry point for the pig counting application.
 
@@ -13,6 +14,7 @@ import logging
 import sys
 import os
 import signal
+import json
 import numpy as np
 from queue import Queue
 from argparse import ArgumentParser
@@ -532,6 +534,30 @@ def start(input_source, video_path):
             raise
 
 
+def write_result_json(result_path, video_path, shared_state, start_time, error=None):
+    """Write structured result JSON after processing completes.
+
+    Called only when RESULT_JSON_PATH env var is set (mode validate).
+    In normal serve mode, this function is never called.
+    """
+    end_time = time.time()
+    result = {
+        "count": int(shared_state.counter_to_right),
+        "video_file": os.path.basename(video_path),
+        "timestamp": datetime.datetime.now().isoformat(),
+        "duration_seconds": round(end_time - start_time, 2),
+        "frames_processed": shared_state.infer_thread.frame_counter if shared_state.infer_thread else 0,
+        "status": "error" if error else "completed",
+        "error": str(error) if error else None
+    }
+    result_dir = os.path.dirname(result_path)
+    if result_dir:
+        os.makedirs(result_dir, exist_ok=True)
+    with open(result_path, 'w') as f:
+        json.dump(result, f, indent=2)
+    logger.info(f"Result JSON written to {result_path}: {json.dumps(result)}")
+
+
 if __name__ == "__main__":
     # Load settings
     settings = Settings()
@@ -583,8 +609,27 @@ if __name__ == "__main__":
             shared_state.centroid_tracking = True
             shared_state.box_tracking = True
         
+        start_time = time.time()
         start(input_source, video)
         logger.info("Inference Started")
+
+        # Mode validate only: wait for threads to finish and write result JSON.
+        # In normal serve mode (RESULT_JSON_PATH not set), behavior is unchanged:
+        # the process stays alive via non-daemon threads, the app counts continuously.
+        result_json_path = os.getenv("RESULT_JSON_PATH", "")
+        if result_json_path:
+            if shared_state.infer_thread and shared_state.infer_thread.is_alive():
+                shared_state.infer_thread.join(timeout=300)
+            if shared_state.display_thread and shared_state.display_thread.is_alive():
+                shared_state.display_thread.join(timeout=300)
+            write_result_json(result_json_path, video, shared_state, start_time)
     except Exception as e:
         logger.error(f"Exception: {repr(e)}")
+        # In validate mode, write error result JSON before exiting
+        result_json_path = os.getenv("RESULT_JSON_PATH", "")
+        if result_json_path:
+            try:
+                write_result_json(result_json_path, video, shared_state, start_time, error=e)
+            except Exception:
+                pass
         raise

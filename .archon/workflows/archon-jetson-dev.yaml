@@ -1,0 +1,590 @@
+# Jetson-gated autonomous development workflow with business validation.
+#
+# Flow: Archon asks clarifying questions → Pi session writes PLAN.md and submits
+# via @plannotator/pi-extension → human reviews and approves over HTTP on
+# 127.0.0.1:19432 → Pi implements task-by-task with py_compile validation →
+# Pi runs scripts/validate_on_jetson.sh on the Jetson → parses JSON report →
+#   - pass → finalize (push + PR draft)
+#   - count_mismatch → HITL PAUSE (no auto-fix — anti metric-gaming)
+#   - execution_error → auto-diagnose + fix + retry (limited by max_iterations)
+#
+# This workflow is Python/Jetson-specific. It does NOT use bun run validate /
+# bun run type-check (those are JS/TS patterns that don't exist in this project).
+# The validation criterion is the counting result on the reference video
+# template-validation-9.mp4 (expected_count = 9, derived from filename).
+#
+# Prereqs (one-time per machine):
+#   pi install npm:@plannotator/pi-extension
+#   .archon/config.yaml must have extensionFlags.plan: true + PLANNOTATOR_REMOTE: "1"
+
+name: archon-jetson-dev
+description: |
+  Use when: You want autonomous development with Jetson-based business validation.
+  The app runs on a Jetson Orin in k3s; validation = running a reference video
+  and comparing the pig count to the expected value (derived from the filename).
+  Triggers: "jetson dev", "validate on jetson", "autonomous dev pipeline",
+            "jetson validation", "business validation".
+  NOT for: Standard PIV without Jetson validation (use archon-plannotator-piv).
+  NOT for: Quick fixes, PR reviews, JS/TS projects.
+
+  Six phases:
+  1. CLARIFY: Pi asks 2-3 targeted questions, converges on intent.
+  2. PLAN: Pi writes PLAN.md and submits via plannotator HTTP UI.
+  3. VERIFY-PLAN: Bash sanity check that PLAN.md exists with tasks.
+  4. IMPLEMENT: Pi reads approved PLAN.md, executes task-by-task with
+     python3 -m py_compile validation + commits.
+  5. JETSON-VALIDATE: Pi runs scripts/validate_on_jetson.sh, parses the JSON
+     report, and handles three outcomes:
+     - pass → signal VALIDATED → proceed to finalize
+     - count_mismatch → HITL PAUSE (user guides the fix — no auto-correction)
+     - execution_error → auto-diagnose + fix + retry (limited by max_iterations
+       from validation/config.json; escalate to HITL if exceeded)
+  6. FINALIZE: Push branch + create draft PR on GitHub.
+
+provider: pi
+model: ollama/glm-5.2
+interactive: true
+
+nodes:
+  # ═══════════════════════════════════════════════════════════════
+  # PHASE 1: CLARIFY — Converge on intent (user decisions pre-resolved)
+  # ═══════════════════════════════════════════════════════════════
+
+  - id: clarify
+    loop:
+      prompt: |
+        # Jetson Dev — Clarify Phase
+
+        You are about to hand off to a Pi session that will write a plan and
+        submit it through plannotator's HTTP approval UI. Before that handoff,
+        get enough clarity that the Pi agent can produce a useful plan.
+
+        **User's request**: $ARGUMENTS
+        **User's latest reply**: $LOOP_USER_INPUT
+
+        ---
+
+        ## If this is the FIRST iteration (no reply yet):
+
+        1. **Do light codebase recon** — grep/Read for the obvious touch points.
+           Focus on: app/src/main.py, app/entrypoint.sh, k3s/templates/,
+           scripts/, validation/, .archon/workflows/.
+        2. **Output your understanding + 2-3 questions**, max:
+
+           ```
+           ## What I understand
+           {1-2 sentences restating the request}
+
+           ## What I found
+           - `{file:line}` — {how it relates}
+           - `{file:line}` — {how it relates}
+
+           ## Questions before I hand off to plannotator
+           1. {targeted decision question — reference real code}
+           2. {targeted decision question}
+           3. {optional third question}
+           ```
+
+        Ask about **decisions** (scope boundary, extend-vs-new, testing bar),
+        not information you can look up. If you genuinely have no questions,
+        say so and ask them to confirm you're ready to proceed.
+
+        ---
+
+        ## If the user has replied (subsequent iterations):
+
+        Parse their answers. If there's still one real ambiguity, ask ONE
+        follow-up. Otherwise, summarize the resolved intent:
+
+        ```
+        ## Ready for plannotator
+
+        **Building**: {clear 1-2 sentence description}
+        **In scope**: {bullets}
+        **Out of scope**: {bullets}
+        **Key decisions**: {bullets}
+        **Files likely to change**: {bullets}
+        ```
+
+        Tell them: "Say **ready** to hand off to plannotator, or reply with
+        any last adjustments."
+
+        ---
+
+        ## Signal rules (READ CAREFULLY)
+
+        - ONLY emit `<promise>READY_FOR_PLAN</promise>` when the user's latest
+          message contains explicit approval ("ready", "go", "let's do it",
+          "proceed", "approved").
+        - A question or any revision request = do NOT emit the signal.
+        - If you're unsure whether it's approval, ask — do NOT emit the signal.
+      until: READY_FOR_PLAN
+      max_iterations: 6
+      interactive: true
+      gate_message: |
+        Answer the questions, push back on the scoping, or say "ready" to hand
+        off to plannotator for structured plan review.
+
+  # ═══════════════════════════════════════════════════════════════
+  # PHASE 2: PLAN — Pi session submits plan via plannotator
+  # Human approves/denies over HTTP on 127.0.0.1:19432.
+  # ═══════════════════════════════════════════════════════════════
+
+  - id: plannotator-plan
+    depends_on: [clarify]
+    provider: pi
+    model: ollama/glm-5.2
+    idle_timeout: 3600000
+    prompt: |
+      # Jetson Dev — Plan Phase (PLANNING ONLY)
+
+      ╔══════════════════════════════════════════════════════════════╗
+      ║  ⚠  YOU ARE A PLANNER. YOU ARE NOT AN IMPLEMENTER.           ║
+      ║                                                              ║
+      ║  Your ENTIRE job is:                                         ║
+      ║    1. Write PLAN.md                                          ║
+      ║    2. Submit it via plannotator_submit_plan                  ║
+      ║    3. Iterate on PLAN.md if denied                           ║
+      ║    4. On approval → PRINT ONE LINE AND EXIT                  ║
+      ║                                                              ║
+      ║  You will NEVER:                                             ║
+      ║    • Edit any file other than PLAN.md                        ║
+      ║    • Run bash, agent_browser, cron_create, or any tool that  ║
+      ║      inspects or modifies source code                        ║
+      ║    • "Get a head start" on implementation after approval     ║
+      ║    • Open a browser, start a dev server, or run tests        ║
+      ║                                                              ║
+      ║  A downstream node (PI) handles ALL implementation.          ║
+      ║  If you start coding here, you are WRONG and the workflow    ║
+      ║  will fail.                                                  ║
+      ╚══════════════════════════════════════════════════════════════╝
+
+      **Resolved intent from the clarify phase**:
+      $clarify.output
+
+      ---
+
+      ## Step 1: Write PLAN.md
+
+      Use the write tool on `PLAN.md` (and ONLY that file). Structure:
+
+      ```markdown
+      # Plan: {feature name}
+
+      ## Summary
+      {1-2 sentences — what and why}
+
+      ## In Scope
+      - {bullet}
+      ## Out of Scope
+      - {bullet}
+
+      ## Architecture Decisions
+      - {decision — rationale}
+
+      ## Tasks
+      - [ ] Task 1: {ACTION} `{path}` — {what and why}
+      - [ ] Task 2: {ACTION} `{path}` — {what and why}
+      - [ ] Task N: {ACTION} `{path}` — {what and why}
+
+      ## Validation
+      - {command(s) that prove the feature works}
+
+      ## Risks
+      - {risk} — {mitigation}
+      ```
+
+      Every task must be atomic, name a specific file, and describe a
+      verifiable action. You may READ CLAUDE.md and README.md for conventions,
+      but do NOT read or edit any source files.
+
+      ## Step 2: Submit for review
+
+      Call `plannotator_submit_plan`. The tool will emit a review URL
+      (127.0.0.1:19432) via notify(). Wait for the reviewer's decision.
+
+      ## Step 3: Handle the reviewer's decision
+
+      ### Approved
+      Print exactly: `PLAN APPROVED — handing off to implement node.`
+      Exit. Do NOT start implementing.
+
+      ### Denied with feedback
+      Use the edit tool on `PLAN.md` to address the feedback, then call
+      `plannotator_submit_plan` again. Repeat until approved.
+
+      ## Rules (non-negotiable)
+
+      - PLAN.md is the ONLY file you may create or edit.
+      - The only files you may READ are: PLAN.md, CLAUDE.md, README.md.
+      - Do NOT call bash, agent_browser, cron_create, or any tool that
+        inspects, modifies, or executes source code.
+      - After approval, do NOT start implementing.
+
+  # ═══════════════════════════════════════════════════════════════
+  # PHASE 2b: VERIFY — Sanity check the approved plan landed on disk
+  # ═══════════════════════════════════════════════════════════════
+
+  - id: verify-plan
+    depends_on: [plannotator-plan]
+    bash: |
+      if [ ! -f PLAN.md ]; then
+        echo "FAIL: PLAN.md was not created — plannotator planning phase did not produce a plan"
+        exit 1
+      fi
+      if ! grep -qE '^- \[.\]' PLAN.md; then
+        echo "FAIL: PLAN.md has no task checkboxes — incomplete plan"
+        cat PLAN.md
+        exit 1
+      fi
+      task_count=$(grep -cE '^- \[.\]' PLAN.md)
+      echo "PASS: PLAN.md has $task_count task(s)"
+      cp PLAN.md "$ARTIFACTS_DIR/PLAN.md"
+
+  # ═══════════════════════════════════════════════════════════════
+  # PHASE 3: IMPLEMENT — Task-by-task loop against PLAN.md
+  # Validation = python3 -m py_compile (NOT bun run type-check)
+  # ═══════════════════════════════════════════════════════════════
+
+  - id: implement
+    depends_on: [verify-plan]
+    idle_timeout: 600000
+    model: large
+    loop:
+      prompt: |
+        # Jetson Dev — Implementation Agent
+
+        You are an autonomous coding agent in a FRESH session — no memory of
+        previous iterations. Read the approved plan from disk, implement ONE
+        task, validate with python3 -m py_compile, commit, exit. The loop
+        engine starts a fresh session for the next task.
+
+        **Golden Rule**: If py_compile fails, fix it before committing.
+        Never commit broken code.
+
+        **IMPORTANT**: This is a Python project. Do NOT run `bun run type-check`,
+        `bun run lint`, `bun run test`, or `bun run validate` — those commands
+        do not exist in this project. Use `python3 -m py_compile` for syntax
+        validation. The real business validation happens on the Jetson in the
+        next phase.
+
+        ---
+
+        ## Phase 0: Load State
+
+        1. Read `PLAN.md` (the approved plan — source of truth).
+        2. Check progress: `cat .archon-piv-progress.txt 2>/dev/null || true`.
+        3. `git log --oneline -10` and `git status`.
+
+        ## Phase 1: Select Next Task
+
+        Tasks are `- [ ]` / `- [x]` checkboxes in PLAN.md. Cross-reference
+        with `.archon-piv-progress.txt` and recent commits to pick the next
+        unchecked task.
+
+        If every task is checked → skip to Phase 4 (Complete).
+
+        Announce:
+        ```
+        -- Task Selected --
+        Task: {N} — {title}
+        File: {path}
+        ```
+
+        ## Phase 2: Implement
+
+        1. Read the file(s) the task touches.
+        2. Make changes following existing code conventions.
+        3. Validate syntax after each file:
+           ```bash
+           python3 -m py_compile <changed_files>
+           ```
+
+        ## Phase 3: Validate + Commit
+
+        ```bash
+        python3 -m py_compile <all_changed_python_files>
+        ```
+
+        If validation fails, fix (up to 3 attempts). If you can't fix, note it
+        in `.archon-piv-progress.txt` and exit without committing.
+
+        If validation passes, stage only the files you edited:
+        ```bash
+        git add path/to/file1 path/to/file2 ...
+        git status --porcelain
+        git diff --cached --stat
+        git commit -m "$(cat <<'EOF'
+        {type}: {short task description}
+
+        Task {N} from PLAN.md
+        EOF
+        )"
+        ```
+
+        Update PLAN.md to mark this task `- [x]` and append to
+        `.archon-piv-progress.txt`:
+        ```
+        Task {N}: {title} — {commit short hash}
+        ```
+
+        **Never stage**: `.pr-body.md`, `pr-body.md`, `*.scratch.md`, `*.tmp.md`,
+        `review/`, `*-report.md` at the repo root, or anything under `$ARTIFACTS_DIR`.
+
+        ## Phase 4: Complete
+
+        If every task in PLAN.md is now checked:
+        1. Run full syntax validation: `python3 -m py_compile app/src/*.py app/src/**/*.py 2>/dev/null || true`
+        2. Signal: `<promise>IMPL_DONE</promise>`
+
+        Otherwise, end normally — the loop starts a fresh iteration for the
+        next task.
+      until: IMPL_DONE
+      max_iterations: 20
+      fresh_context: true
+
+  # ═══════════════════════════════════════════════════════════════
+  # PHASE 4: JETSON-VALIDATE — Run validation on Jetson + feedback loop
+  #
+  # Three outcomes from validation-report.json:
+  #   - pass           → signal VALIDATED → finalize
+  #   - count_mismatch → HITL PAUSE (no auto-fix — anti metric-gaming)
+  #   - execution_error → auto-diagnose + fix + retry (limited by max_iterations)
+  # ═══════════════════════════════════════════════════════════════
+
+  - id: jetson-validate
+    depends_on: [implement]
+    idle_timeout: 600000
+    loop:
+      prompt: |
+        # Jetson Dev — Validation Feedback Loop
+
+        You are in the Jetson validation phase. Your job is to run the
+        validation script, read the report, and handle the result based on
+        its `validation_status` field.
+
+        **CRITICAL**: This is a Python/Jetson project. Do NOT run `bun run
+        validate` or `bun run type-check`. The ONLY validation that matters
+        is running `scripts/validate_on_jetson.sh` and checking the result.
+
+        ---
+
+        ## Step 1: Run validation
+
+        ```bash
+        bash scripts/validate_on_jetson.sh 2>&1
+        ```
+
+        ## Step 2: Read the report
+
+        Read `validation-report.json` (produced by the script). Also read
+        `validation/config.json` for `max_iterations`.
+
+        The report has this structure:
+        ```json
+        {
+          "validation_status": "pass" | "count_mismatch" | "execution_error",
+          "mode": "standard" | "full",
+          "total_videos": N,
+          "pass_count": N,
+          "mismatch_count": N,
+          "error_count": N,
+          "results": [
+            {
+              "video_file": "template-validation-9.mp4",
+              "validation_status": "pass" | "count_mismatch" | "execution_error",
+              "expected_count": 9,
+              "actual_count": M,
+              "diff": D,
+              "job_status": "complete" | "failed" | "timeout",
+              "logs": "...",
+              "result": { "count": M, "video_file": "...", "status": "...", ... }
+            }
+          ]
+        }
+        ```
+
+        ## Step 3: Handle result based on validation_status
+
+        ### "pass" → SUCCESS
+
+        The business validation succeeded. The app counted correctly on the
+        reference video.
+
+        1. Print a summary of the results.
+        2. Signal: `<promise>VALIDATED</promise>`
+        3. Done — the workflow proceeds to finalize.
+
+        ### "count_mismatch" → HITL PAUSE (BUSINESS FAILURE)
+
+        **DO NOT auto-correct.** This is a business validation failure — the
+        app ran successfully but the count does not match the expected value.
+        This is a deliberate guard against "metric gaming" (the AI tweaking
+        the counting logic to match the expected number without actually
+        fixing the real problem).
+
+        Present the mismatch clearly to the user:
+        ```
+        ## ⚠️ Count Mismatch — Human Review Required
+
+        Video: {video_file}
+        Expected count: {expected_count}
+        Actual count: {actual_count}
+        Diff: {diff}
+
+        Job logs (last 20 lines):
+        {logs}
+
+        The app ran successfully but the counting result doesn't match.
+        Please review and tell me what to investigate or fix.
+        ```
+
+        **PAUSE and wait for user guidance.** The user will tell you what to
+        investigate or fix. When they respond:
+        - Implement their fix
+        - Commit the fix
+        - Re-run validation (the loop continues to the next iteration)
+
+        **DO NOT signal VALIDATED.** Do NOT auto-fix. Wait for human input.
+
+        ### "execution_error" → AUTO-RETRY (INFRA FAILURE)
+
+        The validation script itself failed (not the counting logic). This is
+        an infrastructure issue that you can attempt to fix.
+
+        Diagnose the error from the report's `results[].error_type`:
+        - `jetson_not_found` → check .env.local, run scripts/jetson_discover.sh
+        - `video_not_found` → ensure validation/videos/ has the mp4 file
+        - `result_json_missing` → the app crashed; read the logs in the report,
+          fix the code, commit, re-run
+        - `timeout` → the Job took too long; check if the Jetson is overloaded
+          or if the video is very long; consider increasing timeout_seconds
+        - `cannot_derive_expected_count` → filename doesn't match the pattern
+          *-N.mp4; rename the file
+
+        Track how many execution errors you've encountered. Read `max_iterations`
+        from `validation/config.json`.
+
+        If execution_error_count >= max_iterations:
+          **ESCALATE to HITL** — present the repeated errors and ask for guidance.
+          ```
+          ## ⚠️ Repeated Execution Errors — Human Help Needed
+
+          I've encountered {N} execution errors (max_iterations = {M}).
+          Last error: {error_type}
+
+          Logs:
+          {logs}
+
+          Please help me diagnose and fix this infrastructure issue.
+          ```
+          Wait for user input, then implement their fix and re-run.
+
+        Else (under the limit):
+          Fix the issue, commit, re-run validation (next loop iteration).
+
+        **DO NOT signal VALIDATED on execution_error.**
+
+        ---
+
+        ## Signal rules
+
+        - ONLY emit `<promise>VALIDATED</promise>` when validation_status is
+          "pass".
+        - On count_mismatch: NEVER auto-fix, NEVER emit the signal. Wait for
+          human input.
+        - On execution_error: fix and retry, or escalate to HITL. Never emit
+          the signal.
+      until: VALIDATED
+      max_iterations: 15
+      interactive: true
+      gate_message: |
+        Jetson validation returned a count mismatch (business failure).
+        Review the result and provide guidance on what to fix,
+        or say "approve" to finalize despite the mismatch.
+
+  # ═══════════════════════════════════════════════════════════════
+  # PHASE 5: FINALIZE — Push, create PR, generate summary
+  # ═══════════════════════════════════════════════════════════════
+
+  - id: finalize
+    model: medium
+    depends_on: [jetson-validate]
+    context: fresh
+    prompt: |
+      # Jetson Dev — Finalize
+
+      The Jetson business validation has passed. Push changes and create a
+      draft PR.
+
+      ---
+
+      ## Step 1: Push Changes
+
+      ```bash
+      git push -u origin HEAD 2>&1 || echo "WARNING: Push failed — verify remote authentication and branch state before creating the PR."
+      ```
+
+      ## Step 2: Generate Summary
+
+      ```bash
+      git log --oneline --no-merges $(git merge-base HEAD $BASE_BRANCH)..HEAD
+      git diff --stat $(git merge-base HEAD $BASE_BRANCH)..HEAD
+      ```
+
+      Read `PLAN.md` and `.archon-piv-progress.txt` for context.
+      Read `validation-report.json` for the validation results.
+
+      ## Step 3: Create PR (if not already created)
+
+      ```bash
+      gh pr view HEAD --json url 2>/dev/null || echo "NO_PR"
+      ```
+
+      If no PR exists, create with `gh pr create --draft --base $BASE_BRANCH`:
+      - Title from the plan's feature name
+      - Body summarizing the implementation AND the Jetson validation result
+      - Use a HEREDOC for the body
+      - Include the validation report summary (expected vs actual count)
+
+      ## Step 4: Output Summary
+
+      ```
+      ===============================================================
+      JETSON DEV — COMPLETE
+      ===============================================================
+
+      Feature: {from plan}
+      Branch: {branch name}
+      PR: {url}
+
+      -- Validation Result -------------------------------------------
+      Video: template-validation-9.mp4
+      Expected: 9
+      Actual: {from report}
+      Status: PASS
+
+      -- Tasks Completed -----------------------------------------------
+      {list from progress tracking}
+
+      -- Commits -------------------------------------------------------
+      {git log output}
+
+      -- Files Changed -------------------------------------------------
+      {git diff --stat output}
+      ===============================================================
+      ```
+
+  - id: verify-pr-base
+    bash: |
+      set -euo pipefail
+      EXPECTED="$BASE_BRANCH"
+      ACTUAL=$(gh pr view --json baseRefName -q '.baseRefName')
+      if [ "$ACTUAL" != "$EXPECTED" ]; then
+        PR_NUMBER=$(gh pr view --json number -q '.number')
+        echo "Base mismatch on PR #$PR_NUMBER: expected=$EXPECTED actual=$ACTUAL — re-targeting" >&2
+        gh pr edit "$PR_NUMBER" --base "$EXPECTED"
+      else
+        echo "PR base verified: $EXPECTED"
+      fi
+    depends_on: [finalize]

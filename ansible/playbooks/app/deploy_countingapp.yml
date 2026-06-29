@@ -83,6 +83,12 @@
     dest: "{{ app_path }}/../k3s/countingapp-test.yaml"
   become: yes
 
+- name: Render counting app validate
+  template:
+    src: "../../../k3s/templates/countingapp-validate.j2"
+    dest: "{{ app_path }}/../k3s/countingapp-validate.yaml"
+  become: yes
+
 - name: Render countingapp deployment template
   template:
     src: ../../../k3s/templates/countingapp-dep.j2

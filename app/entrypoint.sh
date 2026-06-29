@@ -43,6 +43,15 @@ EOF
       --drawtracking=True
     ;;
 
+  validate)
+    VIDEO="${VALIDATE_VIDEO:-./video/template-validation-9.mp4}"
+    echo "Running validation mode on: $VIDEO"
+    exec python3 src/main.py \
+      --input=FILE \
+      --file="$VIDEO" \
+      --drawtracking=True
+    ;;
+
   *)
     echo "Unknown mode: $MODE"
     exit 1
