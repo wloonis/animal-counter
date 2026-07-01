@@ -127,12 +127,21 @@ run_single_validation() {
   local VIDEO_START
   VIDEO_START=$(date +%s)
 
-  # Derive expected_count from filename (integer before .mp4, after last dash)
+  # Resolve expected_count:
+  #   1. Manifest lookup by filename (validation/expected_counts.json) — allows
+  #      arbitrary/descriptive filenames (no collision when 2 videos share a count)
+  #   2. Fallback: derive from filename template-validation-<N>.mp4 -> N (legacy)
   local EXPECTED_COUNT
-  EXPECTED_COUNT=$(echo "$VIDEO_FILE" | sed -n 's/.*-\([0-9]\+\)\.mp4/\1/p')
+  local EXPECTED_MANIFEST="validation/expected_counts.json"
+  if [ -f "$EXPECTED_MANIFEST" ]; then
+    EXPECTED_COUNT=$(jq -r --arg f "$VIDEO_FILE" '.videos[$f] // empty' "$EXPECTED_MANIFEST")
+  fi
   if [ -z "$EXPECTED_COUNT" ]; then
-    echo "WARNING: Cannot derive expected_count from filename: $VIDEO_FILE — skipping" >&2
-    echo "{\"video_file\": \"$VIDEO_FILE\", \"validation_status\": \"execution_error\", \"error_type\": \"cannot_derive_expected_count\"}"
+    EXPECTED_COUNT=$(echo "$VIDEO_FILE" | sed -n 's/.*-\([0-9]\+\)\.mp4/\1/p')
+  fi
+  if [ -z "$EXPECTED_COUNT" ]; then
+    echo "WARNING: No expected_count for $VIDEO_FILE (not in manifest, not derivable from filename) — skipping" >&2
+    echo "{\"video_file\": \"$VIDEO_FILE\", \"validation_status\": \"execution_error\", \"error_type\": \"no_expected_count\"}"
     return 1
   fi
 

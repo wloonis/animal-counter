@@ -1,0 +1,6 @@
+{
+  "_comment": "Manifest of expected pig counts per validation video. Filenames are free/descriptive (no need to embed the count). For a video not listed here, validate_on_jetson.sh falls back to deriving the count from the filename pattern template-validation-<N>.mp4 -> N (legacy compatibility). Add new videos here to decouple the expected count from the filename (e.g. two distinct videos can both expect 9 pigs without colliding).",
+  "videos": {
+    "template-validation-9.mp4": 9
+  }
+}
