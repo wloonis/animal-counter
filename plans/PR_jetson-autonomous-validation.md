@@ -1,3 +1,10 @@
+> **⚠️ Plan archivé et obsolète.** Ce document est la version « switch to
+> template-validation-23.mp4 » (commits rogue `8c9495e` / `90d48e7`, abandonnée).
+> La vidéo de référence réelle est `template-validation-9.mp4` (9 cochons).
+> Le travail effectif — fixes de la chaîne + validation métier PASS sur 9 —
+> est dans la **PR #1** (`pi/jetson-autonomous-validation`) ; voir sa description
+> et les commits. Conservé pour l'historique sous la convention `plans/PR_<slug>.md`.
+
 # Plan: Chaîne de développement autonome avec validation métier sur Jetson
 
 ## Summary
