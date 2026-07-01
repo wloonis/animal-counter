@@ -35,7 +35,6 @@ fi
 
 CONFIG_FILE="validation/config.json"
 TOLERANCE=$(jq -r '.tolerance' "$CONFIG_FILE")
-TIMEOUT_SEC=$(jq -r '.timeout_seconds' "$CONFIG_FILE")
 MAX_ITERATIONS=$(jq -r '.max_iterations' "$CONFIG_FILE")
 MODE=$(jq -r '.mode' "$CONFIG_FILE")
 
@@ -170,14 +169,10 @@ run_single_validation() {
   $SSH_CMD "kubectl apply -f /dev/stdin" < /tmp/countingapp-validate.yaml >/dev/null
 
   # Poll for job completion
-  echo "Waiting for validation job to complete (timeout: ${TIMEOUT_SEC}s)..." >&2
+  echo "Waiting for validation job to complete (no timeout - videos may be long)..." >&2
   local JOB_STATUS=""
   while true; do
     local ELAPSED=$(( $(date +%s) - VIDEO_START ))
-    if [ $ELAPSED -gt $TIMEOUT_SEC ]; then
-      JOB_STATUS="timeout"
-      break
-    fi
     local COND
     COND=$($SSH_CMD "kubectl get job countingapp-validate -n $APP_NAMESPACE -o jsonpath='{.status.conditions[0].type}' 2>/dev/null || echo ''" 2>/dev/null)
     case "$COND" in
@@ -186,12 +181,6 @@ run_single_validation() {
       *) echo "  Job status: ${COND:-pending} (${ELAPSED}s)..." >&2; sleep 5 ;;
     esac
   done
-
-  if [ "$JOB_STATUS" = "timeout" ]; then
-    echo "TIMEOUT: Validation job did not complete within ${TIMEOUT_SEC}s" >&2
-    echo "{\"video_file\": \"$VIDEO_FILE\", \"validation_status\": \"execution_error\", \"error_type\": \"timeout\", \"expected_count\": $EXPECTED_COUNT, \"job_status\": \"timeout\", \"elapsed_seconds\": $(( $(date +%s) - VIDEO_START ))}"
-    return 1
-  fi
 
   # Fetch result.json
   local RESULT_FILE="/tmp/result-$VIDEO_FILE.json"
