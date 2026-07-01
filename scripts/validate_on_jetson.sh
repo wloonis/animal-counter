@@ -9,7 +9,9 @@ set -euo pipefail
 #
 # Modes:
 #   standard (default) — validates only the reference_video from config
-#   full                — validates all *.mp4 files in validation/videos/
+#   full                — validates only the videos declared in the manifest
+#                        (validation/expected_counts.json). Videos present in
+#                        validation/videos/ but not in the manifest are ignored.
 #                        (enable via config "mode": "full" or CLI arg --full)
 #
 # Exit codes:
@@ -75,11 +77,30 @@ SCP_CMD="sshpass -p $JETSON_PASSWORD scp $SSH_OPTS"
 
 # ─── 2. Build video list ─────────────────────────────────────────────────────
 if [ "$MODE" = "full" ]; then
-  # Full mode: all *.mp4 files in validation/videos/
-  VIDEO_LIST=$(ls validation/videos/*.mp4 2>/dev/null || true)
+  # Full mode: validate ONLY the videos declared in the manifest
+  # (validation/expected_counts.json). Videos present in validation/videos/
+  # but NOT in the manifest are ignored — the manifest is the single source of
+  # truth for which videos to validate and their expected counts.
+  EXPECTED_MANIFEST="validation/expected_counts.json"
+  if [ ! -f "$EXPECTED_MANIFEST" ]; then
+    echo '{"validation_status": "execution_error", "error_type": "manifest_missing"}'
+    echo "ERROR: Full mode requires validation/expected_counts.json (manifest of videos to validate)."
+    exit 1
+  fi
+  VIDEO_LIST=""
+  while IFS= read -r MF; do
+    [ -z "$MF" ] && continue
+    MP="validation/videos/$MF"
+    if [ ! -f "$MP" ]; then
+      echo "WARNING: '$MF' is declared in the manifest but not found in validation/videos/ — skipping" >&2
+      continue
+    fi
+    VIDEO_LIST="${VIDEO_LIST}${MP}"$'\n'
+  done < <(jq -r '.videos | keys[]' "$EXPECTED_MANIFEST" 2>/dev/null)
+  VIDEO_LIST=$(printf '%s' "$VIDEO_LIST" | sed '/^$/d')
   if [ -z "$VIDEO_LIST" ]; then
     echo '{"validation_status": "execution_error", "error_type": "no_videos_found"}'
-    echo "ERROR: No mp4 files found in validation/videos/"
+    echo "ERROR: No manifest-declared videos found in validation/videos/ (check validation/expected_counts.json)"
     exit 1
   fi
 else
