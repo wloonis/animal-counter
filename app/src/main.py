@@ -28,7 +28,10 @@ from ui.rendering import Rendering
 from utils.frame_source import FrameSource
 from utils.shared_state import SharedState
 from utils.timer_fps import TimerFps
-# Avec ByteTrackTracker, on perd le tracking avec un switch d'ID. Problèmatique pour le comptage
+# OC-SORT tracker (lib `trackers`). Tuned to resist ID switches near the
+# counting line: longer lost_track_buffer + low high_conf_det_threshold so the
+# OCR second-chance association can re-bind a briefly-occluded pig to its
+# original ID instead of spawning a new one.
 from trackers import OCSORTTracker
 from supervision import Detections
 
@@ -501,15 +504,17 @@ def start(input_source, video_path):
             shared_state.stop_event.clear()        
             
             byte_tracker = OCSORTTracker(
-                lost_track_buffer=10,
-                minimum_iou_threshold=0.25,
-                minimum_consecutive_frames=5,
-                direction_consistency_weight=0.25,
-                delta_t=2
+                lost_track_buffer=settings.TRACKER_LOST_TRACK_BUFFER,
+                frame_rate=settings.TRACKER_FRAME_RATE,
+                minimum_consecutive_frames=settings.TRACKER_MIN_CONSECUTIVE_FRAMES,
+                minimum_iou_threshold=settings.TRACKER_MIN_IOU_THRESHOLD,
+                direction_consistency_weight=settings.TRACKER_DIRECTION_CONSISTENCY_WEIGHT,
+                high_conf_det_threshold=settings.TRACKER_HIGH_CONF_THRESHOLD,
+                delta_t=settings.TRACKER_DELTA_T,
             )            
 
             tracking = Tracking(draw_box=shared_state.draw_tracking, shared_state=shared_state)
-            counting = Counting(shared_state=shared_state, pig_confidence_threshold=settings.PIG_CONFIDENCE_THRESHOLD, offset_counting_line=settings.OFFSET_PERCENT_COUNTING_LINE)
+            counting = Counting(shared_state=shared_state, pig_confidence_threshold=settings.PIG_CONFIDENCE_THRESHOLD, offset_counting_line=settings.OFFSET_PERCENT_COUNTING_LINE, lost_buffer_frames=settings.COUNTING_LOST_BUFFER_FRAMES, reassoc_line_band=settings.COUNTING_REASSOC_LINE_BAND, reassoc_max_dist_x=settings.COUNTING_REASSOC_MAX_DIST_X, reassoc_max_dist_y=settings.COUNTING_REASSOC_MAX_DIST_Y, hysteresis_px=settings.COUNTING_HYSTERESIS_PX, mirror_guard=settings.COUNTING_MIRROR_GUARD, mirror_max_age=settings.COUNTING_MIRROR_MAX_AGE, mirror_line_band=settings.COUNTING_MIRROR_LINE_BAND, mirror_new_band=settings.COUNTING_MIRROR_NEW_BAND, mirror_max_dist_y=settings.COUNTING_MIRROR_MAX_DIST_Y, resurrection_threshold=settings.COUNTING_RESURRECTION_THRESHOLD, resurrection_min_jump=settings.COUNTING_RESURRECTION_MIN_JUMP, guard_max_age=settings.COUNTING_GUARD_MAX_AGE, reid_window=settings.COUNTING_REID_WINDOW, reid_min_age=settings.COUNTING_REID_MIN_AGE)
             rendering = Rendering(draw_box=shared_state.draw_tracking, offset_counting_line=settings.OFFSET_PERCENT_COUNTING_LINE)
             
             max_queue_size = 3

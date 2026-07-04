@@ -28,13 +28,6 @@ if [ -f ".env.local" ]; then
   set +a
 fi
 
-# Load discovered JETSON_IP if available from previous discovery
-if [ -f /tmp/jetson_env.sh ]; then
-  set -a
-  source /tmp/jetson_env.sh
-  set +a
-fi
-
 CONFIG_FILE="validation/config.json"
 TOLERANCE=$(jq -r '.tolerance' "$CONFIG_FILE")
 MAX_ITERATIONS=$(jq -r '.max_iterations' "$CONFIG_FILE")
@@ -48,15 +41,32 @@ fi
 REPORT_FILE="validation-report.json"
 VALIDATION_START=$(date +%s)
 
-# ─── 1. Discover Jetson IP (reuse existing scripts pattern) ──────────────────
-# Priority: JETSON_IP (from /tmp/jetson_env.sh) > JETSON_ETH_IP (.env.local) > discovery
-if [ -z "${JETSON_IP:-}" ]; then
-  # Strip CIDR suffix from JETSON_ETH_IP if present
-  JETSON_IP="${JETSON_ETH_IP%%/*}"
+# ─── 1. Discover Jetson IP via jetson_discover.sh ───────────────────────────
+# The Jetson IP MUST come from jetson_discover.sh (nmap scan + SSH credential
+# test). Do NOT trust JETSON_ETH_IP blindly: it may point at a stale or wrong
+# interface (the Jetson may be on WiFi/hotspot, not Ethernet).
+# A successful discovery is cached in /tmp/jetson_env.sh; we reuse the cache
+# only if the cached IP still answers SSH, otherwise we re-discover.
+USE_CACHE=false
+if [ -f /tmp/jetson_env.sh ]; then
+  set -a
+  source /tmp/jetson_env.sh
+  set +a
+  if [ -n "${JETSON_IP:-}" ]; then
+    if sshpass -p "$JETSON_PASSWORD" ssh -o StrictHostKeyChecking=no \
+         -o UserKnownHostsFile=/dev/null -o ConnectTimeout=5 \
+         "$JETSON_USER@$JETSON_IP" "true" 2>/dev/null; then
+      USE_CACHE=true
+      echo "✅ Reusing cached Jetson IP: $JETSON_IP"
+    else
+      echo "⚠️  Cached JETSON_IP=$JETSON_IP not reachable — re-discovering..."
+      JETSON_IP=""
+    fi
+  fi
 fi
 
-if [ -z "${JETSON_IP:-}" ]; then
-  echo "JETSON_IP not set, running jetson_discover.sh..."
+if [ "$USE_CACHE" = "false" ]; then
+  echo "🔎 Running jetson_discover.sh..."
   bash scripts/jetson_discover.sh
   set -a
   source /tmp/jetson_env.sh
@@ -224,8 +234,31 @@ run_single_validation() {
     VSTATUS="count_mismatch"
   fi
 
+  local JOB_LOGS_FULL
+  JOB_LOGS_FULL=$($SSH_CMD "kubectl logs job/countingapp-validate -n $APP_NAMESPACE 2>&1" 2>/dev/null || echo "Could not fetch logs")
+
+  # Extract counting events for diagnosis. The full job log is huge and the
+  # interesting lines (crossings, ID-switch recovery, tracks lost on the "in"
+  # side near the line) get buried under thousands of routine lines. We grep
+  # them out and also count them so the report shows at a glance how many
+  # +1/-1/ID-switch events occurred.
+  local COUNTING_EVENTS
+  COUNTING_EVENTS=$(echo "$JOB_LOGS_FULL" | grep -E "crossed (LEFT|RIGHT)|ID-SWITCH recovery|MIRROR|track lost:.*side=in" || true)
+  local CROSSED_LEFT_COUNT CROSSED_RIGHT_COUNT ID_SWITCH_COUNT LOST_IN_COUNT MIRROR_COUNT
+  CROSSED_LEFT_COUNT=$(echo "$COUNTING_EVENTS" | grep -c "crossed LEFT" || true)
+  CROSSED_RIGHT_COUNT=$(echo "$COUNTING_EVENTS" | grep -c "crossed RIGHT" || true)
+  ID_SWITCH_COUNT=$(echo "$COUNTING_EVENTS" | grep -c "ID-SWITCH recovery" || true)
+  LOST_IN_COUNT=$(echo "$COUNTING_EVENTS" | grep -c "track lost:.*side=in" || true)
+  MIRROR_COUNT=$(echo "$COUNTING_EVENTS" | grep -c "MIRROR" || true)
+  [ -z "$CROSSED_LEFT_COUNT" ] && CROSSED_LEFT_COUNT=0
+  [ -z "$CROSSED_RIGHT_COUNT" ] && CROSSED_RIGHT_COUNT=0
+  [ -z "$ID_SWITCH_COUNT" ] && ID_SWITCH_COUNT=0
+  [ -z "$LOST_IN_COUNT" ] && LOST_IN_COUNT=0
+  [ -z "$MIRROR_COUNT" ] && MIRROR_COUNT=0
+
+  # Keep a short tail for general context (startup/cleanup).
   local JOB_LOGS
-  JOB_LOGS=$($SSH_CMD "kubectl logs job/countingapp-validate -n $APP_NAMESPACE 2>&1 | tail -100" 2>/dev/null || echo "Could not fetch logs")
+  JOB_LOGS=$(echo "$JOB_LOGS_FULL" | tail -50)
   local VDURATION=$(( $(date +%s) - VIDEO_START ))
 
   # Output single-video result as JSON (to be collected by caller)
@@ -240,6 +273,12 @@ run_single_validation() {
     --arg timestamp "$(date -Iseconds)" \
     --arg result_json "$(cat "$RESULT_FILE")" \
     --arg logs "$JOB_LOGS" \
+    --arg counting_events "$COUNTING_EVENTS" \
+    --argjson crossed_left "$CROSSED_LEFT_COUNT" \
+    --argjson crossed_right "$CROSSED_RIGHT_COUNT" \
+    --argjson id_switch_recoveries "$ID_SWITCH_COUNT" \
+    --argjson lost_in "$LOST_IN_COUNT" \
+    --argjson mirror "$MIRROR_COUNT" \
     '{
       video_file: $video,
       validation_status: $status,
@@ -251,6 +290,12 @@ run_single_validation() {
       duration_seconds: $duration,
       timestamp: $timestamp,
       result: ($result_json | fromjson),
+      counting_events: $counting_events,
+      crossed_left_count: $crossed_left,
+      crossed_right_count: $crossed_right,
+      id_switch_recoveries: $id_switch_recoveries,
+      lost_in_count: $lost_in,
+      mirror_count: $mirror,
       logs: $logs
     }'
 }
