@@ -51,7 +51,9 @@ spec:
 
               cd /videos
               ls -t count* 2>/dev/null | awk 'NR>50' | xargs -r rm -f
-              find . -type f -size +2G -delete
+              # Restreint aux .mp4 uniquement (avant: find . -type f -size +2G supprimait
+              # tout fichier >2 Go, y compris un dataset/modèle éventuel dans /videos).
+              find . -maxdepth 1 -type f -name '*.mp4' -size +2G -delete
 
               echo "=== Fin cycle, pause 10 min ==="
               sleep 600
