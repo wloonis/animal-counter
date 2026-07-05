@@ -253,6 +253,48 @@ class Counting:
                                 del self.lost_tracks[track_id]
                             continue
 
+                    # ----------------------------------------------------------
+                    # REID-SUPPRESS (mirror, -1): a known ID that was in
+                    # area_out (left, already counted +1) reappears on the RIGHT
+                    # (>=x_high) after an absence (age >= reid_min_age). If
+                    # another ID that APPEARED during this ID's absence has
+                    # recently crossed RIGHT, that other ID is almost certainly
+                    # the re-ID of the same pig coming back (already
+                    # "de-counted" by the other ID's -1) - suppress this ID's
+                    # -1 to avoid the double -1. Mirror of the +1 REID-SUPPRESS
+                    # above, for the left->right return direction.
+                    # ----------------------------------------------------------
+                    if (track_id in self.area_out_list
+                            and element[0] >= x_high
+                            and _age >= self.reid_min_age
+                            and class_id == counting_class):
+                        _supp_tid = None
+                        for rc in self.recent_crossings:
+                            if rc["tid"] == track_id:
+                                continue
+                            if rc["direction"] != "RIGHT":
+                                continue
+                            if self.frame_counter - rc["frame"] > self.reid_window:
+                                continue
+                            if self.first_seen.get(rc["tid"], self.frame_counter) > \
+                                    self.last_seen.get(track_id, self.frame_counter):
+                                _supp_tid = rc["tid"]
+                                break
+                        if _supp_tid is not None:
+                            logger.warning(
+                                f"[COUNT] REID-SUPPRESS (RIGHT): ID={track_id} "
+                                f"reappeared on right (age={_age}, "
+                                f"jump={_jump:.0f}px); ID={_supp_tid} crossed "
+                                f"RIGHT during its absence -> suppress (+0) "
+                                f"count={counter_to_right}"
+                            )
+                            self.area_out_list.remove(track_id)
+                            if track_id not in self.area_in_list:
+                                self.area_in_list.append(track_id)
+                            if track_id in self.lost_tracks:
+                                del self.lost_tracks[track_id]
+                            continue
+
                     if self.detections[track_id][2] >= x_high and track_id in self.area_out_list:
                         counter_to_right -= 1
                         logger.info(f"[TRACK] ID={track_id} crossed RIGHT // Count {counter_to_right}")
@@ -282,51 +324,72 @@ class Counting:
                     self.detections[track_id] = [last_x, last_y, element[0], element[1], element[3]]
 
                     # ----------------------------------------------------------
-                    # ID-switch recovery guard
+                    # ID-switch recovery guard (BIDIRECTIONNEL)
                     # ----------------------------------------------------------
-                    # A brand-new ID appearing already on the left (<=x, i.e. past
-                    # the line for a right->left crossing) is suspicious: it is
-                    # usually a re-detection that got a new ID after an occlusion
-                    # at the line. If a track was recently lost on the right side
-                    # ("in"), close to the line and spatially near, fuse them and
-                    # trigger the +1 the switch would have swallowed.
+                    # A brand-new ID appearing already past the line is suspicious:
+                    # it is usually a re-detection that got a new ID after an
+                    # occlusion at the line. If a track was recently lost on the
+                    # OTHER side, close to the line and spatially near, fuse them
+                    # and trigger the crossing the switch would have swallowed:
+                    #   - new ID on the LEFT (<=x) + lost "in" (right)  -> crossed LEFT  (+1)
+                    #   - new ID on the RIGHT (>x) + lost "out" (left)  -> crossed RIGHT (-1)
+                    # (the -1 branch handles a pig that already crossed (+1), came
+                    # back left->right and got an ID-switch at the line on its
+                    # return: without it, the -1 of the return would be lost.)
                     fused = False
-                    if (element[3] == counting_class and element[0] <= x):
+                    if element[3] == counting_class:
+                        want_side = "in" if element[0] <= x else "out"
                         for lost_id, data in list(self.lost_tracks.items()):
                             # Guard eligibility age: use GUARD_MAX_AGE (short), not
-                            # the global LOST_BUFFER_FRAMES. A stale lost "in"
+                            # the global LOST_BUFFER_FRAMES. A stale lost track
                             # belonging to a different pig (or to a pig that
                             # already crossed under another ID) must NOT be fused
-                            # with this brand-new left-side ID (false +1 on #30/#11).
+                            # with this brand-new ID (false crossing on #30/#11).
                             if self.frame_counter - 1 - data["frame"] > self.guard_max_age:
                                 continue
-                            if data["side"] != "in":
+                            if data["side"] != want_side:
                                 continue
                             if abs(data["cx"] - x) > self.reassoc_line_band:
                                 continue
                             dx = abs(element[0] - data["cx"])
                             dy = abs(element[1] - data["cy"])
                             if dx <= self.reassoc_max_dist_x and dy <= self.reassoc_max_dist_y:
-                                counter_to_right += 1
-                                logger.warning(
-                                    f"[COUNT] ID-SWITCH recovery: new ID={track_id} "
-                                    f"fused with lost ID={lost_id} (+1) "
-                                    f"count={counter_to_right}"
-                                )
-                                # Record this guard-triggered +1 as a LEFT crossing
-                                # so REID-SUPPRESS can detect a later re-ID of the
-                                # same pig reappearing on the left.
-                                self.recent_crossings.append({"frame": self.frame_counter, "tid": track_id, "direction": "LEFT"})
-                                # The new ID appeared on the LEFT (<=x), i.e. already past
-                                # the line for a right->left crossing. The guard has just
-                                # triggered the +1, so the ID must be marked as already on
-                                # the left side (area_out_list). Putting it in area_in_list
-                                # would let the next frame fire a spurious crossed LEFT
-                                # and double-count the pig.
-                                if track_id not in self.area_out_list:
-                                    if track_id in self.area_in_list:
-                                        self.area_in_list.remove(track_id)
-                                    self.area_out_list.append(track_id)
+                                if element[0] <= x:
+                                    # crossed LEFT (+1): pig went right->left
+                                    counter_to_right += 1
+                                    direction = "LEFT"
+                                    target_list = self.area_out_list
+                                    other_list = self.area_in_list
+                                    logger.warning(
+                                        f"[COUNT] ID-SWITCH recovery (LEFT): new "
+                                        f"ID={track_id} fused with lost ID={lost_id} "
+                                        f"(+1) count={counter_to_right}"
+                                    )
+                                else:
+                                    # crossed RIGHT (-1): pig came back left->right
+                                    counter_to_right -= 1
+                                    direction = "RIGHT"
+                                    target_list = self.area_in_list
+                                    other_list = self.area_out_list
+                                    logger.warning(
+                                        f"[COUNT] ID-SWITCH recovery (RIGHT): new "
+                                        f"ID={track_id} fused with lost ID={lost_id} "
+                                        f"(-1) count={counter_to_right}"
+                                    )
+                                # Record this guard-triggered crossing so the
+                                # mirrored REID-SUPPRESS can detect a later re-ID of
+                                # the same pig reappearing on the same side.
+                                self.recent_crossings.append({"frame": self.frame_counter, "tid": track_id, "direction": direction})
+                                # The new ID appeared already past the line; the
+                                # guard has just triggered the crossing, so the ID
+                                # must be marked as already on the destination side
+                                # (target_list). Putting it on the source side would
+                                # let the next frame fire a spurious crossing and
+                                # double-count the pig.
+                                if track_id not in target_list:
+                                    if track_id in other_list:
+                                        other_list.remove(track_id)
+                                    target_list.append(track_id)
                                 del self.lost_tracks[lost_id]
                                 fused = True
                                 break

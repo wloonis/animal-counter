@@ -623,10 +623,28 @@ if __name__ == "__main__":
         # the process stays alive via non-daemon threads, the app counts continuously.
         result_json_path = os.getenv("RESULT_JSON_PATH", "")
         if result_json_path:
+            # 1) Wait for the InferThread to finish reading the WHOLE video (it
+            #    breaks on "No Frame"). No short timeout: a long video takes
+            #    longer to read than 300s, and a premature join-timeout would let
+            #    us write the result JSON while frames are still being produced ->
+            #    the last pigs crossing the line would be missed (under-count).
             if shared_state.infer_thread and shared_state.infer_thread.is_alive():
-                shared_state.infer_thread.join(timeout=300)
+                shared_state.infer_thread.join()
+            # 2) Wait for the DisplayThread to drain & process EVERY enqueued
+            #    frame. The last crossings happen here, AFTER the InferThread ran
+            #    out of frames. frame_queue.join() blocks until every put() item
+            #    has been task_done()'d by the DisplayThread, so the final count
+            #    is fully reflected before we serialize it.
+            if shared_state.frame_queue is not None:
+                try:
+                    shared_state.frame_queue.join()
+                except Exception:
+                    pass
+            # 3) Stop the DisplayThread (otherwise it loops forever on the now
+            #    empty queue via get(timeout=1)) and join it, then write the result.
+            shared_state.stop_event.set()
             if shared_state.display_thread and shared_state.display_thread.is_alive():
-                shared_state.display_thread.join(timeout=300)
+                shared_state.display_thread.join(timeout=60)
             write_result_json(result_json_path, video, shared_state, start_time)
     except Exception as e:
         logger.error(f"Exception: {repr(e)}")
