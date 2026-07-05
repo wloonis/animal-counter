@@ -6,6 +6,7 @@ This module handles the counting logic based on object crossing a vertical line.
 
 import numpy as np
 import logging
+from collections import deque
 
 logger = logging.getLogger(__name__)
 
@@ -450,10 +451,28 @@ class Counting:
                 self.last_seen[track_id] = self.frame_counter
 
                 if track_id not in self.trails:
-                    self.trails[track_id] = []
+                    # deque(maxlen=60) auto-rotates: O(1) append, no O(n) pop(0),
+                    # and each ID's trail is bounded.
+                    self.trails[track_id] = deque(maxlen=60)
                 self.trails[track_id].append((int(cx), int(cy)))
 
-                if len(self.trails[track_id]) > 60:
-                    self.trails[track_id].pop(0)
-        
+        # ------------------------------------------------------------------
+        # Periodic GC: purge auxiliary state for IDs absent longer than the
+        # lost buffer. Safe: these structures are only consulted by guards with
+        # a short window (reid_window / guard_max_age <= 15), so an ID absent
+        # > lost_buffer_frames is inert for them anyway. detections /
+        # area_in_list / area_out_list are intentionally NOT purged (purging
+        # them could swallow a legitimate return crossing after a long
+        # absence). Critical for 24/7 camera mode where OC-SORT generates many
+        # IDs over time (otherwise first_seen/last_seen/trails grow unbounded).
+        # ------------------------------------------------------------------
+        if self.frame_counter % 30 == 0 and self.last_seen:
+            gc_threshold = self.lost_buffer_frames
+            stale = [tid for tid, f in self.last_seen.items()
+                     if self.frame_counter - f > gc_threshold]
+            for tid in stale:
+                self.first_seen.pop(tid, None)
+                self.last_seen.pop(tid, None)
+                self.trails.pop(tid, None)
+
         return counter_to_right

@@ -54,16 +54,16 @@ class Settings:
         self.FPS_OUTPUT = int(os.getenv("FPS_OUTPUT", 30))
         
         # Offset of the counting line in percent
-        self.OFFSET_PERCENT_COUNTING_LINE = int(os.getenv("OFFSET_PERCENT_COUNTING_LINE", 0))
+        self.OFFSET_PERCENT_COUNTING_LINE = int(os.getenv("OFFSET_PERCENT_COUNTING_LINE", 10))
         
         # Visualization Options
-        self.DRAW_TRACKING = os.getenv("DRAW_TRACKING", "True").lower() == "true"
+        self.DRAW_TRACKING = os.getenv("DRAW_TRACKING", "False").lower() == "true"
         self.CENTROID_TRACKING = os.getenv("CENTROID_TRACKING", "True").lower() == "true"
         self.BOX_TRACKING = os.getenv("BOX_TRACKING", "True").lower() == "true"
         
         ### MODIFICATION: Pig Detection Threshold - Start
         # Minimum confidence threshold to consider an object as a pig
-        self.PIG_CONFIDENCE_THRESHOLD = float(os.getenv("PIG_CONFIDENCE_THRESHOLD", 0.7))
+        self.PIG_CONFIDENCE_THRESHOLD = float(os.getenv("PIG_CONFIDENCE_THRESHOLD", 0.6))
         self.PIG_CONFIDENCE_THRESHOLD_START_VIDEO = float(os.getenv("PIG_CONFIDENCE_THRESHOLD_START_VIDEO", 0.8))
         ### MODIFICATION: Pig Detection Threshold - End
         
@@ -71,11 +71,11 @@ class Settings:
         self.OUTPUT_VIDEO_PATH = os.getenv("OUTPUT_VIDEO_PATH", "/app/output")
         
         # Logging Level
-        self.LOG_LEVEL = os.getenv("LOG_LEVEL", "DEBUG")
+        self.LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
         ### MODIFICATION: Learning Mode - Start
         # Learning Mode Configuration
         self.DATASET_DIR = os.getenv("DATASET_DIR", "./dataset")
-        self.CAPTURE_INTERVAL = int(os.getenv("CAPTURE_INTERVAL", 5))
+        self.CAPTURE_INTERVAL = int(os.getenv("CAPTURE_INTERVAL", 1))
         self.MAX_LEARNING_DURATION = int(os.getenv("MAX_LEARNING_DURATION", 600))
         ### MODIFICATION: Learning Mode - End
 
