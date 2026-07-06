@@ -400,7 +400,7 @@ nodes:
 
   - id: jetson-validate
     depends_on: [implement]
-    idle_timeout: 600000
+    idle_timeout: 2400000  # 40 min — image rebuild + 4 long videos > 10 min
     loop:
       prompt: |
         # Jetson Dev — Validation Feedback Loop
@@ -415,10 +415,48 @@ nodes:
 
         ---
 
+        ## Step 0: Prep worktree + rebuild image (if deps changed)
+
+        The worktree is a fresh checkout and is missing gitignored files the
+        validation needs (`.env.local`, validation videos, model weights).
+        Copy them from the main repo, then rebuild the Docker image **only if
+        `app/requirements.txt` changed** in this branch — the validate script
+        rsyncs code but does NOT rebuild the image, and `pip install` is a
+        Dockerfile `RUN` layer (build time), not an entrypoint step. Running
+        new code against a stale image crashes on startup.
+
+        ```bash
+        # Locate the main repo worktree (this branch is a linked worktree).
+        MAIN=$(git worktree list --porcelain | awk '/^worktree /{print $2; exit}')
+
+        # Gitignored files the validation needs (symlinks are fine).
+        [ -f .env.local ]            || ln -s "$MAIN/.env.local" .env.local
+        mkdir -p validation/videos app/model
+        for v in "$MAIN"/validation/videos/*.mp4; do
+          [ -f "validation/videos/$(basename "$v")" ] || \
+            ln -s "$v" "validation/videos/$(basename "$v")"
+        done
+        [ -d app/model/$(ls "$MAIN"/app/model/ | head -1) ] || \
+          cp -r "$MAIN"/app/model/* app/model/ 2>/dev/null || true
+        [ -f app/.env ] || cp "$MAIN"/app/.env app/.env 2>/dev/null || true
+
+        # Rebuild the image ONLY if requirements.txt changed vs main.
+        if [ -n "$(git diff --name-only main...HEAD -- app/requirements.txt)" ]; then
+          ( cd ansible/playbooks/app && \
+            ansible-playbook -i ../../inventory/jetsons.yml deploy_app.yml --tags build )
+        fi
+        ```
+
+        Skip the rebuild if `app/requirements.txt` is unchanged (the existing
+        `countingapp:local` image is fine; the build is cached and idempotent
+        anyway).
+
+        ---
+
         ## Step 1: Run validation
 
         ```bash
-        bash scripts/validate_on_jetson.sh 2>&1
+        bash scripts/validate_on_jetson.sh --full 2>&1
         ```
 
         ## Step 2: Read the report

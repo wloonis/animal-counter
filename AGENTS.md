@@ -261,14 +261,40 @@ CLI above (what the relay agent uses) and plannotator for plan review.
   `scripts/validate_on_jetson.sh` only **rsyncs** code to the Jetson's `/app`
   (hostPath) — it does **NOT** rebuild the image. So any change to
   `app/requirements.txt` (or other build-time deps) requires rebuilding the
-  `countingapp:local` image on the Jetson **before** validation, via
-  `ansible/playbooks/app/build_countingapp.yml` (rsyncs `app/` + runs
-  `docker buildx build -t countingapp:local .` on the Jetson). Invoke it from
-  the `ansible/playbooks/app/` directory so the playbook's `../../../app/`
-  rsync source resolves to the repo's `app/`, and run it from a worktree that
-  contains the code changes. Without this rebuild, the app crashes on startup
-  — e.g. `OCSORTTracker(..., iou="giou")` needs `trackers>=2.5.0` installed
-  in the image, not just rsync'd.
+  `countingapp:local` image on the Jetson **before** validation. The
+  `build_countingapp.yml` is a tasks file (rsyncs `app/` + runs
+  `docker buildx build -t countingapp:local .` on the Jetson), not a standalone
+  playbook — invoke it through `deploy_app.yml --tags build` from the
+  `ansible/playbooks/app/` directory (so the playbook's `../../../app/` rsync
+  source resolves to the repo's `app/`), from a worktree that contains the
+  code changes:
+  `cd ansible/playbooks/app && ansible-playbook -i ../../inventory/jetsons.yml deploy_app.yml --tags build`.
+  Without this rebuild the app crashes on startup — e.g. `trackers>=2.5.0` must
+  be installed in the image, not just rsync'd.
+- **`OCSORTTracker(iou=...)` expects a `BaseIoU` instance, not a string.**
+  `trackers>=2.5.0` accepts `iou=IoU()|GIoU()|DIoU()|CIoU()|BIoU()` (from
+  `trackers.utils.iou`); passing the string `"giou"` raises
+  `AttributeError: 'str' object has no attribute 'compute'` at runtime.
+  `app/src/main.py` maps `settings.COUNTING_TRACKER_IOU` (string) to the
+  matching instance via `_IOU_METRICS`.
+- **The `trackers==2.5.0` PyPI wheel is BROKEN** (metadata-only, 9.6 KB, no
+  `trackers/` package code — upstream `pyproject.toml` package discovery is
+  broken; building a wheel from the sdist is also empty). The Dockerfile has a
+  workaround: `pip download trackers==2.5.0 --no-binary :all:` (sdist) →
+  extract → `cp -r trackers-2.5.0/trackers` into site-packages → verify
+  `import trackers` at build time. If a future `trackers` release fixes the
+  wheel, the workaround RUN can be removed.
+- **A fresh worktree is missing gitignored files** the validation needs:
+  `.env.local` (Jetson password), `validation/videos/*.mp4` (test videos),
+  `app/model/` (weights), `app/.env`. Copy or symlink them from the main repo
+  (`git worktree list` → first `worktree` path) before validating — otherwise
+  the rsync `--delete` will also wipe the Jetson's model weights.
+- **`app/entrypoint.sh` must be git mode `100755`** (executable). A `100644`
+  checkout causes `ContainerCannotRun: permission denied`. Fix with
+  `git update-index --chmod=+x app/entrypoint.sh`.
+- **`build_countingapp.yml` rsync must `--exclude='model/old/'`** — the
+  `app/model/old/` dir holds root-owned files from prior deploys; without the
+  exclude, the `--delete` rsync fails with rc=23 (permission denied).
 - Jetson: Orin Nano 8GB "Super", IP `192.168.0.180`, user `nano-counter`,
   password from `.env.local` (`JETSON_PASSWORD`). App path on Jetson:
   `/data/orin/git/animal-counter/app`; files: `/data/orin/files/`.
