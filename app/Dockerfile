@@ -13,12 +13,21 @@ RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
 COPY requirements.txt requirements.txt
 
 RUN apt-get update
-.
+
 RUN pip install --index-url https://pypi.org/simple --upgrade pip
 RUN mkdir -p /etc/pip && \
     echo "[global]\nindex-url = https://pypi.org/simple" > /etc/pip.conf
 
 RUN pip install -r requirements.txt --index-url https://pypi.org/simple && rm requirements.txt
+
+# Workaround: the trackers==2.5.0 PyPI wheel (and the wheel built from its sdist)
+# is metadata-only (broken package discovery upstream) — no trackers/ package code.
+# Fetch the sdist, extract, and copy the trackers/ package dir into site-packages.
+RUN pip download trackers==2.5.0 --no-binary :all: --no-deps -d /tmp/tks --index-url https://pypi.org/simple \
+    && cd /tmp/tks && tar xzf trackers-2.5.0.tar.gz \
+    && cp -r trackers-2.5.0/trackers /usr/local/lib/python3.10/dist-packages/ \
+    && python3 -c "import trackers; from trackers import OCSORTTracker; print('trackers 2.5.0 import OK')" \
+    && rm -rf /tmp/tks
 
 RUN mkdir -p /usr/local/lib/python3.10/dist-packages/cv2/qt/fonts \
     && ln -snf /usr/share/fonts/truetype/dejavu /usr/local/lib/python3.10/dist-packages/cv2/qt/fonts

@@ -19,6 +19,7 @@
 - name: Copy application files to Jetson
   command: >
     rsync -avz --delete --no-owner --no-group --exclude='__pycache__' --exclude='*.pyc'
+    --exclude='model/old/'
     -e "sshpass -e ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
     ../../../app/
     {{ ansible_user }}@{{ ansible_host }}:{{ app_path }}
