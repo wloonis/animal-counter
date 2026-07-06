@@ -1,145 +1,97 @@
-# Animal Counter Application - Quick Start Guide
+# 01 — Quick start
 
-## Overview
+Get from a **flashed Jetson** to a **running counting app** in ~5 minutes,
+driven entirely by the `scripts/` hub.
 
-The Animal Counter Application is a real-time animal counting system designed for edge deployment on Jetson Orin devices. It uses YOLO26 with TensorRT for high-performance inference, OCSORT tracker for accurate object tracking, and features a multi-threaded architecture separating inference and display tasks for optimal performance.
+> If the Jetson is not flashed yet, see [`02_setup.md`](02_setup.md) first.
 
-### Key Features
-
-- **YOLO26 + TensorRT**: Optimized inference on Jetson Orin
-- **OCSORT Tracker**: Advanced object tracking for precise counting
-- **Multi-threaded Architecture**: Separate inference and display threads
-- **K3s Kubernetes**: Containerized deployment
-- **FileBrowser**: Web-based video management interface
-- **Ansible Automation**: Automated deployment and configuration
-
----
-
-## Prerequisites
-
-### Hardware
-
-| Component | Requirement |
-|-----------|-------------|
-| Device | Jetson Orin (Nano, NX, or AGX) |
-| Camera | USB webcam or RTSP stream |
-| Storage | SD card or NVMe with ≥32GB |
-
-### Software
-
-| Component | Minimum Version |
-|-----------|------------------|
-| JetPack | 6.1+ |
-| Python | 3.10+ |
-| TensorRT | 8.x (included with JetPack) |
-| Docker | 24.x+ |
-| Kubernetes (K3s) | v1.28+ |
-
----
-
-## Quick Start Steps
-
-### 1. Flash JetPack
+## 1. Prerequisites on your control machine (Ubuntu/Debian)
 
 ```bash
-sudo ./flash.sh jetson-orin-nano mmcblk0p1
+sudo bash scripts/install_ansible.sh     # installs ansible, sshpass, nmap, curl, git
+pip install --user jq 2>/dev/null || sudo apt install -y jq   # needed by validate_on_jetson.sh
 ```
 
-### 2. Install Dependencies
+## 2. Configure credentials
+
+`.env.local` (repo root, gitignored) holds the connection details used by all
+scripts and Ansible. Create it from the example and edit:
 
 ```bash
-# Install Python dependencies
-pip install -r requirements.txt
-
-# Install TensorRT bindings
-pip install tensorrt
+cp .env.local.example .env.local
 ```
 
-### 3. Deploy with Ansible
+Required keys:
+
+```ini
+JETSON_USER=nano-counter                 # SSH user on the Jetson
+JETSON_PASSWORD=***                      # SSH password (sshpass)
+WIFI_NETWORK=192.168.0.0/24              # CIDR scanned by jetson_discover.sh
+JETSON_HOTSPOT_SSID=animal-counter        # informational
+JETSON_ETH_IP=192.168.1.158              # informational (discovery overrides this)
+```
+
+> The Jetson IP is **not** hardcoded: `jetson_discover.sh` scans `WIFI_NETWORK`
+> for hosts with port 22 open and tries the SSH credentials on each. The result
+> is cached in `/tmp/jetson_env.sh` and reused while it still answers SSH.
+
+## 3. Discover + deploy (one shot)
 
 ```bash
-ansible-playbook -i inventory deploy.yml
+bash scripts/prepare_jetson.sh
 ```
 
-### 4. Deploy to K3s
+What it does, in order:
+1. `scripts/jetson_discover.sh` — nmap scan + SSH credential test → `JETSON_IP`
+2. `scripts/jetson_first_access.sh` — confirms SSH works
+3. `ansible-playbook -i ansible/inventory/jetsons.yml
+   ansible/playbooks/app/deploy_app.yml` — renders the K3s templates and
+   applies them (namespace, DaemonSet, service, filebrowser, video-compress)
+
+On success the app is reachable at `http://$JETSON_IP:31501` and the live
+camera feed + counting line are shown.
+
+## 4. Operate
+
+Open `http://<jetson-ip>:31501` (or look at the local screen). Use the web app
+to **start** counting, move pigs past the camera, and **read the counter**.
+A video clip is recorded automatically while pigs are detected (stops ~2 min
+after the last detection). Power off when done.
+
+## 5. Validate counting (developer loop)
+
+To check that counting logic still matches the reference videos:
 
 ```bash
-kubectl apply -f k8s/
+# Validate only the videos listed in validation/expected_counts.json (.videos)
+bash scripts/validate_on_jetson.sh --full
+
+# Single reference video from validation/config.json
+bash scripts/validate_on_jetson.sh
 ```
 
-### 5. Access FileBrowser
+A pass means the app's count equals the expected count (tolerance = 0 by
+default). The report is written to `validation-report.json`. Full details:
+[`06_validation.md`](06_validation.md).
 
-Open browser: `http://<device-ip>:8080`
+## 6. Reconfigure / redeploy
 
-Default credentials: `admin:animalcounter`
+- **Change a runtime parameter** (thresholds, line offset…): edit `app/.env`
+  on the Jetson (`/data/orin/git/animal-counting/app/.env`, the hostPath
+  mounted into the pod) and restart the pod — no rebuild needed:
+  `ssh $JETSON_USER@$JETSON_IP "kubectl delete pod -n countingapp-dev -l app=countingapp"`
+- **Change a manifest** (resources, image…): edit the Jinja2 template in
+  `k3s/templates/` and re-run the `deploy_countingapp.yml` playbook.
+- **Rebuild the model** (after retraining): `bash scripts/training_model.sh`,
+  then rebuild the TensorRT engine (`build-engine-batch.j2`).
 
----
+See [`04_configuration.md`](04_configuration.md) for the full parameter list.
 
-## Running the Application
+## Troubleshooting
 
-### Local Execution
-
-```bash
-python main.py --source /dev/video0 --model yolov8n.pt
-```
-
-### With Docker
-
-```bash
-docker run -it --runtime nvidia animal-counter:latest \
-  --source rtsp://camera-ip:554/stream
-```
-
-### With Kubernetes
-
-```bash
-kubectl scale deployment animal-counter --replicas=2
-```
-
-### Monitor Logs
-
-```bash
-kubectl logs -f deployment/animal-counter
-```
-
----
-
-## Troubleshooting Tips
-
-### Common Issues
-
-| Issue | Solution |
-|-------|----------|
-| TensorRT not found | Ensure JetPack 6.1+ is installed |
-| Low FPS | Check GPU utilization; reduce input resolution |
-| Camera not detected | Verify `/dev/video0` exists |
-| Tracking errors | Adjust confidence threshold `--conf 0.5` |
-| K3s pod crash | Check `kubectl describe pod <name>` |
-
-### Performance Tuning
-
-- Reduce inference resolution: `--imgsz 640`
-- Adjust confidence threshold: `--conf 0.3`
-- Enable FP16: `--half`
-
-### Health Check
-
-```bash
-# Check container status
-docker ps
-
-# Check GPU usage
-tegrastats
-
-# Check application logs
-journalctl -u animal-counter -f
-```
-
----
-
-## Support
-
-For issues and questions:
-- Documentation: `/docs`
-- Logs: `/var/log/animal-counter/`
-- Email: support@animalcounter.local
+- Discovery finds nothing → Jetson powered on? on the same LAN? `WIFI_NETWORK`
+  CIDR correct? `JETSON_PASSWORD` correct?
+- App not reachable → `kubectl get pod,svc -n countingapp-dev` on the Jetson;
+  the DaemonSet may be paused (`nodeSelector: validate-paused=true`) — remove
+  the node label to resume.
+- More in [`07_troubleshooting.md`](07_troubleshooting.md).

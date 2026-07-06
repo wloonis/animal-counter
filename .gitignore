@@ -73,6 +73,7 @@ venv.bak/
 *.env
 # Keep the example template versionable
 !.env.example
+!.env.local.example
 
 # Database files
 *.sqlite3

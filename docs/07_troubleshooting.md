@@ -796,6 +796,8 @@ sudo shutdown -h now
 
 For additional information, refer to:
 - [Quick Start Guide](01_quickstart.md)
-- [Bootstrap Detail](02_bootstrap_detail.md)
-- [Multi-Device Deployment](03_multi_jetson.md)
-- [Reset Procedure](05_reset_procedure.md)
+- [Jetson Setup](02_setup.md)
+- [Deployment](03_deployment.md)
+- [Configuration](04_configuration.md)
+- [Reset Procedure](08_reset.md)
+- [Backlog](09_backlog.md)

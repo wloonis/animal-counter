@@ -450,6 +450,8 @@ For severe system issues, create a recovery USB:
 
 For additional information, refer to:
 - [Quick Start Guide](01_quickstart.md)
-- [Bootstrap Detail](02_bootstrap_detail.md)
-- [Multi-Device Deployment](03_multi_jetson.md)
-- [Troubleshooting Guide](04_troubleshooting.md)
+- [Jetson Setup](02_setup.md)
+- [Deployment](03_deployment.md)
+- [Configuration](04_configuration.md)
+- [Troubleshooting Guide](07_troubleshooting.md)
+- [Backlog](09_backlog.md)

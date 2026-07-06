@@ -1,304 +1,228 @@
-# Animal Counter Application
+# Animal Counter
 
-## Overview
+Real-time animal (pig) counting on NVIDIA Jetson Orin, using a YOLO model
+exported to ONNX and compiled into a TensorRT engine, tracked with OC-SORT,
+and deployed on a single-node K3s cluster via Ansible.
 
-A real-time animal counting application using YOLO object detection with TensorRT inference, designed for deployment on NVIDIA Jetson Orin devices. The system automatically counts animals (primarily pigs) as they move through a designated area, with support for training new models and Kubernetes-based deployment.
+The system points a **fixed camera** at a counting line, tracks every pig that
+crosses it, and maintains a **net bidirectional counter** (+1 right→left,
+−1 left→right). It auto-records a video clip whenever a pig is detected and
+stops after ~2 minutes with no detection. It is operated daily: powered on in
+the morning (counter starts at 0), used through the day across several
+animal-moving iterations, and powered off (hard power cut) in the evening.
 
-**JetPack:** 6.2.2
+> **Status:** counting logic validated on 30 reference videos (4/4 priority
+> defect videos pass, REID-SUPPRESS regression guard confirmed). See
+> [`docs/06_validation.md`](docs/06_validation.md).
 
-## Features
+---
 
-### Core Capabilities
-- **Real-Time Inference**: Optimized with YOLO26 and TensorRT for efficient GPU acceleration
-- **Object Tracking**: OCSORT (Optimal Score Assignment) tracker for accurate multi-object tracking
-- **Automatic Counting**: Counts animals moving in both directions with direction-aware logic
-- **Video Recording**: Automatic video recording when animals are detected
-- **Learning Mode**: Record images/videos for model training purposes
+## Table of contents
 
-### System Features
-- **Multi-threaded Architecture**: Separate inference and display threads for optimal performance
-- **Hotspot Support**: Offline operation with built-in WiFi hotspot for direct connectivity
-- **Full Automated Deployment**: Ansible-based installation for Jetson Orin
-- **Kubernetes Deployment**: K3s manifest templates for containerized deployment
-- **FileBrowser Integration**: Web-based file management for recorded videos
-- **Cron Video Compression**: Automated video compression for storage optimization
+| Doc | What it covers |
+|-----|----------------|
+| [`docs/01_quickstart.md`](docs/01_quickstart.md) | 5-minute path from a flashed Jetson to a running app, **scripts-first** |
+| [`docs/02_setup.md`](docs/02_setup.md) | Flash JetPack, first boot, system preparation |
+| [`docs/03_deployment.md`](docs/03_deployment.md) | K3s + Ansible deployment (real playbooks & templates) |
+| [`docs/04_configuration.md`](docs/04_configuration.md) | App configuration (`.env`, `settings.py`, parameter table) |
+| [`docs/05_counting_pipeline.md`](docs/05_counting_pipeline.md) | Counting pipeline internals & anti-ID-switch guards |
+| [`docs/06_validation.md`](docs/06_validation.md) | Validation workflow (`validate_on_jetson.sh`, manifest, reports) |
+| [`docs/07_troubleshooting.md`](docs/07_troubleshooting.md) | Troubleshooting |
+| [`docs/08_reset.md`](docs/08_reset.md) | Reset procedures |
+| [`docs/09_backlog.md`](docs/09_backlog.md) | Improvement backlog (BL-01..BL-51) |
 
-## Architecture
+---
+
+## Repository layout
 
 ```
 animal-counter/
-├── app/src/                     # Main application source
-│   ├── core/                    # Core processing modules
-│   │   ├── inference.py         # TensorRT inference engine
-│   │   ├── tracking.py          # Object tracking logic
-│   │   └── counting.py          # Counting algorithm
-│   ├── ui/                      # User interface
-│   │   └── rendering.py         # Visual output & UI drawing
-│   ├── utils/                   # Utility modules
-│   │   ├── frame_source.py      # Camera/video frame capture
-│   │   ├── shared_state.py      # Shared state management
-│   │   └── timer_fps.py         # FPS timing utilities
-│   ├── settings.py              # Configuration management
-│   └── main.py                  # Application entry point
-├── ansible/                     # Ansible deployment playbooks
-│   ├── playbooks/
-│   │   ├── app/                 # Application deployment
-│   │   ├── model/               # Model building
-│   │   └── system/              # System configuration
-│   └── k8s-deployment/          # K8s manifests
-├── k3s/                         # K3s deployment templates
-│   └── templates/               # Jinja2 templates for K8s resources
-├── docs/                        # Documentation
-├── tests/                       # Unit tests
-└── dataset/                     # Training dataset storage
+├── app/                     # The counting application (container image)
+│   ├── Dockerfile           # Base: dustynv/l4t-pytorch:r36.4.0 (JetPack 6.2)
+│   ├── entrypoint.sh        # Modes: build-engine | serve | debug | test | validate
+│   ├── requirements.txt     # pycuda, trackers==2.4.0 (OC-SORT), flask, python-dotenv
+│   ├── .env / .env.example  # Runtime config (.env is gitignored; .env.example is versioned)
+│   ├── model/               # my_model.{pt,onnx,engine}  (engine built by trtexec)
+│   └── src/
+│       ├── main.py           # Entry point (Flask web app + InferThread + DisplayThread)
+│       ├── settings.py       # Config loader (reads app/.env, defaults documented inline)
+│       ├── core/
+│       │   ├── inference.py   # TensorRT inference + pre/post-processing
+│       │   ├── tracking.py    # OC-SORT tracker integration, letterbox undo, drawing
+│       │   └── counting.py    # Counting line logic + anti-ID-switch guards
+│       ├── ui/rendering.py    # Overlay & UI drawing
+│       └── utils/             # frame_source, shared_state, timer_fps
+├── scripts/                 # ⭐ Central automation hub (the starting point for humans)
+│   ├── prepare_jetson.sh            # Discover Jetson + deploy the app (one-shot)
+│   ├── training_model.sh            # Discover Jetson + build/train a model
+│   ├── validate_on_jetson.sh        # Validate counting on reference videos (dev loop)
+│   ├── jetson_discover.sh           # nmap scan + SSH credential test → JETSON_IP
+│   ├── jetson_first_access.sh       # SSH connectivity check
+│   ├── install_ansible.sh           # Install Ansible on the control machine
+│   └── install_splash_screen_standalone.sh
+├── ansible/                 # Ansible automation (deploy + system + model)
+│   ├── inventory/jetsons.yml        # Single host, env-driven (JETSON_IP/USER/PASSWORD)
+│   ├── group_vars/all.yml           # Defaults (filebrowser creds, paths…)
+│   └── playbooks/
+│       ├── app/   deploy_app.yml · deploy_countingapp.yml · build_countingapp.yml
+│       ├── model/ build_model.yml
+│       └── system/ prepare_system · install_k3s · hotspot · splash · lxde · network_ssh …
+├── k3s/templates/           # Jinja2 K8s manifests (the REAL prod manifests, applied by Ansible)
+│   ├── countingapp-dep.j2          # DaemonSet (the app, pausable for validation)
+│   ├── countingapp-svc.j2 · countingapp-ns.j2
+│   ├── countingapp-validate.j2 · countingapp-test.j2 · build-engine-batch.j2
+│   ├── filebrowser-dep.j2 · filebrowser-svc.j2 · filebrowser-cmap.j2 · filebrowser-sct.j2
+│   └── cronvideo-dep.j2            # Rolling video compression + cleanup
+├── validation/              # Reference videos + expected-count manifest
+│   ├── config.json                  # reference_video, tolerance, max_iterations, mode
+│   ├── expected_counts.json         # Manifest: videos{} + disabled{}
+│   └── videos/                      # validation-<seq>-#<count>.mp4 (gitignored except 1 reference)
+├── docs/                    # This documentation set
+└── tests/                   # pytest unit tests (counting, inference, tracking, rendering)
 ```
 
-### Multi-Threaded Design
+> `examples/deploy/k3s_conf/*.yaml` is **legacy** and not applied in production.
+> The real manifests are the Jinja2 templates in `k3s/templates/`, rendered and
+> applied by `ansible/playbooks/app/deploy_countingapp.yml`. See
+> [`docs/03_deployment.md`](docs/03_deployment.md).
 
-The application uses a producer-consumer pattern with two main threads:
+---
 
-1. **Inference Thread**: Captures frames, runs TensorRT inference, and posts results to a shared queue
-2. **Display Thread**: Consumes inference results, performs tracking, counting, and renders output
+## How the app runs
 
-This architecture ensures real-time processing without frame drops.
+The container `entrypoint.sh` takes a **mode** argument:
 
-### Core Modules
+| Mode | What it does |
+|------|--------------|
+| `build-engine` | Compile `model/my_model.onnx` → `my_model.engine` via `trtexec` |
+| `serve` | Run `python3 src/main.py` — the Flask web app + inference/display threads (production) |
+| `validate` | Run `main.py --input=FILE --file=$VALIDATE_VIDEO` and write `result.json` (used by the validation job) |
+| `test` | Run `main.py` on a local test video with tracking drawn |
+| `debug` | `tail -f /dev/null` — keep the container alive for `kubectl exec` |
 
-| Module | Description |
-|--------|-------------|
-| `inference.py` | TensorRT model loading and inference with pre/post-processing |
-| `tracking.py` | OCSORT tracker integration and bounding box handling |
-| `counting.py` | Direction-aware counting based on object trajectory |
-| `rendering.py` | Video overlay, UI elements, and display management |
-| `frame_source.py` | Camera (V4L2) and video file input handling |
-| `shared_state.py` | Thread-safe state management for inter-thread communication |
+In production the pod runs in `serve` mode. `main.py` exposes a small Flask web
+app (port `31501`) that the operator uses to **start/stop** counting and read
+the counter, while two background threads do the work:
+**InferThread** (capture → TensorRT inference → queue) and **DisplayThread**
+(tracking → counting → recording → render). See
+[`docs/05_counting_pipeline.md`](docs/05_counting_pipeline.md).
 
-## Installation
+---
 
-### Prerequisites
+## Operator workflow (daily production)
 
-- Python 3.10+
-- JetPack 6.1+ (for Jetson Orin)
-- Ubuntu 22.04
-- TensorRT 10.3+
-- CUDA 11.4+
-- Ansible 2.14+
+1. **Power on** the Jetson in the morning → K3s starts → the `countingapp`
+   DaemonSet pod boots → the web app is ready (counter = 0).
+2. Open the app (local screen / `http://<jetson-ip>:31501`), confirm the camera
+   feed and the counting line are visible.
+3. Move a series of pigs (typically 15–25) past the camera; the counter
+   increments for each pig that crosses the line right→left (+1) and
+   decrements for a left→right return (−1). A video clip is recorded each time
+   a pig is detected and stops after ~2 minutes with no detection.
+4. Repeat the series through the day — the counter accumulates across
+   iterations and across recordings.
+5. **Read the counter** at the end of the day, then **power off** the Jetson
+   (hard cut).
 
-### Local Development Setup
+> ⚠️ Known production gaps (tracked in the backlog): the counter is **not
+> persisted** (a pod restart during the day resets it to 0 — BL-42), and the
+> video in progress is **not finalized on SIGTERM** because
+> `terminationGracePeriodSeconds: 0` (BL-43/BL-46). See
+> [`docs/09_backlog.md`](docs/09_backlog.md).
 
+---
+
+## Onboarding for a new developer
+
+The `scripts/` directory is the central hub. Two flows cover everything:
+
+### A. Provision a Jetson and deploy the app
 ```bash
-# Install Ansible
-./scripts/install_ansible.sh
+# 1. On your control machine (Ubuntu/Debian): install Ansible + helpers
+sudo bash scripts/install_ansible.sh
 
-# Install Python dependencies
-pip install numpy opencv-python trackers python-dotenv tensorrt pytest
+# 2. Configure credentials (copy and edit)
+cp .env.local.example .env.local   # then set JETSON_USER, JETSON_PASSWORD, WIFI_NETWORK…
+
+# 3. One-shot: discover the Jetson on the network + deploy
+bash scripts/prepare_jetson.sh
 ```
+`prepare_jetson.sh` chains `jetson_discover.sh` (nmap scan + SSH test →
+`/tmp/jetson_env.sh`) → `jetson_first_access.sh` (SSH check) →
+`ansible-playbook deploy_app.yml`. See
+[`docs/02_setup.md`](docs/02_setup.md) and
+[`docs/03_deployment.md`](docs/03_deployment.md).
 
-### Jetson Orin Deployment
-
-#### Full Installation
-
+### B. Validate counting against reference videos
 ```bash
-# Prepare Jetson with all dependencies
-./scripts/prepare_jetson.sh
+# Validate only the videos declared in validation/expected_counts.json (.videos)
+bash scripts/validate_on_jetson.sh --full
+
+# Or single reference video (validation/config.json -> reference_video)
+bash scripts/validate_on_jetson.sh
 ```
+This rsyncs the code + a video to the Jetson, pauses the live DaemonSet
+(`nodeSelector: validate-paused=true`), runs a one-shot K8s Job
+(`countingapp-validate.j2`), fetches `result.json`, compares the count against
+the manifest, and writes `validation-report.json`. See
+[`docs/06_validation.md`](docs/06_validation.md).
 
-#### Using Ansible Playbooks
-
+### C. Build/retrain a model
 ```bash
-# System preparation
-ansible-playbook -i ansible/inventory/jetson ansible/playbooks/system/prepare_system.yml
-
-# Install K3s
-ansible-playbook -i ansible/inventory/jetson ansible/playbooks/system/install_k3s_with_docker_tasks.yml
-
-# Deploy the application
-ansible-playbook -i ansible/inventory/jetson ansible/playbooks/app/deploy_countingapp.yml
-
-# Setup WiFi hotspot
-ansible-playbook -i ansible/inventory/jetson ansible/playbooks/system/hotspot_setup.yml
+bash scripts/training_model.sh     # discover + ansible-playbook build_model.yml
 ```
 
-#### Individual Playbooks
+---
 
-| Playbook | Description |
-|----------|-------------|
-| `system/prepare_system.yml` | Install system dependencies |
-| `system/install_k3s_with_docker_tasks.yml` | Deploy K3s cluster |
-| `system/hotspot_setup.yml` | Configure WiFi hotspot |
-| `system/install_lxde.yml` | Install LXDE desktop |
-| `app/deploy_countingapp.yml` | Deploy counting application |
-| `app/deploy_app.yml` | Simple app deployment |
-| `app/build_countingapp.yml` | Build counting app container |
-| `model/build_model.yml` | Build TensorRT model |
+## Requirements
 
-### Building a New Model
+| | Requirement |
+|---|---|
+| **Target device** | NVIDIA Jetson Orin (tested on Orin Nano 8 GB "Super") |
+| **JetPack / L4T** | 6.2 / R36.4.0+ (Docker base `dustynv/l4t-pytorch:r36.4.0`) |
+| **Control machine** | Ubuntu/Debian with Ansible 2.14+, `sshpass`, `nmap`, `jq` |
+| **Python** | 3.10 (in the container) |
+| **Camera** | USB webcam (`/dev/video0`) — fixed position |
+| **Network** | Same LAN as the Jetson (or the Jetson's WiFi hotspot) |
 
-```bash
-# Train and deploy new model
-./scripts/training_model.sh
-```
+---
 
-Required environment variables:
+## Configuration at a glance
 
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `TRAINING_PROJECT_DIR` | Training project directory | - |
-| `LOCAL_APP_PATH` | Local app directory | - |
-| `APP_PATH` | Target app path | `/data/orin/git/animal-counting/app` |
-| `TRAINING_DATA_PATH` | Training data directory | - |
-| `TRAINING_MODEL` | Model name/config | - |
-| `TRAINING_EPOCHS` | Number of epochs | - |
-| `TRAINING_IMGSZ` | Input image size | - |
-| `TRAINING_DEVICE` | Training device | `gpu` |
+Runtime config lives in **`app/.env`** (gitignored); copy `app/.env.example`
+and adjust. Key validated values (fixed camera, 30 fps, pigs counted
+right→left):
 
-## Configuration
-
-### Environment Variables
-
-Create a `.env` file in the `app` directory:
-
-```env
-# Inference Parameters
-CONF_THRESH=0.5
-IOU_THRESHOLD=0.45
-
-# Input Source
+```ini
 INPUT_SOURCE=CAMERA
 VIDEO_PATH=/dev/video0
-
-# Output Resolution
-OUTPUT_WIDTH=640
-OUTPUT_HEIGHT=480
-OUTPUT_SCREEN_WIDTH=1024
-OUTPUT_SCREEN_HEIGHT=600
-
-# FPS Settings
 FPS_OUTPUT=30
-
-# Visualization
-DRAW_TRACKING=True
-CENTROID_TRACKING=True
-BOX_TRACKING=True
-
-# Detection Thresholds
-PIG_CONFIDENCE_THRESHOLD=0.7
-PIG_CONFIDENCE_THRESHOLD_START_VIDEO=0.8
-
-# Learning Mode
-DATASET_DIR=./dataset
-CAPTURE_INTERVAL=5
-MAX_LEARNING_DURATION=600
-
-# Output
-OUTPUT_VIDEO_PATH=/app/output
-
-# Logging
+OFFSET_PERCENT_COUNTING_LINE=10   # counting line at x ≈ 384 on a 640px frame
+PIG_CONFIDENCE_THRESHOLD=0.6
+DRAW_TRACKING=False
 LOG_LEVEL=INFO
+OUTPUT_VIDEO_PATH=/files
+# OC-SORT anti-ID-switch tuning:
+TRACKER_LOST_TRACK_BUFFER=20
+TRACKER_MIN_CONSECUTIVE_FRAMES=5
+COUNTING_GUARD_MAX_AGE=15
+COUNTING_REID_WINDOW=15
+COUNTING_LOST_BUFFER_FRAMES=60
 ```
+Full parameter table and per-parameter rationale:
+[`docs/04_configuration.md`](docs/04_configuration.md).
 
-### Kubernetes Deployment
+---
 
-The application supports K3s deployment with the following components:
-
-- **Deployment**: Main counting application pod
-- **Service**: ClusterIP service for internal communication
-- **ConfigMap**: Application configuration
-- **Secret**: Sensitive credentials
-- **FileBrowser**: Web-based file management
-- **CronJob**: Video compression scheduler
-
-## Usage
-
-### Running the Application
-
-#### Camera Input (Default)
-```bash
-python app/src/main.py
-```
-
-#### Video File Input
-```bash
-python app/src/main.py --input FILE --file /path/to/video.mp4
-```
-
-#### With Bounding Box Visualization
-```bash
-python app/src/main.py --drawtracking true
-```
-
-### Command Line Arguments
-
-| Argument | Short | Description | Values |
-|----------|-------|-------------|--------|
-| `--input` | `-m` | Input source | `CAMERA`, `FILE` |
-| `--file` | `-f` | Video file path (required if --input FILE) | path |
-| `--drawtracking` | `-d` | Enable bounding box visualization | `true`, `false` |
-
-### Application Modes
-
-The application operates in several modes controlled via shared state:
-
-- **Status 0** (Stop): No processing, display only
-- **Status 1** (Count): Active counting and recording
-- **Status 2** (Pause): Pause counting, continue display
-- **Status 3** (Auto): Automatic detection and recording
-
-#### Mouse Controls (Fullscreen Mode)
-- Click: Toggle between modes
-
-### Learning Mode
-
-When enabled, the application captures images at regular intervals for model training:
-- Images saved to configured dataset directory
-- Configurable capture interval and maximum duration
-- Automatic termination after max duration
-
-## Testing
+## Tests
 
 ```bash
-# Run all unit tests
-pytest tests/ -v
-
-# Run specific test
-pytest tests/test_inference.py -v
+cd app && python -m pytest ../tests/ -v     # unit tests for counting/inference/tracking/rendering
 ```
 
-## Documentation
+---
 
-- [Quick Start Guide](docs/01_quickstart.md)
-- [Bootstrap Details](docs/02_bootstrap_detail.md)
-- [Multi-Jetson Setup](docs/03_multi_jetson.md)
-- [Troubleshooting](docs/04_troubleshooting.md)
-- [Reset Procedure](docs/05_reset_procedure.md)
-- [Deployment Guide](docs/deployment_guide.md)
+## License / scope
 
-### External References
-
-- [OpenCV Video I/O](https://docs.opencv.org/master/dd/d43/tutorial_py_video_display.html)
-- [Trackers Library](https://github.com/JonC3900/Trackers)
-- [TensorRT Python API](https://docs.nvidia.com/deeplearning/tensorrt/api/python_api/index.html)
-- [Python Logging](https://docs.python.org/3/howto/logging.html)
-- [python-dotenv](https://pypi.org/project/python-dotenv/)
-- [OCSORT Tracker](https://github.com/NoahCrown/OCSORT)
-- [Supervision Library](https://github.com/ultralytics/supervision)
-
-## Technology Stack
-
-| Component | Technology |
-|-----------|------------|
-| Object Detection | YOLO26 (YOLOv11) |
-| Inference Engine | TensorRT |
-| Tracker | OCSORT |
-| Container Runtime | Docker/K3s |
-| Deployment | Ansible |
-| UI | OpenCV |
-| Language | Python 3.10+ |
-
-## Contributing
-
-Contributions are welcome! Please follow the project's coding conventions and submit pull requests for review.
-
-## License
-
-MIT License - See [LICENSE](LICENSE) file for details.
+Internal project for animal-counting on a Jetson Orin. Hardware-specific
+(TensorRT engine, `/dev/video0`, X11 display, K3s on a single node).
