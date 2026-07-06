@@ -94,6 +94,30 @@ You should see `coredns`, `metrics-server`, `local-path-provisioner`, and
 `nvidia-device-plugin` running. The counting app itself is deployed next by
 `prepare_jetson.sh` / `deploy_app.yml` — see [`03_deployment.md`](03_deployment.md).
 
+## Before you deploy — train + version a model on Roboflow
+
+The app ships **no model**. Before the first deployment, the operator must
+have **prepared and versioned a dataset on Roboflow** that
+`ansible/playbooks/model/build_model.yml` can fetch. The pipeline downloads
+that Roboflow version and trains YOLO locally → `my_model.pt` → ONNX → TensorRT
+engine (see [Model build](03_deployment.md#model-build--roboflow-dataset--yolo--onnx--tensorrt-engine)).
+Without it the app has nothing to run.
+
+Once, before deploying:
+
+1. On Roboflow: create/version the dataset (and train, if you train on Roboflow
+   directly). Note the `workspace`, `project`, `version`, and `format`; generate
+   an API key.
+2. Put them in `.env.local` as `TRAINING_ROBOFLOW_WORKSPACE`,
+   `TRAINING_ROBOFLOW_PROJECT`, `TRAINING_ROBOFLOW_VERSION`,
+   `TRAINING_ROBOFLOW_FORMAT`, `TRAINING_ROBOFLOW_API_KEY`
+   (+ `TRAINING_MODEL`, `epochs`, `imgsz`).
+3. Build the model on the Jetson: `bash scripts/training_model.sh` (fetches the
+   Roboflow version, trains locally, exports ONNX), then compile the TensorRT
+   engine (`build-engine-batch.j2` / the `build-engine` container mode).
+
+Only then proceed to deploy.
+
 ## Next
 
 - Deploy the app: [`bash scripts/prepare_jetson.sh`](01_quickstart.md)

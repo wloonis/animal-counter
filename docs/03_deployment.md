@@ -75,6 +75,8 @@ on Roboflow** — the repo does not ship a model. `ansible/playbooks/model/build
 > Prerequisite: the operator creates/versions a dataset on Roboflow and puts
 > the `TRAINING_ROBOFLOW_*` values (including the Roboflow API key) in
 > `.env.local`. Without a valid Roboflow version + API key, step 1 fails.
+> This is a **pre-deployment step** — see
+> [`02_setup.md`](02_setup.md#before-you-deploy--train--version-a-model-on-roboflow).
 
 ## K3s resources (what gets deployed)
 

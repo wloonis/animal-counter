@@ -37,6 +37,13 @@ JETSON_ETH_IP=192.168.1.158              # informational (discovery overrides th
 
 ## 3. Discover + deploy (one shot)
 
+> **Prerequisite:** the app ships no model. Before this, a detection model
+> must have been trained from a **versioned Roboflow dataset** (operator
+> versions it on Roboflow; `scripts/training_model.sh` fetches that version,
+> trains YOLO locally, exports ONNX, compiles the TensorRT engine). See
+> [`02_setup.md`](02_setup.md#before-you-deploy--train--version-a-model-on-roboflow)
+> and [`03_deployment.md`](03_deployment.md#model-build--roboflow-dataset--yolo--onnx--tensorrt-engine).
+
 ```bash
 bash scripts/prepare_jetson.sh
 ```
