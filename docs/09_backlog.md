@@ -72,6 +72,7 @@ order.
 | BL-49 | Pin `ffmpeg:latest` | Ops | P2 | S | 🟢 | ⬜ to do |
 | BL-50 | External access to countingapp (externalIP/ingress) | Ops | P2 | S | 🟢 | ⬜ to do |
 | BL-51 | Video cleanup restricted to `.mp4` | Robustness | P2 | S | 🟢 | ✅ done |
+| BL-52 | Secure `.env` at rest on Jetson (secrets on disk) | Security | P1 | M | 🟡 | ⬜ to do |
 
 ## 1. Robustness / Production (24/7)
 
@@ -389,6 +390,42 @@ Fix: strong password via `FILEBROWSER_ADMIN_PASSWORD` in env (not in clear in
 the repo), and do not default to `admin`. Secret already in place
 (`filebrowser-sct.j2`) — just a weak default to harden.
 
+### ⬜ BL-52 — Secure `.env` at rest on the Jetson (secrets deployed to disk)
+**P1 · M · 🟡.** `app/.env` (and `.env.local`'s `JETSON_PASSWORD`) are rsynced
+to the Jetson's persistent storage (`/data/orin/git/animal-counter/app/.env`,
+via the hostPath `/app` mount) in **plaintext**. `validate_on_jetson.sh` and
+`build_countingapp.yml` re-push it on every run. Anyone with shell or
+filesystem access to the Jetson can read every secret (model paths, filebrowser
+creds, Jetson password, any DB/API token). Distinct from BL-37 (removes the
+`sshpass` password from the dev-side `.env.local`) and BL-38 (K8s Secret for
+prod runtime) — this one is specifically about **secrets at rest on the Jetson
+disk and the rsync path that puts them there**.
+
+**Options to evaluate (pick one + implement):**
+1. **K8s Secret + Ansible Vault (recommended prod path).** Define the secret
+   once in Ansible Vault (encrypted inventory), apply it as a K8s Secret, and
+   inject via `envFrom: secretRef` in `k3s/templates/*.j2`. The app already
+   reads config from `os.environ` (python-dotenv `load_dotenv()` does not
+   override existing env vars), so K8s-injected vars win with **no code
+   change**. The secret then never sits in the git tree nor as a file on disk —
+   only in K3s/etcd + Vault. Exclude `app/.env` from the build/validate rsync.
+2. **tmpfs / ephemeral mount.** If a `.env` file must remain, mount it on a
+   `tmpfs` (or read-only `emptyDir`) populated from the Secret at pod start, so
+   it is never persisted to `/data` and vanishes on reboot.
+3. **File-permission hardening (minimum, interim).** `chmod 600 app/.env`,
+   `chown` to the service user only, `chmod 700 /data/orin/git/animal-counter/app`,
+   and add `--exclude='app/.env'` to the rsync in `build_countingapp.yml`
+   (stop re-pushing it). Does not protect against root/disk access, but closes
+   the world-readable gap today.
+4. **Encrypt at rest (sops/age).** Version an encrypted `.env.enc`, decrypt at
+   startup with a key from K8s Secret. More moving parts; only worth it if a
+   file form is truly required.
+
+**Audit step (before picking):** enumerate every secret-bearing file on the
+Jetson (`find /data/orin -name '.env*' -o -name '*.key'`), check perms, and
+rotate any credential already exposed in plaintext. Likely resolution =
+option 1 for prod + option 3 as an interim hardening.
+
 ### ⬜ BL-49 — Pin `ffmpeg:latest`
 **P2 · S · 🟢.** `cronvideo-dep.j2` uses `lscr.io/linuxserver/ffmpeg:latest`
 (non-reproducible — an image update can break compression). Fix: pin a precise
@@ -447,6 +484,6 @@ then add security + testability without touching the validated counting logic
 ¹ BL-10 sketched in `8382e0e`, finalized in `c3f8fdf`.
 
 **Current state:** 30/30 videos validated (4/4 priority re-validated after the
-quick wins, REID-SUPPRESS #35 unchanged). Backlog up to date (BL-01..BL-51: 16
-done, 1 abandoned BL-08, 34 to do). Prod manifests recadrage (`k3s/templates/`
+quick wins, REID-SUPPRESS #35 unchanged). Backlog up to date (BL-01..BL-52: 16
+done, 1 abandoned BL-08, 35 to do). Prod manifests recadrage (`k3s/templates/`
 via Ansible, not the legacy `examples/deploy/`). Commits local, not pushed.
