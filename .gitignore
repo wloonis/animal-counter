@@ -93,6 +93,7 @@ datasets/
 
 # Archon cross-run state (never commit)
 .archon/state/
+.archon-relay/
 .pi-loop.json
 .pi-loop.json.lock
 

@@ -13,6 +13,13 @@
 # The validation criterion is the counting result on the reference video
 # (configured in validation/config.json; expected_count derived from filename).
 #
+# Relay protocol (detached runs): the workflow is launched with `--detach` and
+# surfaces its state to a relay agent via small beacon files written to
+# `.archon-relay/` in the worktree (CLARIFY.md, PLANNOTATOR.md, VALIDATION.md).
+# The relay agent polls `archon workflow get <run-id> --json --verbose` for
+# status/gate and feeds user replies back via `archon workflow approve <run-id>
+# "<feedback>"`. See AGENTS.md for the full protocol.
+#
 # Prereqs (one-time per machine):
 #   pi install npm:@plannotator/pi-extension
 #   .archon/config.yaml must have extensionFlags.plan: true + PLANNOTATOR_REMOTE: "1"
@@ -118,12 +125,33 @@ nodes:
           "proceed", "approved").
         - A question or any revision request = do NOT emit the signal.
         - If you're unsure whether it's approval, ask — do NOT emit the signal.
+
+        ---
+
+        ## Relay beacon (REQUIRED every iteration)
+
+        This workflow runs detached (no live TTY). A relay agent surfaces your
+        state to the user by reading a file. After printing your output above,
+        use the write tool to create/overwrite `.archon-relay/CLARIFY.md`:
+
+        ```
+        STATE: WAITING_FOR_USER
+        ITERATION: <n>
+        QUESTIONS:
+        <your questions verbatim, or: None — confirm "ready" to proceed>
+        INTENT: <one-line intent summary>
+        ```
+
+        Write it on every iteration (the relay agent polls this file). When you
+        are about to emit READY_FOR_PLAN, first overwrite it with
+        `STATE: READY_FOR_PLAN` so the relay knows CLARIFY is done. The write
+        tool creates the `.archon-relay/` directory automatically.
       until: READY_FOR_PLAN
       max_iterations: 6
       interactive: true
       gate_message: |
-        Answer the questions, push back on the scoping, or say "ready" to hand
-        off to plannotator for structured plan review.
+        My questions are in `.archon-relay/CLARIFY.md`. Answer them, push back on
+        the scoping, or say "ready" to hand off to plannotator for plan review.
 
   # ═══════════════════════════════════════════════════════════════
   # PHASE 2: PLAN — Pi session submits plan via plannotator
@@ -213,9 +241,27 @@ nodes:
       Use the edit tool on `PLAN.md` to address the feedback, then call
       `plannotator_submit_plan` again. Repeat until approved.
 
+      ## Step 4: Relay beacon (REQUIRED on every submission)
+
+      This workflow runs detached (no live TTY). A relay agent must tell the
+      user where to review the plan. IMMEDIATELY after every
+      `plannotator_submit_plan` call (including re-submissions after denial),
+      use the write tool to create/overwrite `.archon-relay/PLANNOTATOR.md`:
+
+      ```
+      STATE: PLAN_REVIEW_PENDING
+      URL: http://127.0.0.1:19432
+      PLAN_FILE: PLAN.md
+      ```
+
+      The user opens that URL in a browser to approve or deny. On approval,
+      overwrite it with `STATE: PLAN_APPROVED` then exit. The write tool
+      creates the `.archon-relay/` directory automatically.
+
       ## Rules (non-negotiable)
 
-      - PLAN.md is the ONLY file you may create or edit.
+      - PLAN.md and `.archon-relay/PLANNOTATOR.md` are the ONLY files you may
+        create or edit.
       - The only files you may READ are: PLAN.md, CLAUDE.md, README.md.
       - Do NOT call bash, agent_browser, cron_create, or any tool that
         inspects, modifies, or executes source code.
@@ -495,13 +541,37 @@ nodes:
           human input.
         - On execution_error: fix and retry, or escalate to HITL. Never emit
           the signal.
+
+        ---
+
+        ## Relay beacon (REQUIRED after every validation run)
+
+        This workflow runs detached (no live TTY). A relay agent surfaces the
+        result to the user by reading a file. After reading
+        `validation-report.json`, use the write tool to create/overwrite
+        `.archon-relay/VALIDATION.md`:
+
+        ```
+        STATE: <PASS | MISMATCH_PENDING_USER | EXEC_ERROR_RETRY | ESCALATED>
+        VALIDATION_STATUS: <from report>
+        TOTAL: <n>  PASS: <n>  MISMATCH: <n>  ERROR: <n>
+        MISMATCH_DETAIL: <if count_mismatch: video | expected | actual | diff; else "—">
+        LOGS_TAIL:
+        <last ~15 lines of the failing job logs, or "—">
+        ```
+
+        On count_mismatch set STATE to `MISMATCH_PENDING_USER` — you are
+        pausing for human guidance, and this file is what the relay agent shows
+        the user. The write tool creates the `.archon-relay/` directory
+        automatically.
       until: VALIDATED
       max_iterations: 15
       interactive: true
       gate_message: |
-        Jetson validation returned a count mismatch (business failure).
-        Review the result and provide guidance on what to fix,
-        or say "approve" to finalize despite the mismatch.
+        Jetson validation returned a count mismatch (business failure). The
+        mismatch detail is in `.archon-relay/VALIDATION.md`. Review it and tell
+        the relay agent what to fix, or say "approve" to finalize despite the
+        mismatch.
 
   # ═══════════════════════════════════════════════════════════════
   # PHASE 5: FINALIZE — Push, create PR, generate summary
