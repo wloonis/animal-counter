@@ -511,6 +511,7 @@ def start(input_source, video_path):
                 direction_consistency_weight=settings.TRACKER_DIRECTION_CONSISTENCY_WEIGHT,
                 high_conf_det_threshold=settings.TRACKER_HIGH_CONF_THRESHOLD,
                 delta_t=settings.TRACKER_DELTA_T,
+                iou=settings.COUNTING_TRACKER_IOU,
             )            
 
             tracking = Tracking(draw_box=shared_state.draw_tracking, shared_state=shared_state)

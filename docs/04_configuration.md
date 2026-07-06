@@ -70,6 +70,7 @@ inert; do not rely on them.)
 | `TRACKER_HIGH_CONF_THRESHOLD` | 0.6 | Detections below this are dropped by the tracker before association |
 | `TRACKER_DIRECTION_CONSISTENCY_WEIGHT` | 0.25 | OCM direction-term weight |
 | `TRACKER_DELTA_T` | 3 | OCM velocity-direction temporal window |
+| `COUNTING_TRACKER_IOU` | `giou` | Association similarity function (`iou`/`giou`, trackers ≥ 2.5.0). See [GIoU activation](#giou-association-counting_tracker_iou) below. |
 
 ### Counting guards (see [`05_counting_pipeline.md`](05_counting_pipeline.md))
 
@@ -105,3 +106,64 @@ inert; do not rely on them.)
 Separate from the app: `validation/config.json` and
 `validation/expected_counts.json` drive the validation script — see
 [`06_validation.md`](06_validation.md).
+
+## GIoU association (`COUNTING_TRACKER_IOU`)
+
+Starting with `trackers` 2.5.0, `OCSORTTracker` accepts an `iou=` kwarg that
+selects the detection/track association similarity function. The app exposes
+this as `COUNTING_TRACKER_IOU` (default `giou`).
+
+### Why GIoU is activated by default
+
+ID-switch at the counting line — our primary defect — happens when OC-SORT
+loses a pig's track during an occlusion and assigns a new ID on the other
+side. **Generalized IoU** (`giou`) rewards geometric overlap **and** penalizes
+non-overlapping boxes, which helps keep a pig's ID through partial occlusions.
+This targets the root cause directly, so it is activated by default to measure
+the benefit on the 4 ID-switch-prone priority validation videos.
+
+### Score range: [-1, 1] vs [0, 1]
+
+Standard IoU scores live in `[0, 1]`. GIoU scores live in `[-1, 1]` (a negative
+score means the boxes don't overlap and are far apart). Because the scales
+differ, `TRACKER_MIN_IOU_THRESHOLD` (0.3, tuned for standard IoU) **may not
+transfer directly** to GIoU. The validation gate is **4/4 strict**: if a
+count mismatch appears under GIoU, lower `TRACKER_MIN_IOU_THRESHOLD` toward
+**0.2–0.3** and re-run `bash scripts/validate_on_jetson.sh --full`. Repeat
+until 4/4 pass or the search range is exhausted. **Do not auto-correct a
+count mismatch** — report it; the user decides.
+
+### HITL fallback
+
+If 4/4 cannot hold after re-tuning, revert to **`COUNTING_TRACKER_IOU=iou`**
+(standard IoU = identical pre-2.5.0 association behavior, the safe baseline)
+and re-validate 4/4 to confirm the IoU path still passes. Document in
+[`05_counting_pipeline.md`](05_counting_pipeline.md) that GIoU is **not
+beneficial** on this dataset. The user decides whether to keep GIoU off or
+investigate further; no automatic count correction.
+
+### Free fixes in 2.5.0 (independent of `iou=`)
+
+The upgrade also picks up robustness fixes that apply regardless of the
+association function:
+
+- **Per-instance tracker IDs** — each `OCSORTTracker` instance now has its own
+  ID counter (previously shared/global); avoids cross-instance ID collisions.
+- **NaN/inf coordinate handling** — detections with non-finite coordinates no
+  longer crash the tracker.
+- **`py.typed`** — the package ships a PEP 561 marker, enabling static type
+  checking for future type-hint work (BL-32).
+
+### Accepted values
+
+| Value | Behavior |
+|-------|----------|
+| `iou` | Standard IoU `[0,1]` — identical to pre-2.5.0; safe revert target |
+| `giou` | Generalized IoU `[-1,1]` — activated, targets occlusions/ID-switch (default) |
+
+Other variants (`ciou`, `diou`, `eiou`) exist but are not evaluated for this
+use case.
+
+> **OCR OC-SORT caveat**: the OCR (2nd-chance) path inside the library always
+> uses standard IoU regardless of `iou=`. We use `OCSORTTracker`, not OCR, so
+> this is informational only.
