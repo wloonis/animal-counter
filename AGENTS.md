@@ -255,6 +255,20 @@ CLI above (what the relay agent uses) and plannotator for plan review.
 - Real K3s manifests are `k3s/templates/*.j2` (Ansible), NOT
   `examples/deploy/k3s_conf/*` (legacy, non-applied). `hostPath /app` is
   intentional (live code mount for rsync + hot restart) — do not "fix" it.
+- **Docker image rebuild is required for dependency changes.** `app/Dockerfile`
+  runs `pip install -r requirements.txt` at **BUILD** time; the `serve`
+  entrypoint just runs `python3 src/main.py` (no re-install at startup).
+  `scripts/validate_on_jetson.sh` only **rsyncs** code to the Jetson's `/app`
+  (hostPath) — it does **NOT** rebuild the image. So any change to
+  `app/requirements.txt` (or other build-time deps) requires rebuilding the
+  `countingapp:local` image on the Jetson **before** validation, via
+  `ansible/playbooks/app/build_countingapp.yml` (rsyncs `app/` + runs
+  `docker buildx build -t countingapp:local .` on the Jetson). Invoke it from
+  the `ansible/playbooks/app/` directory so the playbook's `../../../app/`
+  rsync source resolves to the repo's `app/`, and run it from a worktree that
+  contains the code changes. Without this rebuild, the app crashes on startup
+  — e.g. `OCSORTTracker(..., iou="giou")` needs `trackers>=2.5.0` installed
+  in the image, not just rsync'd.
 - Jetson: Orin Nano 8GB "Super", IP `192.168.0.180`, user `nano-counter`,
   password from `.env.local` (`JETSON_PASSWORD`). App path on Jetson:
   `/data/orin/git/animal-counter/app`; files: `/data/orin/files/`.
