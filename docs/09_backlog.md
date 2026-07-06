@@ -37,43 +37,43 @@ order.
 | BL-14 | `.env.example` + `.gitignore` | Security | P1 | S | 🟢 | ✅ done |
 | BL-15 | Rename videos + manifest | Documentation | P1 | S | 🟢 | ✅ done |
 | BL-16 | `docs/05_counting_pipeline.md` | Documentation | P1 | M | 🟢 | ✅ done |
-| BL-17 | Residual GC `detections`/`area_in`/`area_out` | Robustness | P0 | M | 🟡 | ⬜ to do |
-| BL-18 | Graceful shutdown (SIGTERM) | Robustness | P1 | S | 🟢 | ⬜ to do |
-| BL-19 | Memory watch (RSS alert) | Robustness | P1 | S | 🟢 | ⬜ to do |
-| BL-20 | Auto camera reconnect | Robustness | P1 | M | 🟡 | ⬜ to do |
-| BL-21 | Prometheus `/metrics` endpoint | Observability | P1 | M | 🟢 | ⬜ to do |
-| BL-22 | Structured JSON logging | Observability | P1 | S | 🟢 | ⬜ to do |
-| BL-23 | Counter exposed via API (`/count`) | Observability | P1 | S | 🟢 | ⬜ to do |
-| BL-24 | Real-time dashboard | Observability | P2 | L | 🟢 | ⬜ to do |
-| BL-25 | `counting.py` unit tests | Testability | P1 | M | 🟢 | ⬜ to do |
-| BL-26 | Local validation mode | Testability | P1 | M | 🟢 | ⬜ to do |
-| BL-27 | CI (lint + compile + tests) | Testability | P1 | S | 🟢 | ⬜ to do |
-| BL-28 | Track fixtures (ID replay) | Testability | P2 | M | 🟢 | ⬜ to do |
-| BL-29 | Refactor `main.py` (658 lines) | Architecture | P1 | L | 🟡 | ⬜ to do |
-| BL-30 | Align all defaults (paths) | Architecture | P2 | S | 🟢 | ⬜ to do |
-| BL-31 | Centralize config (single source) | Architecture | P2 | M | 🟢 | ⬜ to do |
-| BL-32 | Type hints + docstrings `counting.py` | Architecture | P2 | M | 🟢 | ⬜ to do |
-| BL-33 | GPU prefetch (decode + preprocess) | Performance | P2 | M | 🟡 | ⬜ to do |
-| BL-34 | numpy vectorization `counting.py` | Performance | P2 | S | 🟢 | ⬜ to do |
-| BL-35 | Headless mode (no `cv2.imshow`) | Performance | P2 | S | 🟢 | ⬜ to do |
-| BL-36 | Profiling (py-spy) | Performance | P2 | S | 🟢 | ⬜ to do |
-| BL-37 | SSH keys (replace `sshpass`) | Security | P1 | S | 🟢 | ⬜ to do |
-| BL-38 | Secrets via vault / K8s Secret | Security | P2 | M | 🟢 | ⬜ to do |
-| BL-39 | Guards flow diagram | Documentation | P2 | S | 🟢 | ⬜ to do |
-| BL-40 | README runbook | Documentation | P2 | M | 🟢 | ⬜ to do |
-| BL-41 | Validation matrix (video → fix) | Documentation | P2 | S | 🟢 | ⬜ to do |
-| BL-42 | Counter persistence (snapshot + reload) | Robustness | P0 | M | 🟡 | ⬜ to do |
-| BL-43 | `stop()` finalizes `video_writer` (release) | Robustness | P0 | S | 🟡 | ⬜ to do |
-| BL-44 | Fragmented MP4 (power-cut resistance) | Robustness | P1 | M | 🟡 | ⬜ to do |
-| BL-45 | `livenessProbe` HTTP `/health` | Robustness | P1 | S | 🟢 | ⬜ to do |
-| BL-46 | `terminationGracePeriodSeconds` 0→30 s | Robustness | P0 | S | 🟢 | ⬜ to do |
-| BL-47 | Reduce `privileged` + remove `docker.sock` | Security | P2 | M | 🟡 | ⬜ to do |
-| BL-48 | Filebrowser creds `admin/admin` → strong password | Security | P2 | S | 🟢 | ⬜ to do |
-| BL-49 | Pin `ffmpeg:latest` | Ops | P2 | S | 🟢 | ⬜ to do |
-| BL-50 | External access to countingapp (externalIP/ingress) | Ops | P2 | S | 🟢 | ⬜ to do |
+| [BL-17](https://github.com/wloonis/animal-counter/issues/3) | Residual GC `detections`/`area_in`/`area_out` | Robustness | P0 | M | 🟡 | ⬜ to do |
+| [BL-18](https://github.com/wloonis/animal-counter/issues/4) | Graceful shutdown (SIGTERM) | Robustness | P1 | S | 🟢 | ⬜ to do |
+| [BL-19](https://github.com/wloonis/animal-counter/issues/5) | Memory watch (RSS alert) | Robustness | P1 | S | 🟢 | ⬜ to do |
+| [BL-20](https://github.com/wloonis/animal-counter/issues/6) | Auto camera reconnect | Robustness | P1 | M | 🟡 | ⬜ to do |
+| [BL-21](https://github.com/wloonis/animal-counter/issues/7) | Prometheus `/metrics` endpoint | Observability | P1 | M | 🟢 | ⬜ to do |
+| [BL-22](https://github.com/wloonis/animal-counter/issues/8) | Structured JSON logging | Observability | P1 | S | 🟢 | ⬜ to do |
+| [BL-23](https://github.com/wloonis/animal-counter/issues/9) | Counter exposed via API (`/count`) | Observability | P1 | S | 🟢 | ⬜ to do |
+| [BL-24](https://github.com/wloonis/animal-counter/issues/10) | Real-time dashboard | Observability | P2 | L | 🟢 | ⬜ to do |
+| [BL-25](https://github.com/wloonis/animal-counter/issues/11) | `counting.py` unit tests | Testability | P1 | M | 🟢 | ⬜ to do |
+| [BL-26](https://github.com/wloonis/animal-counter/issues/12) | Local validation mode | Testability | P1 | M | 🟢 | ⬜ to do |
+| [BL-27](https://github.com/wloonis/animal-counter/issues/13) | CI (lint + compile + tests) | Testability | P1 | S | 🟢 | ⬜ to do |
+| [BL-28](https://github.com/wloonis/animal-counter/issues/14) | Track fixtures (ID replay) | Testability | P2 | M | 🟢 | ⬜ to do |
+| [BL-29](https://github.com/wloonis/animal-counter/issues/15) | Refactor `main.py` (658 lines) | Architecture | P1 | L | 🟡 | ⬜ to do |
+| [BL-30](https://github.com/wloonis/animal-counter/issues/16) | Align all defaults (paths) | Architecture | P2 | S | 🟢 | ⬜ to do |
+| [BL-31](https://github.com/wloonis/animal-counter/issues/17) | Centralize config (single source) | Architecture | P2 | M | 🟢 | ⬜ to do |
+| [BL-32](https://github.com/wloonis/animal-counter/issues/18) | Type hints + docstrings `counting.py` | Architecture | P2 | M | 🟢 | ⬜ to do |
+| [BL-33](https://github.com/wloonis/animal-counter/issues/19) | GPU prefetch (decode + preprocess) | Performance | P2 | M | 🟡 | ⬜ to do |
+| [BL-34](https://github.com/wloonis/animal-counter/issues/20) | numpy vectorization `counting.py` | Performance | P2 | S | 🟢 | ⬜ to do |
+| [BL-35](https://github.com/wloonis/animal-counter/issues/21) | Headless mode (no `cv2.imshow`) | Performance | P2 | S | 🟢 | ⬜ to do |
+| [BL-36](https://github.com/wloonis/animal-counter/issues/22) | Profiling (py-spy) | Performance | P2 | S | 🟢 | ⬜ to do |
+| [BL-37](https://github.com/wloonis/animal-counter/issues/23) | SSH keys (replace `sshpass`) | Security | P1 | S | 🟢 | ⬜ to do |
+| [BL-38](https://github.com/wloonis/animal-counter/issues/24) | Secrets via vault / K8s Secret | Security | P2 | M | 🟢 | ⬜ to do |
+| [BL-39](https://github.com/wloonis/animal-counter/issues/25) | Guards flow diagram | Documentation | P2 | S | 🟢 | ⬜ to do |
+| [BL-40](https://github.com/wloonis/animal-counter/issues/26) | README runbook | Documentation | P2 | M | 🟢 | ⬜ to do |
+| [BL-41](https://github.com/wloonis/animal-counter/issues/27) | Validation matrix (video → fix) | Documentation | P2 | S | 🟢 | ⬜ to do |
+| [BL-42](https://github.com/wloonis/animal-counter/issues/28) | Counter persistence (snapshot + reload) | Robustness | P0 | M | 🟡 | ⬜ to do |
+| [BL-43](https://github.com/wloonis/animal-counter/issues/29) | `stop()` finalizes `video_writer` (release) | Robustness | P0 | S | 🟡 | ⬜ to do |
+| [BL-44](https://github.com/wloonis/animal-counter/issues/30) | Fragmented MP4 (power-cut resistance) | Robustness | P1 | M | 🟡 | ⬜ to do |
+| [BL-45](https://github.com/wloonis/animal-counter/issues/31) | `livenessProbe` HTTP `/health` | Robustness | P1 | S | 🟢 | ⬜ to do |
+| [BL-46](https://github.com/wloonis/animal-counter/issues/32) | `terminationGracePeriodSeconds` 0→30 s | Robustness | P0 | S | 🟢 | ⬜ to do |
+| [BL-47](https://github.com/wloonis/animal-counter/issues/33) | Reduce `privileged` + remove `docker.sock` | Security | P2 | M | 🟡 | ⬜ to do |
+| [BL-48](https://github.com/wloonis/animal-counter/issues/34) | Filebrowser creds `admin/admin` → strong password | Security | P2 | S | 🟢 | ⬜ to do |
+| [BL-49](https://github.com/wloonis/animal-counter/issues/35) | Pin `ffmpeg:latest` | Ops | P2 | S | 🟢 | ⬜ to do |
+| [BL-50](https://github.com/wloonis/animal-counter/issues/36) | External access to countingapp (externalIP/ingress) | Ops | P2 | S | 🟢 | ⬜ to do |
 | BL-51 | Video cleanup restricted to `.mp4` | Robustness | P2 | S | 🟢 | ✅ done |
-| BL-52 | Secure `.env` at rest on Jetson (secrets on disk) | Security | P1 | M | 🟡 | ⬜ to do |
-| BL-53 | Trim last 2 min in cronvideo compression | Ops | P2 | S | 🟢 | ⬜ to do |
+| [BL-52](https://github.com/wloonis/animal-counter/issues/37) | Secure `.env` at rest on Jetson (secrets on disk) | Security | P1 | M | 🟡 | ⬜ to do |
+| [BL-53](https://github.com/wloonis/animal-counter/issues/38) | Trim last 2 min in cronvideo compression | Ops | P2 | S | 🟢 | ⬜ to do |
 
 ## 1. Robustness / Production (24/7)
 
