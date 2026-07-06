@@ -252,8 +252,7 @@ CLI above (what the relay agent uses) and plannotator for plan review.
   with `validation_status`. The 4 priority videos are in
   `validation/expected_counts.json` under `.videos`; the rest are in `.disabled`.
 - Do NOT relaunch validation on all 30 videos — only the priority set.
-- Real K3s manifests are `k3s/templates/*.j2` (Ansible), NOT
-  `examples/deploy/k3s_conf/*` (legacy, non-applied). `hostPath /app` is
+- Real K3s manifests are `k3s/templates/*.j2` (Ansible). `hostPath /app` is
   intentional (live code mount for rsync + hot restart) — do not "fix" it.
 - **Docker image rebuild is required for dependency changes.** `app/Dockerfile`
   runs `pip install -r requirements.txt` at **BUILD** time; the `serve`

@@ -4,10 +4,6 @@ How the app is packaged, deployed, and run on the Jetson's single-node K3s
 cluster. The real manifests are the **Jinja2 templates in `k3s/templates/`**,
 rendered and applied by **Ansible** (`ansible/playbooks/app/deploy_countingapp.yml`).
 
-> ⚠️ `examples/deploy/k3s_conf/*.yaml` is **legacy** and is **not applied** in
-> production (it injected env vars with wrong names, an ingress pointing at the
-> wrong port, etc.). Always edit `k3s/templates/`, never the legacy files.
-
 ## Container image
 
 `app/Dockerfile` builds on `dustynv/l4t-pytorch:r36.4.0` (JetPack 6.2) and
@@ -45,13 +41,40 @@ So `JETSON_IP` / `JETSON_USER` / `JETSON_PASSWORD` (from `.env.local`, set by
 | `app/build_countingapp.yml` | Build the `countingapp:local` image on the Jetson |
 | `app/deploy_app.yml` | Discover + deploy (wrapped by `scripts/prepare_jetson.sh`) |
 | `app/deploy_countingapp.yml` | Render all `k3s/templates/*.j2` and `kubectl apply` them |
-| `model/build_model.yml` | Train/build a model (wrapped by `scripts/training_model.sh`) |
+| `model/build_model.yml` | Train the model from a Roboflow dataset version (wrapped by `scripts/training_model.sh`) — see [Model build](#model-build--roboflow-dataset--yolo--onnx--tensorrt-engine) below |
 | `system/install_k3s_with_docker_tasks.yml` | Install Docker + K3s (single-node) |
 | `system/prepare_system.yml`, `network_ssh.yml`, `hotspot_setup.yml`, `install_lxde.yml`, `configure_splash_screen.yml`, `diagnose_splash_screen.yml` | System setup (see [`02_setup.md`](02_setup.md)) |
 
 `deploy_countingapp.yml` renders each `*.j2` into `$K3S_APP_PATH/*.yaml` and
 applies them with `k3s kubectl apply -f`. Defaults (filebrowser creds, paths,
 ports) come from `ansible/group_vars/all.yml`.
+
+## Model build — Roboflow dataset → YOLO → ONNX → TensorRT engine
+
+The detection model is **trained from a dataset version the operator prepares
+on Roboflow** — the repo does not ship a model. `ansible/playbooks/model/build_model.yml`
+(wrapped by `scripts/training_model.sh`) automates the full chain, driven by
+`TRAINING_ROBOFLOW_*` env vars (set in `.env.local`):
+
+1. **Fetch the dataset version from Roboflow** — calls the Roboflow API
+   (`https://api.roboflow.com/{workspace}/{project}/{version}/{format}?api_key=…`)
+   to get the export link, then downloads + unarchives the dataset zip. The
+   version is the Roboflow dataset export the operator built/versioned on
+   Roboflow (`TRAINING_ROBOFLOW_WORKSPACE`, `TRAINING_ROBOFLOW_PROJECT`,
+   `TRAINING_ROBOFLOW_VERSION`, `TRAINING_ROBOFLOW_FORMAT`,
+   `TRAINING_ROBOFLOW_API_KEY`).
+2. **Train YOLO locally** (on the dev machine, `delegate_to: localhost`, using
+   the local ultralytics venv) → `model/my_model.pt` (`TRAINING_MODEL`,
+   `epochs`, `imgsz`).
+3. **Export to ONNX** — `yolo export model=my_model.pt format=onnx` →
+   `model/my_model.onnx`.
+4. **Compile the TensorRT engine on the Jetson** — the container's `build-engine`
+   mode runs `trtexec` to compile `model/my_model.onnx` → `model/my_model.engine`
+   (the engine `serve` mode loads at runtime; see `app/src/core/inference.py`).
+
+> Prerequisite: the operator creates/versions a dataset on Roboflow and puts
+> the `TRAINING_ROBOFLOW_*` values (including the Roboflow API key) in
+> `.env.local`. Without a valid Roboflow version + API key, step 1 fails.
 
 ## K3s resources (what gets deployed)
 

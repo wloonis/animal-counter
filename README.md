@@ -29,7 +29,8 @@ animal-moving iterations, and powered off (hard power cut) in the evening.
 | [`docs/06_validation.md`](docs/06_validation.md) | Validation workflow (`validate_on_jetson.sh`, manifest, reports) |
 | [`docs/07_troubleshooting.md`](docs/07_troubleshooting.md) | Troubleshooting |
 | [`docs/08_reset.md`](docs/08_reset.md) | Reset procedures |
-| [`docs/09_backlog.md`](docs/09_backlog.md) | Improvement backlog (BL-01..BL-51) |
+| [`docs/09_backlog.md`](docs/09_backlog.md) | Improvement backlog (BL-01..BL-53) |
+| [`docs/10_development_workflow.md`](docs/10_development_workflow.md) | Development workflow with `archon-jetson-dev` (CLARIFY → plan → validate → PR) |
 
 ---
 
@@ -81,7 +82,6 @@ animal-counter/
 └── tests/                   # pytest unit tests (counting, inference, tracking, rendering)
 ```
 
-> `examples/deploy/k3s_conf/*.yaml` is **legacy** and not applied in production.
 > The real manifests are the Jinja2 templates in `k3s/templates/`, rendered and
 > applied by `ansible/playbooks/app/deploy_countingapp.yml`. See
 > [`docs/03_deployment.md`](docs/03_deployment.md).

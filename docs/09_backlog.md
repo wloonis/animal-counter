@@ -73,6 +73,7 @@ order.
 | BL-50 | External access to countingapp (externalIP/ingress) | Ops | P2 | S | 🟢 | ⬜ to do |
 | BL-51 | Video cleanup restricted to `.mp4` | Robustness | P2 | S | 🟢 | ✅ done |
 | BL-52 | Secure `.env` at rest on Jetson (secrets on disk) | Security | P1 | M | 🟡 | ⬜ to do |
+| BL-53 | Trim last 2 min in cronvideo compression | Ops | P2 | S | 🟢 | ⬜ to do |
 
 ## 1. Robustness / Production (24/7)
 
@@ -439,6 +440,31 @@ Ingress (k3s default). Optional — depends on the external-access need (today
 the operator reads the counter on the Jetson's local X11 screen, not over the
 network).
 
+### ⬜ BL-53 — Trim last 2 min in cronvideo compression (no pigs in the tail)
+**P2 · S · 🟢.** In `cronvideo-dep.j2`, the compression loop re-encodes the full
+`tocompress-*` recording, including a tail (~2 min) where there are never any
+pigs — wasted storage + encode time. Trim the last 2 minutes when compressing.
+
+**Implementation:** ffmpeg has no direct "drop last N seconds" flag, so compute
+the input duration and pass `-t` (keep everything before `duration - 120`):
+
+```bash
+DUR=$(ffprobe -v error -show_entries format=duration -of csv=p=0 "$f")
+KEEP=$(awk "BEGIN{ print ($DUR) - 120 }")
+ffmpeg -y -i "$f" -t "$KEEP" \
+  -vf "scale=640:-2" -c:v libx264 -preset ultrafast -crf 23 \
+  -c:a aac -b:a 64k "$out"
+```
+
+Notes:
+- Only the **compressed archive** is trimmed — the raw recording and the
+  counting (which runs on the live stream / raw capture, separate from this
+  cron pod) are untouched, so counts are unaffected.
+- Guard against short clips: skip the trim if `DUR <= 120` (keep the whole
+  file), otherwise ffmpeg gets a negative `-t`.
+- Verify on a sample `tocompress-*` file that the trimmed output still starts
+  at the right point and the count-bearing portion is intact.
+
 ### ✅ BL-51 — Video cleanup restricted to `.mp4`
 **P2 · S · 🟢.** `cronvideo-dep.j2` did
 `find . -type f -size +2G -delete` → deleted **any file >2 GiB** (including an
@@ -484,6 +510,6 @@ then add security + testability without touching the validated counting logic
 ¹ BL-10 sketched in `8382e0e`, finalized in `c3f8fdf`.
 
 **Current state:** 30/30 videos validated (4/4 priority re-validated after the
-quick wins, REID-SUPPRESS #35 unchanged). Backlog up to date (BL-01..BL-52: 16
-done, 1 abandoned BL-08, 35 to do). Prod manifests recadrage (`k3s/templates/`
-via Ansible, not the legacy `examples/deploy/`). Commits local, not pushed.
+quick wins, REID-SUPPRESS #35 unchanged). Backlog up to date (BL-01..BL-53: 16
+done, 1 abandoned BL-08, 36 to do). Prod manifests recadrage (`k3s/templates/`
+via Ansible, not the legacy `examples/deploy/`, since removed).

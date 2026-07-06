@@ -19,9 +19,7 @@ cp app/.env.example app/.env
 2. `settings.py` built-in defaults (aligned with `.env.example`)
 
 The K3s manifest `countingapp-dep.j2` only injects `DISPLAY=:0`; all other
-parameters come from `.env`. (The legacy `examples/deploy/k3s_conf/*.yaml`
-injected `INPUT`/`FILE`/`DRAWTRACKING` with wrong names — those are unused and
-inert; do not rely on them.)
+parameters come from `.env`.
 
 ## Parameter reference
 
