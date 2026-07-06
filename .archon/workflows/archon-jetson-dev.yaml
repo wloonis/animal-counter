@@ -100,8 +100,13 @@ nodes:
 
         ## If the user has replied (subsequent iterations):
 
-        Parse their answers. If there's still one real ambiguity, ask ONE
-        follow-up. Otherwise, summarize the resolved intent:
+        Parse their answers.
+
+        ### If there's still a real ambiguity
+        Ask ONE follow-up question. Do NOT emit the signal.
+
+        ### If you're converging but not yet approved
+        Summarize the resolved intent and ask for confirmation:
 
         ```
         ## Ready for plannotator
@@ -114,7 +119,28 @@ nodes:
         ```
 
         Tell them: "Say **ready** to hand off to plannotator, or reply with
-        any last adjustments."
+        any last adjustments." Do NOT emit the signal yet.
+
+        ### If they approved ("ready", "go", "let's do it", "proceed", "approved")
+
+        **Restate the FULL resolved intent one last time, then emit the signal
+        in the SAME response.** This output becomes `$clarify.output`, which is
+        the ONLY intent the planner receives — it does NOT see `$ARGUMENTS` or
+        your earlier iterations. If you emit the signal alone (without the
+        intent block), the planner falls back to the original request and the
+        clarified decisions are lost. So your approval response MUST be:
+
+        ```
+        ## Resolved intent for plannotator
+
+        **Building**: {clear 1-2 sentence description}
+        **In scope**: {bullets}
+        **Out of scope**: {bullets}
+        **Key decisions**: {bullets}
+        **Files likely to change**: {bullets}
+        ```
+
+        `<promise>READY_FOR_PLAN</promise>`
 
         ---
 
@@ -122,9 +148,13 @@ nodes:
 
         - ONLY emit `<promise>READY_FOR_PLAN</promise>` when the user's latest
           message contains explicit approval ("ready", "go", "let's do it",
-          "proceed", "approved").
+          "proceed", "approved") **AND** you have just restated the full
+          resolved intent block in the same response.
         - A question or any revision request = do NOT emit the signal.
         - If you're unsure whether it's approval, ask — do NOT emit the signal.
+        - NEVER emit the signal as a standalone line without the intent block
+          above it — `$clarify.output` must carry the resolved intent to the
+          planner, or it silently reverts to `$ARGUMENTS`.
 
         ---
 
@@ -189,6 +219,13 @@ nodes:
 
       **Resolved intent from the clarify phase**:
       $clarify.output
+
+      > ⚠ The block above is the ONLY intent you receive — you do NOT see
+      > `$ARGUMENTS` or earlier clarify iterations. If it does not contain a
+      > "Resolved intent for plannotator" / "Ready for plannotator" block with
+      > In scope / Out of scope / Key decisions, STOP and print
+      > "CLARIFY→PLAN HANDOFF BROKEN: $clarify.output did not restate the intent."
+      > Do NOT fall back to guessing the original request.
 
       ---
 
