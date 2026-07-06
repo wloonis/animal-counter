@@ -209,13 +209,15 @@ archon workflow abandon <run-id>                      # cancel
 archon isolation list                                 # worktrees
 archon isolation cleanup --merged                     # remove merged worktrees
 archon complete <branch>                              # remove worktree + branches
-archon serve                                          # web UI (port 3090)
 archon validate workflows <name>                      # validate a workflow def
 archon doctor                                         # verify setup
 ```
 
 Plannotator (plan review): `http://127.0.0.1:19432` (only while a plan is
-pending). Archon web UI: `http://127.0.0.1:3090` (`archon serve`).
+pending). NOTE: `archon serve` (web UI, port 3090) is **not available** in this
+environment — it requires a compiled Archon binary, and this machine runs the
+source/bun install (`bun /home/tt/.bun/bin/archon`). Run interaction is via the
+CLI above (what the relay agent uses) and plannotator for plan review.
 
 ---
 
