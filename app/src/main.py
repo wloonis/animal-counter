@@ -33,6 +33,11 @@ from utils.timer_fps import TimerFps
 # OCR second-chance association can re-bind a briefly-occluded pig to its
 # original ID instead of spawning a new one.
 from trackers import OCSORTTracker
+from trackers.utils.iou import IoU, GIoU, DIoU, CIoU, BIoU
+
+# Map the COUNTING_TRACKER_IOU setting (string) to a BaseIoU instance for
+# OCSORTTracker(iou=...). trackers>=2.5.0 expects an IoU instance, not a string.
+_IOU_METRICS = {"iou": IoU, "giou": GIoU, "diou": DIoU, "ciou": CIoU, "biou": BIoU}
 from supervision import Detections
 
 
@@ -511,6 +516,7 @@ def start(input_source, video_path):
                 direction_consistency_weight=settings.TRACKER_DIRECTION_CONSISTENCY_WEIGHT,
                 high_conf_det_threshold=settings.TRACKER_HIGH_CONF_THRESHOLD,
                 delta_t=settings.TRACKER_DELTA_T,
+                iou=_IOU_METRICS.get(settings.COUNTING_TRACKER_IOU.lower(), IoU)(),
             )            
 
             tracking = Tracking(draw_box=shared_state.draw_tracking, shared_state=shared_state)

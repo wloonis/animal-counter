@@ -101,9 +101,39 @@ OC-SORT (`OCSORTTracker`) is configured via `settings.py`:
 | `TRACKER_DIRECTION_CONSISTENCY_WEIGHT` | 0.25 | direction-consistency term weight (OCM). |
 | `TRACKER_DELTA_T` | 3 | velocity-direction temporal window (OCM). |
 | `TRACKER_FRAME_RATE` | 30.0 | used to scale the lost buffer into a time value. |
+| `COUNTING_TRACKER_IOU` | `giou` | association similarity function (trackers ≥ 2.5.0, `iou=` kwarg). `giou` = Generalized IoU, activated to target occlusions/ID-switch at the line; score range `[-1,1]` so `TRACKER_MIN_IOU_THRESHOLD` may need re-tuning. `iou` = standard IoU = identical pre-2.5.0 behavior; safe revert target. See [`04_configuration.md`](04_configuration.md#giou-association-counting_tracker_iou). |
 
 IDs with `tracker_id == -1` (no track associated by OC-SORT) are filtered out
 before counting.
+
+### 4.1 `trackers` 2.5.0 upgrade & pluggable IoU
+
+The library was bumped from 2.4.0 to **2.5.0**. The relevant change is the
+pluggable `iou=` association function: **GIoU is activated by default**
+(`COUNTING_TRACKER_IOU=giou`) to measure whether it reduces ID-switch on the
+4 ID-switch-prone priority validation videos. GIoU's score range is `[-1,1]` ≠
+`[0,1]` (standard IoU), so `TRACKER_MIN_IOU_THRESHOLD` may need re-tuning and
+re-validation (4/4 strict). **`iou`** (standard IoU) is the safe revert target
+— it reproduces the pre-2.5.0 association behavior exactly.
+
+The upgrade also ships free robustness fixes (independent of `iou=`):
+per-instance tracker IDs, NaN/inf coordinate handling, and a `py.typed`
+marker (PEP 561) for future type-hint work (BL-32).
+
+> **OCR OC-SORT caveat**: the library's OCR (2nd-chance) path always uses
+> standard IoU regardless of `iou=`. We use `OCSORTTracker`, not OCR, so this
+> is informational only.
+
+### 4.2 Why 2.5.0 does not simplify `counting.py`
+
+The anti-ID-switch guards in [`counting.py`](#5-advanced-counting-techniques-anti-id-switch-guards)
+— REID-SUPPRESS, bidirectional ID-switch recovery, `GUARD_MAX_AGE`,
+`lost_tracks` cleanup, resurrection, and the mirror guard — are **business
+line-crossing logic**: they reason about which side of the counting line a
+track is on, when it crossed, and whether a re-ID double-counts. The `trackers`
+library implements **track association**, not line-crossing semantics, so it
+has no equivalent of these guards. **2.5.0 cannot épurer `counting.py`.**
+(The dead `process_for_tracking` code was already removed in BL-13.)
 
 ## 5. Advanced counting techniques (anti-ID-switch guards)
 

@@ -107,6 +107,19 @@ class Settings:
         self.TRACKER_HIGH_CONF_THRESHOLD = float(os.getenv("TRACKER_HIGH_CONF_THRESHOLD", 0.6))
         # delta_t: temporal window for velocity-direction estimation (OCM).
         self.TRACKER_DELTA_T = int(os.getenv("TRACKER_DELTA_T", 3))
+        # iou: association similarity function passed to OCSORTTracker (trackers
+        #   >= 2.5.0, pluggable via the iou= kwarg).
+        #   "giou" = Generalized IoU. ACTIVATED by default to target the ID-switch
+        #     problem: GIoU rewards geometric overlap AND penalizes non-overlapping
+        #     boxes, which helps keep a pig's ID through partial occlusions at the
+        #     counting line (our primary defect cause). Score range [-1, 1].
+        #     NOTE: [-1,1] != [0,1] (standard IoU), so TRACKER_MIN_IOU_THRESHOLD
+        #     (0.3) may need re-tuning on the GIoU scale; if validation regresses,
+        #     lower it toward 0.2-0.3 and re-validate (see docs/04_configuration.md).
+        #   "iou" = standard IoU. IDENTICAL to the pre-2.5.0 (2.4.0) association
+        #     behavior; the safe revert target if GIoU regresses on this dataset.
+        #   (Other variants: ciou/diou/eiou - not evaluated for this use case.)
+        self.COUNTING_TRACKER_IOU = os.getenv("COUNTING_TRACKER_IOU", "giou")
         ### OC-SORT Tracker tuning - End
 
         ### Counting ID-switch recovery guard - Start
