@@ -4,6 +4,7 @@ SharedState module for the pig counting application.
 This module provides a shared state object to replace global variables.
 """
 
+import os
 import datetime
 from queue import Queue
 from threading import Event
@@ -35,7 +36,10 @@ class SharedState:
         self.infer_thread = None
         self.display_thread = None
         self.delay_reinit = datetime.datetime.now()
-        self.delay_last_class = 180
+        # No-detection timeout (s): single source of truth for recording stop
+        # (DisplayThread) and cronvideo compression trim. Env-configurable so the
+        # app and the cron pod (Ansible var) can share one configured value.
+        self.delay_last_class = int(os.getenv("DELAY_LAST_CLASS", 180))
         self.trails = {}
         ### MODIFICATION: Learning Mode - Start
         self.learning_mode = False
