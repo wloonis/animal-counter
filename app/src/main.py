@@ -252,7 +252,6 @@ class DisplayThread(threading.Thread):
         counter = 0
         avg_t = 0.0
         sum_t = 0.0
-        delay_last_class = 120
 
         last_capture_time = time.time()
 
