@@ -32,19 +32,42 @@ spec:
             while true; do
               echo "=== Début cycle compression ==="
 
+              # Trim tail (no-detection queue) from the compressed archive.
+              # TRIM_TAIL is templated from the shared delay_last_class var (default 180 s),
+              # the same value the app uses to stop recording — single source of truth.
+              TRIM_TAIL={{ delay_last_class | default(180) }}
+
               for f in /videos/tocompress-*; do
                 [ -e "$f" ] || continue
 
                 out="/videos/$(basename "$f" | sed 's/^tocompress-//')"
 
-                ffmpeg -y -i "$f" \
-                  -vf "scale=640:-2" \
-                  -c:v libx264 \
-                  -preset ultrafast \
-                  -crf 23 \
-                  -c:a aac \
-                  -b:a 64k \
-                  "$out"
+                # Compute input duration; trim the last TRIM_TAIL seconds.
+                DUR=$(ffprobe -v error -show_entries format=duration -of csv=p=0 "$f")
+
+                if [ -z "$DUR" ] || ! awk "BEGIN{ exit !($DUR > $TRIM_TAIL) }"; then
+                  # Short or unreadable clip: keep the whole file, skip -t.
+                  echo "WARN: trim skipped for $f (DUR=${DUR:-empty}, TRIM_TAIL=$TRIM_TAIL)"
+                  ffmpeg -y -i "$f" \
+                    -vf "scale=640:-2" \
+                    -c:v libx264 \
+                    -preset ultrafast \
+                    -crf 23 \
+                    -c:a aac \
+                    -b:a 64k \
+                    "$out"
+                else
+                  KEEP=$(awk "BEGIN{ print ($DUR) - $TRIM_TAIL }")
+                  echo "Compress+trim $f: DUR=$DUR TRIM_TAIL=$TRIM_TAIL KEEP=$KEEP"
+                  ffmpeg -y -i "$f" -t "$KEEP" \
+                    -vf "scale=640:-2" \
+                    -c:v libx264 \
+                    -preset ultrafast \
+                    -crf 23 \
+                    -c:a aac \
+                    -b:a 64k \
+                    "$out"
+                fi
 
                 rm -f "$f"
               done
