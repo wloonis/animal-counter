@@ -170,6 +170,14 @@ starts a review web server when the planner calls `plannotator_submit_plan`.
 - The user approves/denies in the browser. On approve → planner prints
   `PLAN APPROVED — handing off to implement node.` and the run continues to
   `verify-plan → implement`. On deny → planner revises `PLAN.md` and resubmits.
+- **The relay MUST NOT click Approve/Deny in the plannotator UI on the user's
+  behalf.** Plan approval is exclusively the user's action via the browser. The
+  relay only surfaces the review URL and tells the user to decide. (A relay may
+  *add a comment / send feedback* to request a revision, but the final
+  Approve/Deny is the user's.)
+- On approval, the `verify-plan` node auto-archives the final approved
+  `PLAN.md` to the **main repo's `plans/PR_<slug>.md`** (slug derived from the
+  plan title). No relay action needed.
 
 ### 4.5 Full relay loop (end-to-end)
 
@@ -181,7 +189,10 @@ starts a review web server when the planner calls `plannotator_submit_plan`.
 4. **PLAN phase** → detect `PLANNOTO.md` beacon (`PLAN_REVIEW_PENDING`) / port
    19432 listening → tell the user: **"Open http://127.0.0.1:19432 to review and
    approve/deny the plan."** Wait for their decision in the browser (the run
-   stays `running`).
+   stays `running`). **Do NOT approve/deny for them** — plan approval is the
+   user's gate; the relay only surfaces the URL (optionally adds feedback
+   comments, never the final Approve/Deny). On approval the run moves to
+   `verify-plan`, which auto-archives the plan to `plans/PR_<slug>.md`.
 5. **implement** → autonomous; report progress from commits/events.
 6. **jetson-validate**:
    - `PASS` → report success, run proceeds to finalize.

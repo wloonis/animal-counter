@@ -274,6 +274,12 @@ nodes:
       Print exactly: `PLAN APPROVED — handing off to implement node.`
       Exit. Do NOT start implementing.
 
+      > Plan approval is a **HUMAN gate**. Only the user approves/denies via
+      > the plannotator browser UI at 127.0.0.1:19432. You (the planner) and the
+      > relay agent NEVER approve the plan — you only WAIT for the user's
+      > decision. The relay must surface the URL and tell the user to
+      > approve/deny; it must NOT click Approve/Deny on the user's behalf.
+
       ### Denied with feedback
       Use the edit tool on `PLAN.md` to address the feedback, then call
       `plannotator_submit_plan` again. Repeat until approved.
@@ -303,6 +309,12 @@ nodes:
       - Do NOT call bash, agent_browser, cron_create, or any tool that
         inspects, modifies, or executes source code.
       - After approval, do NOT start implementing.
+      - **Plan approval is a HUMAN gate.** Only the user approves/denies via
+        the plannotator browser. Never auto-approve; the relay must never
+        approve/deny on the user's behalf — only surface the review URL.
+      - Once the user approves, the approved PLAN.md is auto-archived to the
+        main repo's `plans/PR_<slug>.md` by the downstream `verify-plan` node
+        (no action needed from you).
 
   # ═══════════════════════════════════════════════════════════════
   # PHASE 2b: VERIFY — Sanity check the approved plan landed on disk
@@ -323,6 +335,20 @@ nodes:
       task_count=$(grep -cE '^- \[.\]' PLAN.md)
       echo "PASS: PLAN.md has $task_count task(s)"
       cp PLAN.md "$ARTIFACTS_DIR/PLAN.md"
+
+      # Archive the APPROVED plan into the main repo's plans/ dir as PR_<slug>.md.
+      # The plan is only approved at this point (plannotator-plan exits solely on
+      # user approval), so PLAN.md is the final, user-validated version.
+      MAIN=$(git worktree list --porcelain | awk '/^worktree /{print $2; exit}')
+      mkdir -p "$MAIN/plans"
+      TITLE=$(grep -m1 '^# Plan:' PLAN.md | sed 's/^# Plan:[[:space:]]*//')
+      SLUG=$(printf '%s' "$TITLE" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9\n' ' ' | tr -s ' \n' '-' | sed 's/^-//; s/-$//')
+      [ -z "$SLUG" ] && SLUG="plan"
+      SLUG=$(printf '%s' "$SLUG" | cut -c1-60 | sed 's/-$//')
+      OUT="$MAIN/plans/PR_${SLUG}.md"
+      [ -e "$OUT" ] && OUT="$MAIN/plans/PR_${SLUG}-$(git rev-parse --short HEAD).md"
+      cp PLAN.md "$OUT"
+      echo "ARCHIVED approved plan -> $OUT"
 
   # ═══════════════════════════════════════════════════════════════
   # PHASE 3: IMPLEMENT — Task-by-task loop against PLAN.md
