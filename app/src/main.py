@@ -60,6 +60,16 @@ def stop():
 
     shared_state.stop_event.set()
 
+    # Finalize the mp4 before joining display_thread: on a K3s SIGTERM the
+    # 5s join may time out and the thread can be killed mid-write, leaving
+    # the file without a moov atom (unreadable). Releasing here flushes/
+    # finalizes the writer even if the join times out. Safe to release while
+    # the loop is still running — it gates writes on shared_state.recording /
+    # stop_event and the 'is not None' guards short-circuit once we null it.
+    if shared_state.display_thread is not None and shared_state.display_thread.video_writer is not None:
+        shared_state.display_thread.video_writer.release()
+        shared_state.display_thread.video_writer = None
+
     if shared_state.infer_thread and shared_state.infer_thread.is_alive():
         shared_state.infer_thread.join(timeout=5)
 
