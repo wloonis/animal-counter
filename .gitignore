@@ -97,6 +97,9 @@ datasets/
 .pi-loop.json
 .pi-loop.json.lock
 
+# Docker image saves (offline transfer — ~20 Go tar, never commit)
+save/
+
 # Local backups / temp saves (never commit)
 *.sav
 
