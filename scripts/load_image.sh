@@ -150,6 +150,20 @@ fi
 echo "✅ Image verified on target:"
 echo "   $IMAGE_CHECK"
 
+# ─── 8b. Prune old dangling image (reclaim disk) ────────────────────────────
+# docker load moved the :local tag to the new image; the OLD image is now
+# untagged (dangling) and still consumes ~20 GB. Remove dangling images so the
+# target does not fill up /data (old + new + tar ≈ 60 GB at peak).
+echo "🧹 Pruning old dangling images (reclaim disk)..."
+PRUNE_OUT=$($SSH_CMD "echo '$JETSON_PASSWORD' | sudo -S docker image prune -f" 2>/dev/null) || {
+  echo "⚠️  Warning: docker image prune failed (non-fatal) — old image may still occupy space"
+}
+echo "   $PRUNE_OUT"
+
+# Capture the image ID now tagged :local (the one we just loaded).
+LOADED_IMAGE_ID=$($SSH_CMD "echo '$JETSON_PASSWORD' | sudo -S docker image inspect ${IMAGE_NAME}:${IMAGE_TAG} --format '{{.Id}}'" 2>/dev/null)
+echo "🏷️  ${IMAGE_NAME}:${IMAGE_TAG} -> $LOADED_IMAGE_ID"
+
 # ─── 9. Restart countingapp pod ─────────────────────────────────────────────
 echo "🔄 Restarting countingapp DaemonSet (rollout restart)..."
 $SSH_CMD "echo '$JETSON_PASSWORD' | sudo -S k3s kubectl rollout restart daemonset countingapp -n $APP_NAMESPACE" || {
@@ -158,16 +172,61 @@ $SSH_CMD "echo '$JETSON_PASSWORD' | sudo -S k3s kubectl rollout restart daemonse
   exit 1
 }
 
-echo "⏳ Waiting 10s for pod to restart..."
-sleep 10
-
-# ─── 10. Verify pod is running ──────────────────────────────────────────────
-echo "🔍 Checking pod status..."
-$SSH_CMD "echo '$JETSON_PASSWORD' | sudo -S k3s kubectl get pods -n $APP_NAMESPACE" || {
-  echo "⚠️  Could not retrieve pod status — check manually:"
-  echo "   ssh $JETSON_USER@$TARGET_IP 'sudo k3s kubectl get pods -n $APP_NAMESPACE'"
+# ─── 10. Verify pod is Running on the NEW image ─────────────────────────────
+# Guard: if the DaemonSet schedules 0 pods (e.g. a leftover nodeSelector like
+# validate-paused=true from an interrupted validation), rollout restart will
+# NOT bring a pod back — fail fast with an actionable message instead of a
+# silent 60s timeout.
+DESIRED=$($SSH_CMD "echo '$JETSON_PASSWORD' | sudo -S k3s kubectl get daemonset countingapp -n $APP_NAMESPACE -o jsonpath='{.status.desiredNumberScheduled}'" 2>/dev/null)
+if [ -z "$DESIRED" ] || [ "$DESIRED" = "0" ]; then
+  echo "❌ Error: countingapp DaemonSet has DESIRED=0 pods on $TARGET_IP"
+  echo "   rollout restart cannot schedule a pod. Likely a leftover nodeSelector"
+  echo "   (e.g. validate-paused=true from an interrupted validation). Inspect:"
+  echo "     ssh $JETSON_USER@$TARGET_IP 'sudo k3s kubectl get daemonset countingapp -n $APP_NAMESPACE -o jsonpath=\"{.spec.template.spec.nodeSelector}\"'"
+  echo "   Remove it, e.g.:"
+  echo "     sudo k3s kubectl patch daemonset countingapp -n $APP_NAMESPACE --type=json -p='[{\"op\":\"remove\",\"path\":\"/spec/template/spec/nodeSelector/validate-paused\"}]'"
   exit 1
-}
+fi
+
+echo "⏳ Waiting for the countingapp pod to be Running (up to 60s)..."
+POD_RUNNING=false
+POD_NAME=""
+POD_IMAGE_ID=""
+for _ in $(seq 1 12); do
+  sleep 5
+  POD_NAME=$($SSH_CMD "echo '$JETSON_PASSWORD' | sudo -S k3s kubectl -n $APP_NAMESPACE get pod -l app=countingapp -o jsonpath='{.items[0].metadata.name}'" 2>/dev/null)
+  if [ -n "$POD_NAME" ]; then
+    POD_PHASE=$($SSH_CMD "echo '$JETSON_PASSWORD' | sudo -S k3s kubectl -n $APP_NAMESPACE get pod $POD_NAME -o jsonpath='{.status.phase}'" 2>/dev/null)
+    if [ "$POD_PHASE" = "Running" ]; then
+      POD_RUNNING=true
+      POD_IMAGE_ID=$($SSH_CMD "echo '$JETSON_PASSWORD' | sudo -S k3s kubectl -n $APP_NAMESPACE get pod $POD_NAME -o jsonpath='{.status.containerStatuses[0].imageID}'" 2>/dev/null)
+      break
+    fi
+  fi
+done
+
+if [ "$POD_RUNNING" != "true" ]; then
+  echo "❌ Error: countingapp pod did not reach Running within 60s on $TARGET_IP"
+  echo "   Inspect: ssh $JETSON_USER@$TARGET_IP 'sudo k3s kubectl -n $APP_NAMESPACE get pods -l app=countingapp'"
+  exit 1
+fi
+echo "✅ Pod Running: $POD_NAME"
+
+# Compare the pod's running image ID with the :local image ID just loaded.
+# kubectl reports imageID as "docker-pullable://countingapp@sha256:<id>";
+# docker inspect returns "sha256:<id>". Normalize both to "sha256:<id>".
+POD_SHA=$(echo "$POD_IMAGE_ID" | sed 's/.*sha256:/sha256:/')
+LOCAL_SHA=$(echo "$LOADED_IMAGE_ID" | sed 's/^sha256:/sha256:/')
+echo "🔍 Pod imageID: $POD_IMAGE_ID"
+if [ "$POD_SHA" != "$LOCAL_SHA" ]; then
+  echo "❌ Error: pod image ID ($POD_SHA) != loaded ${IMAGE_NAME}:${IMAGE_TAG} ID ($LOCAL_SHA)"
+  echo "   The pod is NOT running the newly loaded image."
+  exit 1
+fi
+echo "✅ Pod is running the newly loaded image (ID match)"
+
+echo "📋 Pod status:"
+$SSH_CMD "echo '$JETSON_PASSWORD' | sudo -S k3s kubectl -n $APP_NAMESPACE get pods -l app=countingapp" || true
 
 # ─── 11. Optional cleanup ───────────────────────────────────────────────────
 if [ "$CLEANUP" = true ]; then
