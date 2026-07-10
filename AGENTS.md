@@ -320,4 +320,9 @@ CLI above (what the relay agent uses) and plannotator for plan review.
   exclude, the `--delete` rsync fails with rc=23 (permission denied).
 - Jetson: Orin Nano 8GB "Super", IP `192.168.0.180`, user `nano-counter`,
   password from `.env.local` (`JETSON_PASSWORD`). App path on Jetson:
-  `/data/orin/git/animal-counter/app`; files: `/data/orin/files/`.
+  `/data/orin/git/animal-counting/app` (`APP_PATH`); rendered k3s manifests:
+  `/data/orin/git/animal-counting/k3s/` (`K3S_APP_PATH`, applied via explicit
+  `k3s kubectl apply -f`, NOT the k3s auto-apply dir — a reboot does NOT
+  re-apply them); files (videos): `/data/orin/files/` (`FILES_PATH`);
+  Docker: `/data/orin/docker/` (`DOCKER_PATH`). Note the on-Jetson dir is
+  `animal-counting`, not `animal-counter` (the repo name).
