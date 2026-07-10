@@ -37,6 +37,10 @@ spec:
               # the same value the app uses to stop recording — single source of truth.
               TRIM_TAIL={{ delay_last_class | default(180) }}
 
+              # Total-size budget (GB) for /videos. The guard below deletes
+              # oldest count* files until usage drops below this value.
+              VIDEO_BUDGET_GB={{ video_budget_gb | default(40) }}
+
               for f in /videos/tocompress-*; do
                 [ -e "$f" ] || continue
 
@@ -73,10 +77,27 @@ spec:
               done
 
               cd /videos
-              ls -t count* 2>/dev/null | awk 'NR>50' | xargs -r rm -f
+              ls -t count* 2>/dev/null | awk 'NR>30' | xargs -r rm -f
               # Restreint aux .mp4 uniquement (avant: find . -type f -size +2G supprimait
               # tout fichier >2 Go, y compris un dataset/modèle éventuel dans /videos).
               find . -maxdepth 1 -type f -name '*.mp4' -size +2G -delete
+
+              # --- Total-size guard (issue #43 P1) ---
+              # Absolute backstop: delete oldest count* (compressed outputs) by mtime
+              # until total /videos usage drops below VIDEO_BUDGET_GB.
+              # Deletes ONLY count* files — NEVER tocompress-* or any input.
+              # Edge case: if tocompress-* alone exceeds the budget, the guard
+              # cannot reduce those (it would delete inputs); a warning is logged.
+              BUDGET_MB=$((VIDEO_BUDGET_GB * 1024))
+              while [ "$(du -sm /videos | awk '{print $1}')" -gt "$BUDGET_MB" ]; do
+                OLDEST=$(ls -t count* 2>/dev/null | tail -1)
+                if [ -z "$OLDEST" ]; then
+                  echo "WARN: /videos exceeds budget (${VIDEO_BUDGET_GB} GB) but no count* files left to delete — tocompress-* or other files may be the cause"
+                  break
+                fi
+                echo "Budget guard: deleting oldest $OLDEST"
+                rm -f "$OLDEST"
+              done
 
               echo "=== Fin cycle, pause 10 min ==="
               sleep 600
