@@ -183,6 +183,11 @@
         - "kube-reserved=cpu=500m,memory=1Gi"
         - "system-reserved=cpu=500m,memory=512Mi"
         - "eviction-hard=memory.available<200Mi,nodefs.available<5%"
+        # Explicit container log rotation — bounds /var/log/containers and
+        # /var/log/pods growth. These match kubelet defaults (10Mi x 5 = 50MB
+        # per container) but make the bound contractual across versions.
+        - "container-log-max-files=5"
+        - "container-log-max-size=10Mi"
 
       # Node labels for GPU workload targeting
       node-label:
