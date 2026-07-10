@@ -256,13 +256,26 @@ CLI above (what the relay agent uses) and plannotator for plan review.
 - Keep **OC-SORT** (not BoT-SORT/Norfair). Camera is fixed (no CMC).
 - FPS_OUTPUT=30. Pigs counted right→left (crossed LEFT = +1, crossed RIGHT = -1).
 - `.env` / `.env.local` are gitignored; defaults live in `app/src/settings.py`.
+- Git push / PR (phase `finalize`): the GitHub repo is
+  `https://github.com/wloonis/animal-counter.git` (private). Auth token is read
+  from `.env.local` (key `GITHUB_TOKEN`). `.env.local` is gitignored — never
+  commit its value; reference only the key name in tracked files.
+- GitHub issues use the `BL-<n> — <title>` naming convention (e.g.
+  `BL-57 — <title>`). Always increment from the highest existing `BL-<n>`
+  (`gh issue list --state all` to check); never use `P1`/`P2`/etc. prefixes.
 - Hysteresis H=0 (H=25 regressed video #18 — abandoned).
 - Guard params: `COUNTING_LOST_BUFFER_FRAMES=60` (global expiration) vs
   `COUNTING_GUARD_MAX_AGE=15` (guard eligibility) — keep decoupled.
-- Validation: `scripts/validate_on_jetson.sh --full` → `validation-report.json`
-  with `validation_status`. The 4 priority videos are in
-  `validation/expected_counts.json` under `.videos`; the rest are in `.disabled`.
-- Do NOT relaunch validation on all 30 videos — only the priority set.
+- Validation: `scripts/validate_on_jetson.sh` → `validation-report.json`
+  with `validation_status`. Two modes: **standard** (default, no flag) validates
+  only the reference video from `validation/config.json`; **`--full`** validates
+  the manifest in `validation/expected_counts.json` (the 4 priority videos under
+  `.videos`; the rest are in `.disabled`). **Run standard by default; use `--full`
+  ONLY when the branch touches counting code** (`app/src/counting.py`,
+  `app/src/main.py` tracking/counting logic, `app/src/core/*`, tracker/guard
+  params). k3s/ansible/docs/UI/infra-only changes → standard.
+- Do NOT relaunch validation on all 30 videos — only the priority set (and only
+  in `--full` mode; standard uses the single reference video).
 - Real K3s manifests are `k3s/templates/*.j2` (Ansible). `hostPath /app` is
   intentional (live code mount for rsync + hot restart) — do not "fix" it.
 - **Docker image rebuild is required for dependency changes.** `app/Dockerfile`

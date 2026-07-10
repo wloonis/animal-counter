@@ -518,8 +518,26 @@ nodes:
 
         ## Step 1: Run validation
 
+        Choose the validation mode based on what this branch changes:
+        - **Standard** (default, no flag) — validates only the reference video
+          from `validation/config.json`. Use this when the branch does NOT touch
+          the counting pipeline (e.g. k3s/ansible/docs/UI/infra-only changes).
+        - **Full** (`--full`) — validates the full manifest in
+          `validation/expected_counts.json`. Use this ONLY when the branch
+          touches counting code: `app/src/counting.py`, `app/src/main.py`
+          (tracking/counting/display-thread logic), `app/src/core/*`, tracker
+          config / guard params, or anything in the counting pipeline.
+
+        Pick the mode, then run:
+
         ```bash
-        bash scripts/validate_on_jetson.sh --full 2>&1
+        # Full mode ONLY when this branch touches the counting pipeline.
+        if [ -n "$(git diff --name-only main...HEAD -- app/src/counting.py app/src/main.py app/src/core/ app/src/settings.py)" ]; then
+          MODE="--full"
+        else
+          MODE=""
+        fi
+        bash scripts/validate_on_jetson.sh $MODE 2>&1
         ```
 
         ## Step 2: Read the report
