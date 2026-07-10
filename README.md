@@ -11,6 +11,11 @@ stops after ~2 minutes with no detection. It is operated daily: powered on in
 the morning (counter starts at 0), used through the day across several
 animal-moving iterations, and powered off (hard power cut) in the evening.
 
+<p align="center">
+  <img src="app/video/frame_count.jpg" alt="Pig counting in action: fixed camera, yellow vertical counting line, and the live net bidirectional counter overlay" width="640">
+</p>
+<p align="center"><em>The app in action — YOLO/TensorRT detections, OC-SORT tracks, the yellow counting line, and the live net counter (+1 right→left, −1 left→right).</em></p>
+
 > **Status:** counting logic validated on 30 reference videos (4/4 priority
 > defect videos pass, REID-SUPPRESS regression guard confirmed). See
 > [`docs/06_validation.md`](docs/06_validation.md).
