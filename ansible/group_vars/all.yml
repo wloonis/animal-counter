@@ -19,6 +19,10 @@ ssh_config:
   password: "{{ lookup('env', 'JETSON_PASSWORD') | default(omit) }}"
   port: 22
 
+# No-detection timeout (s): single source of truth for recording stop (app)
+# and cronvideo compression trim (cron pod). Templated into cronvideo-dep.j2 as TRIM_TAIL.
+delay_last_class: "{{ lookup('env', 'DELAY_LAST_CLASS') | default(180) }}"
+
 # Application Configuration
 app_config:
   namespace: "{{ lookup('env', 'APP_NAMESPACE') | default('countingapp-dev') }}"
