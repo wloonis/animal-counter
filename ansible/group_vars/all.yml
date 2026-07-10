@@ -23,6 +23,11 @@ ssh_config:
 # and cronvideo compression trim (cron pod). Templated into cronvideo-dep.j2 as TRIM_TAIL.
 delay_last_class: "{{ lookup('env', 'DELAY_LAST_CLASS') | default(180) }}"
 
+# Total-size budget (GB) for /videos. Templated into cronvideo-dep.j2 as VIDEO_BUDGET_GB.
+# The cronvideo pod's total-size guard deletes oldest count* files until /videos
+# usage drops below this budget. Env-overridable for testing different budgets.
+video_budget_gb: "{{ lookup('env', 'VIDEO_BUDGET_GB') | default(40) }}"
+
 # Application Configuration
 app_config:
   namespace: "{{ lookup('env', 'APP_NAMESPACE') | default('countingapp-dev') }}"
