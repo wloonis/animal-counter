@@ -102,7 +102,9 @@ SSH_OPTS="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
 SSH_CMD="sshpass -p $JETSON_PASSWORD ssh $SSH_OPTS $JETSON_USER@$TARGET_IP"
 
 echo "📁 Creating remote backup directory ($REMOTE_SAVE_DIR)..."
-$SSH_CMD "mkdir -p $REMOTE_SAVE_DIR" || {
+# /data/orin/ is root-owned on the Jetson — create the dir via sudo, then
+# chown it to JETSON_USER so the (non-sudo) rsync in step 6 can write into it.
+$SSH_CMD "echo '$JETSON_PASSWORD' | sudo -S sh -c 'mkdir -p $REMOTE_SAVE_DIR && chown $JETSON_USER:$JETSON_USER $REMOTE_SAVE_DIR'" || {
   echo "❌ Error: could not create $REMOTE_SAVE_DIR on $TARGET_IP"
   echo "   Check SSH connectivity to $JETSON_USER@$TARGET_IP"
   exit 1
