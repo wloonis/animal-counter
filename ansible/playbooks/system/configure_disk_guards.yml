@@ -1,0 +1,110 @@
+---
+# configure_disk_guards.yml — Bound non-video disk consumers that could cause
+# saturation in 24/7 operation (issue #43 P1).
+#
+# Two guards:
+#   1. Journald: systemd journald was completely unconfigured on the Jetson.
+#      Without an explicit SystemMaxUse, persistent journal storage can grow
+#      to ~10% of the filesystem (~11 GB on a 116 GB disk). This drop-in
+#      bounds it to 200 MB with Storage=persistent.
+#   2. Docker builder prune timer: a systemd timer fires `docker builder prune
+#      -af` weekly on a MONOTONIC schedule (OnUnitInactiveSec=7d), not
+#      OnCalendar, because the Jetson is offline and does not reliably
+#      maintain wall-clock date/time.
+#
+# Note: kubelet container-log rotation (container-log-max-files=5,
+# container-log-max-size=10Mi) is configured in install_k3s_with_docker_tasks.yml
+# as part of the k3s registration config, not here.
+#
+# Docker container log rotation (/etc/docker/daemon.json: max-size=100m,
+# max-file=3 = 300 MB/container) is already bounded and needs no change.
+
+- name: Configure disk saturation guards (journald + Docker prune timer)
+  hosts: all
+  become: true
+  gather_facts: yes
+
+  tasks:
+    # -----------------------------------------------------------------------
+    # 1. Journald bound — prevent unbounded /var/log/journal growth
+    # -----------------------------------------------------------------------
+    - name: Create journald config drop-in directory
+      file:
+        path: /etc/systemd/journald.conf.d
+        state: directory
+        mode: '0755'
+      tags: journald
+
+    - name: Install journald disk-usage bound
+      copy:
+        dest: /etc/systemd/journald.conf.d/countingapp.conf
+        owner: root
+        group: root
+        mode: '0644'
+        content: |
+          [Journal]
+          # Persistent storage ensures logs survive reboots.
+          Storage=persistent
+          # Bound total journal disk usage to 200 MB on this 116 GB disk.
+          # Journald vacuums oldest entries when the limit is reached.
+          SystemMaxUse=200M
+      tags: journald
+
+    - name: Restart systemd-journald to apply config
+      service:
+        name: systemd-journald
+        state: restarted
+      tags: journald
+
+    # -----------------------------------------------------------------------
+    # 2. Docker builder prune timer — weekly, monotonic schedule
+    #    Uses OnUnitInactiveSec=7d (not OnCalendar) because the Jetson is
+    #    offline and does not maintain reliable wall-clock date/time.
+    #    The timer measures from the last time the unit was active, so it
+    #    is independent of the system clock.
+    # -----------------------------------------------------------------------
+    - name: Install docker-builder-prune.service
+      copy:
+        dest: /etc/systemd/system/docker-builder-prune.service
+        owner: root
+        group: root
+        mode: '0644'
+        content: |
+          [Unit]
+          Description=Prune all Docker builder cache (issue #43 P1)
+          After=docker.service
+          Requires=docker.service
+
+          [Service]
+          Type=oneshot
+          ExecStart=/usr/bin/docker builder prune -af
+      tags: prune-timer
+
+    - name: Install docker-builder-prune.timer
+      copy:
+        dest: /etc/systemd/system/docker-builder-prune.timer
+        owner: root
+        group: root
+        mode: '0644'
+        content: |
+          [Unit]
+          Description=Weekly Docker builder cache prune (monotonic schedule)
+
+          [Timer]
+          # Monotonic schedule: fires 7 days after the unit was last inactive.
+          # NOT OnCalendar — the Jetson is offline with unreliable wall-clock time.
+          OnUnitInactiveSec=7d
+          Persistent=false
+          Unit=docker-builder-prune.service
+
+          [Install]
+          WantedBy=timers.target
+      tags: prune-timer
+
+    - name: Enable and start docker-builder-prune.timer
+      systemd:
+        name: docker-builder-prune.timer
+        enabled: yes
+        state: started
+        daemon_reload: yes
+      tags: prune-timer
