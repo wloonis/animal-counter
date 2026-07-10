@@ -62,13 +62,13 @@ def stop():
 
     # Finalize the mp4 before joining display_thread: on a K3s SIGTERM the
     # 5s join may time out and the thread can be killed mid-write, leaving
-    # the file without a moov atom (unreadable). Releasing here flushes/
-    # finalizes the writer even if the join times out. Safe to release while
-    # the loop is still running — it gates writes on shared_state.recording /
-    # stop_event and the 'is not None' guards short-circuit once we null it.
-    if shared_state.display_thread is not None and shared_state.display_thread.video_writer is not None:
-        shared_state.display_thread.video_writer.release()
-        shared_state.display_thread.video_writer = None
+    # the file without a moov atom (unreadable). _finalize_recording releases
+    # the writer (flushing the moov atom) AND renames tmp-counting to
+    # tocompress-counting, even if the join times out. The idempotent guard
+    # inside _finalize_recording makes this a no-op if the loop already
+    # finalized (writer is None).
+    if shared_state.display_thread is not None:
+        shared_state.display_thread._finalize_recording()
 
     if shared_state.infer_thread and shared_state.infer_thread.is_alive():
         shared_state.infer_thread.join(timeout=5)
@@ -239,6 +239,29 @@ class DisplayThread(threading.Thread):
         self.x_offset = self.y_offset = 30
         self.stop_event = stop_event
 
+    def _finalize_recording(self):
+        """Release the video writer and rename tmp-counting to tocompress-counting.
+
+        Idempotent: safe to call multiple times (in-loop, post-loop, stop()).
+        The guard (writer is None / not isOpened / not recording) ensures no
+        double-release or double-rename.
+        """
+        if self.video_writer is None or not self.video_writer.isOpened() or not shared_state.recording:
+            return
+        self.video_writer.release()
+        self.video_writer = None
+        output_path = os.path.join(settings.OUTPUT_VIDEO_PATH, f"tocompress-counting-{time.strftime('%Y%m%d-%H%M%S')}-#{shared_state.counter_to_right}.mp4")
+        try:
+            os.rename(self.filename, output_path)
+        except OSError as e:
+            logger.warning(f"Failed to rename {self.filename} -> {output_path}: {e}")
+            return
+        if shared_state.status == 1:
+            shared_state.status = 0
+        shared_state.recording = False
+        shared_state.reset = False
+        logger.info(f"------->Record Stop; Value Status: {shared_state.status}: Store:{output_path}")
+
     def mouse_click(self, event, x, y, flags, param):
         if event == cv2.EVENT_LBUTTONUP:
             self.rendering.handle_click(x, y, shared_state)
@@ -286,16 +309,7 @@ class DisplayThread(threading.Thread):
                 (shared_state.status in [1,3] and 
                 (datetime.datetime.now() - shared_state.delay_reinit).total_seconds() > shared_state.delay_last_class)
             )):
-                self.video_writer.release()
-                self.video_writer = None
-                output_path = os.path.join(settings.OUTPUT_VIDEO_PATH, f"tocompress-counting-{time.strftime('%Y%m%d-%H%M%S')}-#{shared_state.counter_to_right}.mp4")
-                os.rename(self.filename, output_path)
-                # En mode manuel on passe en mode Stop automatiquement à la fin de l'enregistrement
-                if shared_state.status == 1:
-                    shared_state.status = 0
-                shared_state.recording = False
-                shared_state.reset = False
-                logger.info(f"------->Record Stop; Value Status: {shared_state.status}: Store:{output_path}")
+                self._finalize_recording()
                 if self.input_type == "FILE":
                     logger.info(f"------->MODE TEST. STOP.")
                     self.stop_event.set()
@@ -491,11 +505,15 @@ class DisplayThread(threading.Thread):
                 img = self.rendering.draw_ui(img, shared_state, self.input_type)
                 cv2.imshow(self.window_name, img)
 
-                if cv2.waitKey(1) & 0xFF == ord('q'):
-                    self.stop_event.set()
-                    break
+                cv2.waitKey(1)
 
             self.frame_queue.task_done()
+
+        # Safety-net: finalize recording on any loop exit path
+        # (race-lost where stop_event pre-empted the in-loop rename,
+        # or any other exit). The idempotent guard inside _finalize_recording
+        # makes this a no-op if the writer was already finalized or is None.
+        self._finalize_recording()
 
 def start(input_source, video_path):
     """
