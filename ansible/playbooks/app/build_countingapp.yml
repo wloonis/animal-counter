@@ -33,6 +33,7 @@
   shell: |
     cd {{ app_path }} && 
     docker buildx build -t {{ image_name }}:{{ image_tag }} .
+    docker image prune -f && docker builder prune -f
   tags: build2
 #    docker buildx build --no-cache -t {{ image_name }}:{{ image_tag }} .
 
