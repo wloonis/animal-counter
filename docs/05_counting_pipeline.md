@@ -118,7 +118,7 @@ re-validation (4/4 strict). **`iou`** (standard IoU) is the safe revert target
 
 The upgrade also ships free robustness fixes (independent of `iou=`):
 per-instance tracker IDs, NaN/inf coordinate handling, and a `py.typed`
-marker (PEP 561) for future type-hint work (BL-32).
+marker (PEP 561) for future type-hint work.
 
 > **OCR OC-SORT caveat**: the library's OCR (2nd-chance) path always uses
 > standard IoU regardless of `iou=`. We use `OCSORTTracker`, not OCR, so this
@@ -133,7 +133,7 @@ line-crossing logic**: they reason about which side of the counting line a
 track is on, when it crossed, and whether a re-ID double-counts. The `trackers`
 library implements **track association**, not line-crossing semantics, so it
 has no equivalent of these guards. **2.5.0 cannot épurer `counting.py`.**
-(The dead `process_for_tracking` code was already removed in BL-13.)
+(The dead `process_for_tracking` code was already removed.)
 
 ## 5. Advanced counting techniques (anti-ID-switch guards)
 
@@ -347,9 +347,9 @@ on site:
 
 `first_seen`, `last_seen`, and `trails` accumulate **one entry per unique ID**.
 A periodic GC now purges entries for IDs absent longer than
-`COUNTING_LOST_BUFFER_FRAMES` (see BL-10). `detections`, `area_in_list`, and
+`COUNTING_LOST_BUFFER_FRAMES`. `detections`, `area_in_list`, and
 `area_out_list` still grow (one entry per disappeared ID) — slow but unbounded;
-BL-17 addresses the residual leak. `recent_crossings` is cleaned each frame.
+a future cleanup could purge them too. `recent_crossings` is cleaned each frame.
 
 ### 9.3 Bidirectionality, hysteresis & mirror guard
 

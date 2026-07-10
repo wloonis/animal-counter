@@ -150,7 +150,7 @@ association function:
 - **NaN/inf coordinate handling** — detections with non-finite coordinates no
   longer crash the tracker.
 - **`py.typed`** — the package ships a PEP 561 marker, enabling static type
-  checking for future type-hint work (BL-32).
+  checking for future type-hint work.
 
 ### Accepted values
 

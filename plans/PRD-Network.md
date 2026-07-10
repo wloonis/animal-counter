@@ -55,7 +55,7 @@ To provide a scalable, automated, and reproducible deployment solution for conta
 - ✅ Installation and configuration of Docker/Containerd with NVIDIA runtime.
 - ✅ Installation and configuration of k3s for container orchestration.
 - ✅ Deployment of a test application to validate GPU acceleration.
-- ✅ Setup of GitOps (Argo CD or Ansible Pull) for application deployment.
+- ✅ App deployment via Ansible (render k3s/templates/*.j2 + kubectl apply, no GitOps).
 
 #### Technical
 - ✅ Ansible playbooks for automating setup and configuration.
@@ -110,8 +110,8 @@ The architecture follows a layered approach:
 1. **Physical Layer**: Jetson Orin Nano devices with JetPack 6.1.
 2. **Network Layer**: Hotspot and static IP configuration for remote access.
 3. **Orchestration Layer**: k3s for container management.
-4. **Application Layer**: Containerized applications deployed via GitOps.
-5. **Management Layer**: Ansible for infrastructure automation and Argo CD for application deployment.
+4. **Application Layer**: Containerized applications deployed via Ansible (kubectl apply of rendered templates).
+5. **Management Layer**: Ansible for infrastructure automation and application deployment (kubectl apply of rendered templates).
 
 ### Directory Structure
 ```
@@ -120,7 +120,7 @@ repo-infra/
 │   ├── bootstrap_jetson.yml
 │   ├── network_setup.yml
 │   ├── install_k3s.yml
-│   └── deploy_gitops.yml
+│   └── deploy_countingapp.yml
 ├── k3s/
 │   ├── manifests/
 │   └── helm/
@@ -141,7 +141,7 @@ repo-apps/
 
 ### Key Design Patterns
 - **Infrastructure as Code (IaC)**: Use Ansible playbooks to define and manage infrastructure.
-- **GitOps**: Use Argo CD or Ansible Pull to manage application deployments.
+- **App deployment**: Render `k3s/templates/*.j2` and apply with `kubectl` (no GitOps layer).
 - **Immutable Infrastructure**: Treat Jetson devices as immutable, with automated setup and configuration.
 
 ---
@@ -154,7 +154,7 @@ repo-apps/
 - **install_container_runtime.yml**: Install and configure Docker/Containerd with NVIDIA runtime.
 - **install_k3s.yml**: Install and configure k3s.
 - **validate_gpu_k8s.yml**: Validate GPU acceleration in Kubernetes.
-- **deploy_gitops.yml**: Deploy GitOps tools (Argo CD or Ansible Pull).
+- **deploy_countingapp.yml**: Render `k3s/templates/*.j2` and `kubectl apply` the app.
 
 ### Scripts
 - **jetson_discover.sh**: Discover Jetson devices on the network.
@@ -181,7 +181,6 @@ repo-apps/
 ### Third-Party Integrations
 - **GitHub/GitLab**: Repository management and CI/CD.
 - **Docker Hub/GitLab Registry**: Container image storage.
-- **Argo CD**: GitOps continuous delivery tool.
 
 ---
 
@@ -278,7 +277,7 @@ repo-apps/
 
 **Deliverables**:
 - ✅ Structured repositories for infrastructure and applications.
-- ✅ GitOps setup (Argo CD or Ansible Pull).
+- ✅ App deployment via Ansible (render templates + kubectl apply).
 - ✅ Documentation for multi-device deployment.
 
 **Validation Criteria**:
@@ -348,7 +347,6 @@ repo-apps/
 - **k3s**: Lightweight Kubernetes distribution.
 - **Docker/Containerd**: Container runtime with NVIDIA GPU support.
 - **Ansible**: Configuration management and automation.
-- **Argo CD**: GitOps continuous delivery tool.
 
 ### Repository/Project Structure
 - **repo-infra**: Contains Ansible playbooks, scripts, and documentation for infrastructure automation.

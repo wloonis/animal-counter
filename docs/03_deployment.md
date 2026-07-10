@@ -99,7 +99,7 @@ spec:
   selector: { app: countingapp }
   template:
     spec:
-      terminationGracePeriodSeconds: 0   # ⚠️ BL-46: should be raised to 30
+      terminationGracePeriodSeconds: 0   # ⚠️ could be raised to 30
       nodeSelector: { validate-paused: "true" }   # set only during validation
       containers:
       - name: countingapp
@@ -107,7 +107,7 @@ spec:
         args: ["serve"]
         env: [{ name: DISPLAY, value: ":0" }]
         ports: [{ name: web, containerPort: 31501 }]
-        securityContext: { privileged: true }     # ⚠️ BL-47: reducible
+        securityContext: { privileged: true }     # ⚠️ reducible
         resources:
           requests: { cpu: "500m", memory: "2Gi", nvidia.com/gpu: 1 }
           limits:   { cpu: "2",    memory: "4Gi", nvidia.com/gpu: 1 }
@@ -152,7 +152,15 @@ this single-device edge deployment.
 
 ## Known production gaps
 
-See [`09_backlog.md`](09_backlog.md): counter not persisted (BL-42), video not
-finalized on SIGTERM / `terminationGracePeriodSeconds: 0` (BL-43/BL-46), no
-livenessProbe (BL-45), `privileged` + `docker.sock` mount (BL-47), filebrowser
-default `admin/admin` (BL-48), `ffmpeg:latest` not pinned (BL-49).
+- The counter is **not persisted** — a pod restart during the day resets it to
+  0. (The video is written correctly; only the in-memory tally is lost.)
+- No `livenessProbe` on the `countingapp` pod.
+- `privileged` security context + `docker.sock` mount (used by the validation
+  Job's image rebuild; could be narrowed).
+- filebrowser ships the default `admin/admin` credentials.
+- `ffmpeg:latest` (compression cron image) is not pinned to a digest.
+
+> The recording is now **finalized and renamed on every exit path** (end of
+> source, SIGTERM, pod restart, web-UI stop) via `_finalize_recording` in
+> `stop()` / the post-loop safety-net, so the previous "orphan
+> `tmp-counting-*` / video not finalized on SIGTERM" gap is closed.

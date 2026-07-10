@@ -370,94 +370,43 @@ This guide provides solutions to common issues encountered during Jetson automat
    kubectl describe pod -n gpu-test pod/gpu-test
    ```
 
-### GitOps Deployment Issues
+### Deployment Issues
 
-#### Issue: Argo CD installation fails
+> This project has **no GitOps/Argo CD layer** — the app is deployed by
+> `scripts/prepare_jetson.sh` → `ansible/playbooks/app/deploy_app.yml` →
+> `deploy_countingapp.yml`, which renders `k3s/templates/*.j2` and applies them
+> with `kubectl apply`. There is nothing to "sync".
 
-**Symptoms:**
-- Helm install fails
-- Argo CD pods not starting
-- Connection refused
-
-**Solutions:**
-1. Check Helm version:
-   ```bash
-   helm version
-   ```
-2. Verify internet connectivity:
-   ```bash
-   helm repo update
-   ```
-3. Check disk space:
-   ```bash
-   df -h
-   ```
-4. Try manual installation:
-   ```bash
-   kubectl create namespace argocd
-   kubectl apply -n argocd -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
-   ```
-5. Check Argo CD logs:
-   ```bash
-   kubectl logs -n argocd deploy/argocd-server
-   ```
-
-#### Issue: Argo CD not accessible
+#### Issue: app deployment fails
 
 **Symptoms:**
-- Cannot access Argo CD dashboard
-- Connection timeout
-- 503 Service Unavailable
+- `deploy_countingapp.yml` errors during template rendering or `kubectl apply`
+- The `countingapp` pod is missing or in `CrashLoopBackOff`
 
 **Solutions:**
-1. Check Argo CD pods:
+1. Re-run the one-shot deploy wrapper from your workstation:
    ```bash
-   kubectl get pods -n argocd
+   bash scripts/prepare_jetson.sh
    ```
-2. Verify service:
+2. Apply the templates directly to converge:
    ```bash
-   kubectl get svc -n argocd
+   ansible-playbook -i ansible/inventory/jetsons.yml ansible/playbooks/app/deploy_countingapp.yml
    ```
-3. Check NodePort:
+3. Check the pod status and logs:
    ```bash
-   kubectl get svc -n argocd argocd-server
+   kubectl get pods -n countingapp-dev
+   kubectl logs -n countingapp-dev -l app=countingapp
    ```
-4. Test connectivity:
+4. If `app/requirements.txt` changed, rebuild the image first (the deploy
+   only rsyncs code):
    ```bash
-   curl http://localhost:30080
+   cd ansible/playbooks/app
+   ansible-playbook -i ../../inventory/jetsons.yml deploy_app.yml --tags build
    ```
-5. Check firewall rules:
+5. For a quick app restart without a full redeploy:
    ```bash
-   sudo iptables -L
-   ```
-
-#### Issue: Application sync fails
-
-**Symptoms:**
-- Application shows OutOfSync
-- Sync fails with error
-- Resources not created
-
-**Solutions:**
-1. Check Argo CD logs:
-   ```bash
-   kubectl logs -n argocd deploy/argocd-server
-   ```
-2. View application status:
-   ```bash
-   argocd app get <app-name>
-   ```
-3. Check repository access:
-   ```bash
-   argocd repo list
-   ```
-4. Test Git access:
-   ```bash
-   git clone <repo-url>
-   ```
-5. Check authentication:
-   ```bash
-   argocd account generate-token
+   kubectl scale daemonset countingapp -n countingapp-dev --replicas=0
+   kubectl scale daemonset countingapp -n countingapp-dev --replicas=1
    ```
 
 ### Bootstrap Process Issues
@@ -800,4 +749,3 @@ For additional information, refer to:
 - [Deployment](03_deployment.md)
 - [Configuration](04_configuration.md)
 - [Reset Procedure](08_reset.md)
-- [Backlog](09_backlog.md)

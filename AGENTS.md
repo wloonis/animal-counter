@@ -256,7 +256,7 @@ CLI above (what the relay agent uses) and plannotator for plan review.
 - Keep **OC-SORT** (not BoT-SORT/Norfair). Camera is fixed (no CMC).
 - FPS_OUTPUT=30. Pigs counted right→left (crossed LEFT = +1, crossed RIGHT = -1).
 - `.env` / `.env.local` are gitignored; defaults live in `app/src/settings.py`.
-- Hysteresis H=0 (H=25 regressed video #18 — abandoned, see backlog BL-08).
+- Hysteresis H=0 (H=25 regressed video #18 — abandoned).
 - Guard params: `COUNTING_LOST_BUFFER_FRAMES=60` (global expiration) vs
   `COUNTING_GUARD_MAX_AGE=15` (guard eligibility) — keep decoupled.
 - Validation: `scripts/validate_on_jetson.sh --full` → `validation-report.json`

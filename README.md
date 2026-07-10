@@ -7,12 +7,14 @@ and deployed on a single-node K3s cluster via Ansible.
 The system points a **fixed camera** at a counting line, tracks every pig that
 crosses it, and maintains a **net bidirectional counter** (+1 right→left,
 −1 left→right). It auto-records a video clip whenever a pig is detected and
-stops after ~2 minutes with no detection. It is operated daily: powered on in
-the morning (counter starts at 0), used through the day across several
-animal-moving iterations, and powered off (hard power cut) in the evening.
+stops after ~2 minutes with no detection. It is normally operated daily — powered on in the morning (counter starts at 0),
+used through the day across several animal-moving iterations, and powered off
+(hard power cut) in the evening — **but it can also run continuously 24/7** (the
+counter then accumulates across days; reset it on demand from the web UI when
+starting a new batch).
 
 <p align="center">
-  <img src="app/video/frame_count.jpg" alt="Pig counting in action: fixed camera, yellow vertical counting line, and the live net bidirectional counter overlay" width="640">
+  <img src="docs/assets/frame_count.jpg" alt="Pig counting in action: fixed camera, yellow vertical counting line, and the live net bidirectional counter overlay" width="640">
 </p>
 <p align="center"><em>The app in action — YOLO/TensorRT detections, OC-SORT tracks, the yellow counting line, and the live net counter (+1 right→left, −1 left→right).</em></p>
 
@@ -34,8 +36,7 @@ animal-moving iterations, and powered off (hard power cut) in the evening.
 | [`docs/06_validation.md`](docs/06_validation.md) | Validation workflow (`validate_on_jetson.sh`, manifest, reports) |
 | [`docs/07_troubleshooting.md`](docs/07_troubleshooting.md) | Troubleshooting |
 | [`docs/08_reset.md`](docs/08_reset.md) | Reset procedures |
-| [`docs/09_backlog.md`](docs/09_backlog.md) | Improvement backlog (BL-01..BL-53) |
-| [`docs/10_development_workflow.md`](docs/10_development_workflow.md) | Development workflow with `archon-jetson-dev` (CLARIFY → plan → validate → PR) |
+| [`docs/09_development_workflow.md`](docs/09_development_workflow.md) | Development workflow with `archon-jetson-dev` (CLARIFY → plan → validate → PR) |
 
 ---
 
@@ -114,7 +115,7 @@ the counter, while two background threads do the work:
 
 ---
 
-## Operator workflow (daily production)
+## Operator workflow (daily, or 24/7)
 
 1. **Power on** the Jetson in the morning → K3s starts → the `countingapp`
    DaemonSet pod boots → the web app is ready (counter = 0).
@@ -129,11 +130,11 @@ the counter, while two background threads do the work:
 5. **Read the counter** at the end of the day, then **power off** the Jetson
    (hard cut).
 
-> ⚠️ Known production gaps (tracked in the backlog): the counter is **not
-> persisted** (a pod restart during the day resets it to 0 — BL-42), and the
-> video in progress is **not finalized on SIGTERM** because
-> `terminationGracePeriodSeconds: 0` (BL-43/BL-46). See
-> [`docs/09_backlog.md`](docs/09_backlog.md).
+For **24/7 operation**, skip the daily power-off: the Jetson and the
+`countingapp` pod stay up, and the counter accumulates continuously across
+days. Reset it on demand from the web UI when starting a new batch. (A pod
+restart, however, resets the counter to 0 — it is not persisted across
+restarts.)
 
 ---
 
