@@ -160,11 +160,20 @@ run_single_validation() {
   # Resolve expected_count:
   #   1. Manifest lookup by filename (validation/expected_counts.json) — allows
   #      arbitrary/descriptive filenames (no collision when 2 videos share a count)
-  #   2. Fallback: derive from filename template-validation-<N>.mp4 -> N (legacy)
+  #   2. #<N> filename parse: validation-<seq>-#<expected_count>.mp4 -> <expected_count>
+  #      (honors the documented filename convention; covers videos only listed
+  #      under 'disabled', which the validator does not otherwise check)
+  #   3. Fallback: derive from filename template-validation-<N>.mp4 -> N (legacy)
+  #   4. Give up with no_expected_count
   local EXPECTED_COUNT
   local EXPECTED_MANIFEST="validation/expected_counts.json"
   if [ -f "$EXPECTED_MANIFEST" ]; then
     EXPECTED_COUNT=$(jq -r --arg f "$VIDEO_FILE" '.videos[$f] // empty' "$EXPECTED_MANIFEST")
+  fi
+  if [ -z "$EXPECTED_COUNT" ]; then
+    # #<N> filename parse: extract the trailing digits between the final '#'
+    # and '.mp4' (e.g. validation-1-#9.mp4 -> 9, validation-13-#12.mp4 -> 12).
+    EXPECTED_COUNT=$(printf '%s' "$VIDEO_FILE" | sed -n 's/.*#\([0-9][0-9]*\)\.mp4$/\1/p')
   fi
   if [ -z "$EXPECTED_COUNT" ]; then
     EXPECTED_COUNT=$(echo "$VIDEO_FILE" | sed -n 's/.*-\([0-9]\+\)\.mp4/\1/p')
