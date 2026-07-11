@@ -274,6 +274,12 @@ CLI above (what the relay agent uses) and plannotator for plan review.
   ONLY when the branch touches counting code** (`app/src/counting.py`,
   `app/src/main.py` tracking/counting logic, `app/src/core/*`, tracker/guard
   params). k3s/ansible/docs/UI/infra-only changes → standard.
+- **`validation/config.json` `mode` field MUST stay `"standard"` by default.**
+  `scripts/validate_on_jetson.sh` reads `mode` from config.json as its default;
+  do not leave it on `"full"` (a counting-code branch may flip it to `full`
+  temporarily, but revert before merge). The `--full` CLI flag is a per-run
+  override only — prefer changing the branch's behavior, not the committed
+  config. Default = standard.
 - Do NOT relaunch validation on all 30 videos — only the priority set (and only
   in `--full` mode; standard uses the single reference video).
 - Real K3s manifests are `k3s/templates/*.j2` (Ansible). `hostPath /app` is

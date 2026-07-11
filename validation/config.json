@@ -2,5 +2,5 @@
   "reference_video": "validation-1-#9.mp4",
   "tolerance": 0,
   "max_iterations": 5,
-  "mode": "full"
+  "mode": "standard"
 }
