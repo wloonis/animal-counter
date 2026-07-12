@@ -158,8 +158,13 @@ class Tracking:
             alpha = 0.6
             cv2.addWeighted(overlay, alpha, img, 1 - alpha, 0, dst=img)
 
-            # Text colour chosen for contrast against the box colour.
-            txt_color = self._label_text_color(color)
+            # The label sits on a semi-opaque DARK background (the black overlay
+            # blended above), NOT on the box colour. Choosing the text colour
+            # from the box colour made the text BLACK on bright track colours
+            # (val=220) -> dark/illegible ID+score (BL-58 follow-up). Base the
+            # text colour on the actual dark label background so the foreground
+            # is always bright (white) with the black outline for crisp edges.
+            txt_color = self._label_text_color((0, 0, 0))
             text_org = (bg_x1 + pad, bg_y1 + pad + th)
 
             # Black outline (draw the text shifted in 4 directions) for a crisp
