@@ -127,9 +127,13 @@ fi
 
 # ─── 3. Rsync code to Jetson (same pattern as build_countingapp.yml) ─────────
 echo "📦 Rsyncing app code to Jetson..."
+# Sync CODE only — exclude gitignored runtime assets (model weights, .env,
+# validation video scratch, legacy img/old) so a fresh worktree missing them
+# does NOT wipe them on the Jetson via --delete (BL-60). Weights/.env are
+# deployed via their own pipeline, not this code rsync.
 rsync -avz --delete --no-owner --no-group \
   --exclude='__pycache__' --exclude='*.pyc' \
-  --exclude='model/old/' \
+  --exclude='model/' --exclude='.env' --exclude='video/' --exclude='img/old/' \
   -e "sshpass -p $JETSON_PASSWORD ssh $SSH_OPTS" \
   app/ \
   $JETSON_USER@$JETSON_IP:$APP_PATH/ \
@@ -217,7 +221,7 @@ run_single_validation() {
     COND=$($SSH_CMD "kubectl get job countingapp-validate -n $APP_NAMESPACE -o jsonpath='{.status.conditions[0].type}' 2>/dev/null || echo ''" 2>/dev/null)
     case "$COND" in
       Complete|SuccessCriteriaMet) JOB_STATUS="complete"; break ;;
-      Failed)   JOB_STATUS="failed"; break ;;
+      Failed|FailureTarget)   JOB_STATUS="failed"; break ;;
       *) echo "  Job status: ${COND:-pending} (${ELAPSED}s)..." >&2; sleep 5 ;;
     esac
   done
