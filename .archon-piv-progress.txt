@@ -1,0 +1,7 @@
+Task 1: ADD render settings app/src/settings.py — 34b2370
+Task 2: PLUMB render settings into shared_state — 3661a6a
+Task 3: ADD per-id color helper + cache — 3be0402
+Task 4: REWRITE plot_one_box — 3be0402
+Task 5: REWRITE draw_counter label/centroid — 3be0402
+Task 6: ENSURE visual coherence in app/src/ui/rendering.py — beb9fd5
+Task 7: VALIDATE py_compile + validate_on_jetson.sh — py_compile PASS (Jetson run deferred to next phase)

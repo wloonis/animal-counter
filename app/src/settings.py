@@ -60,6 +60,19 @@ class Settings:
         self.DRAW_TRACKING = os.getenv("DRAW_TRACKING", "False").lower() == "true"
         self.CENTROID_TRACKING = os.getenv("CENTROID_TRACKING", "True").lower() == "true"
         self.BOX_TRACKING = os.getenv("BOX_TRACKING", "True").lower() == "true"
+
+        ### Bounding-box render tuning (BL-58 visual readability) - Start
+        # These control ONLY the on-screen drawing of boxes/labels/centroids.
+        # They have zero effect on counting / tracking / OC-SORT logic.
+        # Thickness of the bounding-box outline (was hardcoded 1 -> barely visible).
+        self.DRAW_BOX_LINE_THICKNESS = int(os.getenv("DRAW_BOX_LINE_THICKNESS", 2))
+        # Font scale for the track-id / score label (was tl/3 = 0.33 -> tiny).
+        self.DRAW_LABEL_FONT_SCALE = float(os.getenv("DRAW_LABEL_FONT_SCALE", 0.6))
+        # Thickness of the label text stroke (was max(tl-1,1) = 1).
+        self.DRAW_LABEL_THICKNESS = int(os.getenv("DRAW_LABEL_THICKNESS", 2))
+        # Radius of the centroid marker (was 1 -> nearly invisible).
+        self.DRAW_CENTROID_RADIUS = int(os.getenv("DRAW_CENTROID_RADIUS", 3))
+        ### Bounding-box render tuning (BL-58 visual readability) - End
         
         ### MODIFICATION: Pig Detection Threshold - Start
         # Minimum confidence threshold to consider an object as a pig
