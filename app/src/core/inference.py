@@ -15,6 +15,56 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+# IoU threshold for non-maximum suppression of duplicate pig detections (BL-59)
+NMS_IOU_THRESHOLD = 0.6
+
+
+def _nms(boxes, scores, iou_threshold):
+    """
+    Greedy non-maximum suppression (pure numpy, keep-max).
+
+    Args:
+        boxes (np.ndarray): [N, 4] in xyxy format.
+        scores (np.ndarray): [N] detection confidence scores.
+        iou_threshold (float): suppress boxes with IoU > threshold.
+
+    Returns:
+        list[int]: indices of kept boxes, highest-score first.
+    """
+    if len(boxes) <= 1:
+        return list(range(len(boxes)))
+
+    x1 = boxes[:, 0]
+    y1 = boxes[:, 1]
+    x2 = boxes[:, 2]
+    y2 = boxes[:, 3]
+    areas = np.clip(x2 - x1, 0, None) * np.clip(y2 - y1, 0, None)
+
+    order = np.argsort(-scores)
+    keep = []
+
+    while order.size > 0:
+        i = order[0]
+        keep.append(int(i))
+
+        if order.size == 1:
+            break
+
+        rest = order[1:]
+        xx1 = np.maximum(x1[i], x1[rest])
+        yy1 = np.maximum(y1[i], y1[rest])
+        xx2 = np.minimum(x2[i], x2[rest])
+        yy2 = np.minimum(y2[i], y2[rest])
+        w = np.clip(xx2 - xx1, 0, None)
+        h = np.clip(yy2 - yy1, 0, None)
+        inter = w * h
+        iou = inter / (areas[i] + areas[rest] - inter + 1e-8)
+
+        # Suppress boxes with IoU > threshold; keep the rest
+        order = rest[iou <= iou_threshold]
+
+    return keep
+
 
 class Inference:
     """
@@ -250,6 +300,16 @@ class Inference:
         boxes = boxes[pig_mask]
         scores = scores[pig_mask]
         class_ids = class_ids[pig_mask]
+
+        if len(boxes) == 0:
+            return np.array([])
+
+        # NMS: suppress duplicate detections (same pig, IoU > threshold) to
+        # prevent competing tracklets that cause OC-SORT ID switches (BL-59).
+        keep = _nms(boxes, scores, NMS_IOU_THRESHOLD)
+        boxes = boxes[keep]
+        scores = scores[keep]
+        class_ids = class_ids[keep]
 
         if len(boxes) == 0:
             return np.array([])
