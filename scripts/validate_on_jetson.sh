@@ -33,10 +33,22 @@ TOLERANCE=$(jq -r '.tolerance' "$CONFIG_FILE")
 MAX_ITERATIONS=$(jq -r '.max_iterations' "$CONFIG_FILE")
 MODE=$(jq -r '.mode' "$CONFIG_FILE")
 
-# Allow CLI override: --full flag
-if [ "${1:-}" = "--full" ]; then
-  MODE="full"
-fi
+# Allow CLI overrides:
+#   --full            validate the full manifest (expected_counts.json .videos)
+#                     instead of just the standard reference video.
+#   --clear-results   truncate /tmp/validation-results.jsonl before running.
+#                     By default results are APPENDED so a re-run/resume of the
+#                     sweep does not lose prior per-video results (BL-60). The
+#                     summary dedupes by video_file, last entry wins.
+MODE="standard"
+CLEAR_RESULTS=false
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --full) MODE="full" ;;
+    --clear-results) CLEAR_RESULTS=true ;;
+  esac
+  shift
+done
 
 REPORT_FILE="validation-report.json"
 VALIDATION_START=$(date +%s)
@@ -212,9 +224,16 @@ run_single_validation() {
   $SSH_CMD "kubectl delete job countingapp-validate -n $APP_NAMESPACE --ignore-not-found 2>/dev/null || true" >/dev/null
   $SSH_CMD "kubectl apply -f /dev/stdin" < /tmp/countingapp-validate.yaml >/dev/null
 
-  # Poll for job completion
-  echo "Waiting for validation job to complete (no timeout - videos may be long)..." >&2
+  # Poll for job completion. Guard against an app hang (the container won't
+  # exit after counting, result.json never written -- see BL-61): break at
+  # MAX_VIDEO_SECONDS, capture the job logs for salvage, and delete the hung
+  # job so the GPU frees up and the next video can run. Legit videos finish
+  # well under this (densest #51 ~10min).
+  local MAX_VIDEO_SECONDS="${MAX_VIDEO_SECONDS:-1200}"
+  echo "Waiting for validation job to complete (timeout ${MAX_VIDEO_SECONDS}s)..." >&2
   local JOB_STATUS=""
+  local TIMEOUT_LOG="/tmp/timeout-${VIDEO_FILE}.log"
+  rm -f "$TIMEOUT_LOG"
   while true; do
     local ELAPSED=$(( $(date +%s) - VIDEO_START ))
     local COND
@@ -222,15 +241,44 @@ run_single_validation() {
     case "$COND" in
       Complete|SuccessCriteriaMet) JOB_STATUS="complete"; break ;;
       Failed|FailureTarget)   JOB_STATUS="failed"; break ;;
-      *) echo "  Job status: ${COND:-pending} (${ELAPSED}s)..." >&2; sleep 5 ;;
+      *)
+        if [ "$ELAPSED" -ge "$MAX_VIDEO_SECONDS" ]; then
+          echo "  TIMEOUT after ${ELAPSED}s -- capturing logs and deleting hung job..." >&2
+          $SSH_CMD "kubectl logs job/countingapp-validate -n $APP_NAMESPACE 2>&1" > "$TIMEOUT_LOG" 2>/dev/null || echo "Could not fetch logs" > "$TIMEOUT_LOG"
+          $SSH_CMD "kubectl delete job countingapp-validate -n $APP_NAMESPACE --ignore-not-found 2>/dev/null" >/dev/null || true
+          JOB_STATUS="timeout"
+          break
+        fi
+        echo "  Job status: ${COND:-pending} (${ELAPSED}s)..." >&2; sleep 5
+        ;;
     esac
   done
+
+  # If the app hung (timeout), salvage the final count from the captured logs
+  # before falling through. The app prints "ID=N crossed LEFT // Count N" up to
+  # the final count, so the last "Count N" is the real result even though
+  # result.json was never persisted (BL-61).
+  if [ "$JOB_STATUS" = "timeout" ] && [ -s "$TIMEOUT_LOG" ]; then
+    local SALVAGED_COUNT
+    SALVAGED_COUNT=$(grep -oE 'Count [0-9]+' "$TIMEOUT_LOG" | tail -1 | grep -oE '[0-9]+' || true)
+    if [ -n "$SALVAGED_COUNT" ]; then
+      local S_DIFF=$(( SALVAGED_COUNT - EXPECTED_COUNT ))
+      local S_ABS=$(( S_DIFF < 0 ? -S_DIFF : S_DIFF ))
+      local S_STATUS; if [ "$S_ABS" -le "$TOLERANCE" ]; then S_STATUS="pass"; else S_STATUS="count_mismatch"; fi
+      echo "{\"video_file\": \"$VIDEO_FILE\", \"validation_status\": \"$S_STATUS\", \"count_salvaged_from_logs\": true, \"actual_count\": $SALVAGED_COUNT, \"expected_count\": $EXPECTED_COUNT, \"diff\": $S_DIFF, \"job_status\": \"timeout\", \"tolerance\": $TOLERANCE, \"logs\": $(tail -80 "$TIMEOUT_LOG" | jq -Rs .)}"
+      return 0
+    fi
+  fi
 
   # Fetch result.json
   local RESULT_FILE="/tmp/result-$VIDEO_FILE.json"
   $SCP_CMD "$JETSON_USER@$JETSON_IP:$FILES_PATH/result.json" "$RESULT_FILE" 2>/dev/null || {
     local JOB_LOGS
-    JOB_LOGS=$($SSH_CMD "kubectl logs job/countingapp-validate -n $APP_NAMESPACE 2>&1 | tail -50" 2>/dev/null || echo "Could not fetch logs")
+    if [ -s "$TIMEOUT_LOG" ]; then
+      JOB_LOGS=$(tail -80 "$TIMEOUT_LOG")
+    else
+      JOB_LOGS=$($SSH_CMD "kubectl logs job/countingapp-validate -n $APP_NAMESPACE 2>&1 | tail -50" 2>/dev/null || echo "Could not fetch logs")
+    fi
     echo "{\"video_file\": \"$VIDEO_FILE\", \"validation_status\": \"execution_error\", \"error_type\": \"result_json_missing\", \"expected_count\": $EXPECTED_COUNT, \"job_status\": \"$JOB_STATUS\", \"logs\": $(echo "$JOB_LOGS" | jq -Rs .)}"
     return 1
   }
@@ -315,7 +363,13 @@ run_single_validation() {
 
 # ─── 6. Run validation(s) ────────────────────────────────────────────────────
 RESULTS_FILE="/tmp/validation-results.jsonl"
-> "$RESULTS_FILE"
+# Append by default (BL-60): a re-run/resume of the sweep must not lose prior
+# per-video results. Use --clear-results to start fresh. The summary dedupes by
+# video_file (last entry wins), so appended duplicates/retries don't inflate the
+# counts.
+if [ "$CLEAR_RESULTS" = "true" ]; then
+  : > "$RESULTS_FILE"
+fi
 
 for VIDEO_PATH in $VIDEO_LIST; do
   run_single_validation "$VIDEO_PATH" >> "$RESULTS_FILE" || true
@@ -331,10 +385,38 @@ fi
 
 # ─── 8. Aggregate results into final report ──────────────────────────────────
 TOTAL_DURATION=$(( $(date +%s) - VALIDATION_START ))
-VIDEO_COUNT=$(jq -s 'length' "$RESULTS_FILE")
-PASS_COUNT=$(jq -s '[.[] | select(.validation_status == "pass")] | length' "$RESULTS_FILE")
-MISMATCH_COUNT=$(jq -s '[.[] | select(.validation_status == "count_mismatch")] | length' "$RESULTS_FILE")
-ERROR_COUNT=$(jq -s '[.[] | select(.validation_status == "execution_error")] | length' "$RESULTS_FILE")
+# Tolerant aggregation (BL-60): the per-video JSONL can be corrupted by a real
+# newline inserted mid-entry (observed at the stdio buffer boundary) and by
+# duplicate writes across restarts (we append). Repair by joining physical
+# lines that don't start with '{' onto the previous entry, then dedupe by
+# video_file keeping the LAST (most recent) entry. Falls back to a plain jq -s
+# slurp if python3 is unavailable.
+TOLERANT_RESULTS=$(python3 - "$RESULTS_FILE" <<'PY' 2>/dev/null || jq -s '.' "$RESULTS_FILE"
+import json, sys
+raw = open(sys.argv[1], 'rb').read().decode('utf-8', 'replace')
+phys = raw.split('\n')
+entries, cur = [], None
+for ln in phys:
+    if ln.startswith('{'):
+        if cur is not None: entries.append(cur)
+        cur = ln
+    elif cur is not None:
+        cur += ln  # continuation of a split entry (drop the spurious newline)
+if cur is not None: entries.append(cur)
+parsed = []
+for e in entries:
+    try: parsed.append(json.loads(e))
+    except Exception: pass
+seen = {}
+for o in parsed:
+    seen[o.get('video_file')] = o  # last wins
+print(json.dumps(list(seen.values())))
+PY
+)
+VIDEO_COUNT=$(echo "$TOLERANT_RESULTS" | jq 'length')
+PASS_COUNT=$(echo "$TOLERANT_RESULTS" | jq '[.[] | select(.validation_status == "pass")] | length')
+MISMATCH_COUNT=$(echo "$TOLERANT_RESULTS" | jq '[.[] | select(.validation_status == "count_mismatch")] | length')
+ERROR_COUNT=$(echo "$TOLERANT_RESULTS" | jq '[.[] | select(.validation_status == "execution_error")] | length')
 
 # Determine overall status
 if [ "$ERROR_COUNT" -gt 0 ] && [ "$MISMATCH_COUNT" -eq 0 ] && [ "$PASS_COUNT" -eq 0 ]; then
@@ -361,7 +443,7 @@ jq -n \
   --argjson duration "$TOTAL_DURATION" \
   --arg timestamp "$(date -Iseconds)" \
   --arg mode "$MODE" \
-  --slurpfile results "$RESULTS_FILE" \
+  --argjson results "$TOLERANT_RESULTS" \
   '{
     validation_status: $status,
     mode: $mode,
