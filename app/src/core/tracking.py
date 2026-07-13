@@ -42,37 +42,139 @@ class Tracking:
         self.MAX_LOST_FRAMES = 30      # ~1 seconde à 30 fps
         self.MAX_REASSOCIATE_DIST = 40 # à ajuster
         self.frame_counter = 0
+        # BL-58: per-track-id color cache. Maps track_id -> stable BGR tuple so
+        # the same id always gets the same colour, making ID switches on the same
+        # pig visible as an abrupt colour change of its bounding box.
+        self._color_cache = {}
     
+
+    def _track_color(self, track_id):
+        """
+        Return a stable, well-contrasted BGR colour for a given track id.
+
+        Primary purpose (BL-58): visually detect ID jumps / ID switches on the
+        same pig. A pig that keeps its id keeps one box colour; if OC-SORT
+        re-IDs it mid-crossing the box colour changes abruptly - an at-a-glance
+        cue for ID-switch defects.
+
+        The hue is derived from a hash of the id spread across the full 0-179
+        OpenCV hue range so adjacent ids get visibly different colours. Results
+        are cached so the same id always maps to the same colour.
+        """
+        tid = int(track_id)
+        if tid in self._color_cache:
+            return self._color_cache[tid]
+        # Spread ids across the full hue range (0-179 in OpenCV's HSV).
+        # Using a large multiplier + modulo avoids sequential ids landing on
+        # adjacent (nearly identical) hues.
+        hue = (tid * 47) % 180
+        sat = 200   # vivid but not pure (good contrast on varied backgrounds)
+        val = 220   # bright
+        # cv2.cvtColor expects uint8 HSV; single pixel.
+        hsv_pixel = np.uint8([[[hue, sat, val]]])
+        bgr = cv2.cvtColor(hsv_pixel, cv2.COLOR_HSV2BGR)[0][0]
+        color = (int(bgr[0]), int(bgr[1]), int(bgr[2]))
+        self._color_cache[tid] = color
+        return color
+
+    @staticmethod
+    def _luminance(color):
+        """Relative luminance of a BGR colour (0-255)."""
+        b, g, r = color[0], color[1], color[2]
+        return 0.299 * r + 0.587 * g + 0.114 * b
+
+    def _label_text_color(self, bg_color):
+        """Choose black or white text for best contrast on bg_color."""
+        return (0, 0, 0) if self._luminance(bg_color) > 140 else (255, 255, 255)
+
     def plot_one_box(self, x, img, color=None, label=None, line_thickness=None):
         """
-        Plot one bounding box on the image.
-        
+        Plot one bounding box on the image (BL-58 readability refactor).
+
+        Improvements over the previous version:
+          - thicker box outline (configurable via settings, default 2 vs 1)
+          - label drawn with a fixed readable fontScale (default 0.6 vs tl/3=0.33)
+          - semi-opaque background behind the label (alpha blend) instead of a
+            solid fill in the box colour
+          - black text outline under the foreground text for contrast on any
+            background
+          - text colour chosen by luminance of the box colour
+          - a few px of padding around the label
+          - label placed above the box, or below it if too close to the top of
+            the frame
+
         Args:
             x (list): Bounding box coordinates [x1, y1, x2, y2].
             img (numpy.ndarray): Image to plot on.
-            color (list, optional): Color for the bounding box. Defaults to random.
-            label (str, optional): Label for the bounding box. Defaults to None.
-            line_thickness (int, optional): Thickness of the bounding box line. Defaults to 1.
+            color (list, optional): BGR color for the bounding box.
+            label (str, optional): Label text for the bounding box.
+            line_thickness (int, optional): Thickness of the bounding box line.
+                Defaults to the shared_state draw setting (2).
         """
-        tl = line_thickness or 1
+        # Resolve render settings (fall back to sensible defaults if shared_state
+        # is unavailable, e.g. in unit tests).
+        ss = self.shared_state
+        default_tl = getattr(ss, "draw_box_line_thickness", 2) if ss else 2
+        font_scale = getattr(ss, "draw_label_font_scale", 0.6) if ss else 0.6
+        tf = getattr(ss, "draw_label_thickness", 2) if ss else 2
+
+        tl = line_thickness or default_tl
         color = color or [np.random.randint(0, 255) for _ in range(3)]
+        color = [int(c) for c in color]
         c1, c2 = (int(x[0]), int(x[1])), (int(x[2]), int(x[3]))
         cv2.rectangle(img, c1, c2, color, thickness=tl, lineType=cv2.LINE_AA)
+
         if label:
-            tf = max(tl - 1, 1)
-            t_size = cv2.getTextSize(label, 0, fontScale=tl / 3, thickness=tf)[0]
-            c2 = c1[0] + t_size[0], c1[1] - t_size[1] - 3
-            cv2.rectangle(img, c1, c2, color, -1, cv2.LINE_AA)
-            cv2.putText(
-                img,
-                label,
-                (c1[0], c1[1] - 2),
-                0,
-                tl / 3,
-                [225, 255, 255],
-                thickness=tf,
-                lineType=cv2.LINE_AA,
-            )
+            font = cv2.FONT_HERSHEY_SIMPLEX
+            (tw, th), _ = cv2.getTextSize(label, font, fontScale=font_scale,
+                                          thickness=tf)
+            pad = 4  # px padding around the label text
+            bg_w = tw + 2 * pad
+            bg_h = th + 2 * pad
+
+            img_h = img.shape[0]
+            # Default: label sits above the box. If it would go off the top of the
+            # frame, place it just below the box top instead.
+            if c1[1] - bg_h - 2 >= 0:
+                bg_x1 = c1[0]
+                bg_y1 = c1[1] - bg_h - 2
+            else:
+                bg_x1 = c1[0]
+                bg_y1 = c1[1] + 2
+            bg_x2 = bg_x1 + bg_w
+            bg_y2 = bg_y1 + bg_h
+
+            # Clip to frame bounds to avoid drawing outside the image.
+            bg_x1c = max(bg_x1, 0)
+            bg_y1c = max(bg_y1, 0)
+            bg_x2c = min(bg_x2, img.shape[1])
+            bg_y2c = min(bg_y2, img_h)
+
+            # Semi-opaque background: blend a dark rectangle (alpha ~0.6) over
+            # the label region only (cheap - bounded to the label box).
+            overlay = img.copy()
+            cv2.rectangle(overlay, (bg_x1c, bg_y1c), (bg_x2c, bg_y2c),
+                          (0, 0, 0), -1, cv2.LINE_AA)
+            alpha = 0.6
+            cv2.addWeighted(overlay, alpha, img, 1 - alpha, 0, dst=img)
+
+            # The label sits on a semi-opaque DARK background (the black overlay
+            # blended above), NOT on the box colour. Choosing the text colour
+            # from the box colour made the text BLACK on bright track colours
+            # (val=220) -> dark/illegible ID+score (BL-58 follow-up). Base the
+            # text colour on the actual dark label background so the foreground
+            # is always bright (white) with the black outline for crisp edges.
+            txt_color = self._label_text_color((0, 0, 0))
+            text_org = (bg_x1 + pad, bg_y1 + pad + th)
+
+            # Black outline (draw the text shifted in 4 directions) for a crisp
+            # edge on any background, then the foreground text on top.
+            for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+                cv2.putText(img, label, (text_org[0] + dx, text_org[1] + dy),
+                            font, font_scale, (0, 0, 0), thickness=tf,
+                            lineType=cv2.LINE_AA)
+            cv2.putText(img, label, text_org, font, font_scale, txt_color,
+                        thickness=tf, lineType=cv2.LINE_AA)
     
     def undo_letterbox(self, box, origin_h, origin_w, input_h, input_w):
         x1, y1, x2, y2 = box
@@ -115,16 +217,18 @@ class Tracking:
             box = result_boxes[j]
             c_x, c_y = self.calculate_center(bbox=box)
             
-            color = (0, 255, 0)
-            # Draw boundaring box
+            color = self._track_color(track_id)
+            # Draw bounding box with the new label format: ID first, score second.
             if self.shared_state.box_tracking:
-                self.plot_one_box(box, image, color, "{}:{}:{:.2f}".format(categories[int(result_classid[j])], str(track_id), result_scores[j]), line_thickness=1)
-            
-            # Always display the current centroid (regardless of centroid_tracking)
+                label = "ID:{} {:.2f}".format(int(track_id), float(result_scores[j]))
+                self.plot_one_box(box, image, color, label,
+                                  line_thickness=self.shared_state.draw_box_line_thickness)
+
+            # Always display the current centroid (regardless of centroid_tracking):
+            # filled, larger, and coloured to match the track id for visibility.
             center = (c_x, c_y)
-            color = (255, 255, 0)
-            radius = 1
-            cv2.circle(image, center, radius, color, thickness=1)
+            radius = self.shared_state.draw_centroid_radius
+            cv2.circle(image, center, radius, color, thickness=-1, lineType=cv2.LINE_AA)
 
             if self.shared_state.centroid_tracking:
                 # historique des positions

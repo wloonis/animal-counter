@@ -33,6 +33,11 @@ class SharedState:
         self.draw_tracking = True
         self.centroid_tracking = True
         self.box_tracking = True
+        # BL-58 render tuning (purely visual; mirrored from Settings in main.py)
+        self.draw_box_line_thickness = 2
+        self.draw_label_font_scale = 0.6
+        self.draw_label_thickness = 2
+        self.draw_centroid_radius = 3
         self.infer_thread = None
         self.display_thread = None
         self.delay_reinit = datetime.datetime.now()

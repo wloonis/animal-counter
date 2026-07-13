@@ -53,6 +53,11 @@ shared_state = SharedState()
 shared_state.draw_tracking = settings.DRAW_TRACKING
 shared_state.centroid_tracking = settings.CENTROID_TRACKING
 shared_state.box_tracking = settings.BOX_TRACKING
+# BL-58 bounding-box render tuning (visual only - no counting/tracking impact)
+shared_state.draw_box_line_thickness = settings.DRAW_BOX_LINE_THICKNESS
+shared_state.draw_label_font_scale = settings.DRAW_LABEL_FONT_SCALE
+shared_state.draw_label_thickness = settings.DRAW_LABEL_THICKNESS
+shared_state.draw_centroid_radius = settings.DRAW_CENTROID_RADIUS
 
 # Stop cleanly
 def stop():

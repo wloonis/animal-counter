@@ -249,9 +249,14 @@ class Rendering:
                 cv2.line(img, (x, 0), (x, img_height), line_color, line_thickness)
         
                 # Display status (only for CAMERA input and not in Learning Mode)
+                # Aligned to the BL-58 box-label render settings (draw_label_font_scale /
+                # draw_label_thickness) so the status text matches the new, larger/bolder
+                # box labels instead of the old tiny 0.5/1 that now looks inconsistent.
+                status_font_scale = getattr(shared_state, "draw_label_font_scale", 0.6)
+                status_thickness = getattr(shared_state, "draw_label_thickness", 2)
                 if shared_state.status == 1:
-                    cv2.putText(img, "Recording...", (50, 100), font, 0.5, (0, 0, 255), 1)
+                    cv2.putText(img, "Recording...", (50, 100), font, status_font_scale, (0, 0, 255), status_thickness)
                 elif shared_state.status == 2:
-                    cv2.putText(img, "Paused...", (50, 100), font, 0.5, (0, 255, 255), 1)
+                    cv2.putText(img, "Paused...", (50, 100), font, status_font_scale, (0, 255, 255), status_thickness)
         
         return img
