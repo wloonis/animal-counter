@@ -1,0 +1,119 @@
+---
+# configure_boot_cleanup.yml
+#
+# BL-63 — Guarantee the countingapp DaemonSet is RUNNING at boot, regardless of
+# what happened before (clean shutdown, power cut, a validation that left the
+# DaemonSet paused with nodeSelector validate-paused=true, dangling jobs, etc.).
+#
+# What it does:
+#   1. Installs /usr/local/bin/countingapp-ensure-running.sh — a best-effort
+#      script that, once k3s is up, removes the validate-paused nodeSelector
+#      (if a validation left the DaemonSet paused), deletes dangling
+#      countingapp-validate/test jobs (frees the GPU), and waits for the
+#      countingapp pod to be Running.
+#   2. Installs a one-shot systemd service countingapp-ensure-running.service
+#      (After=k3s.service) that runs the script at every boot.
+#   3. Enables the service and runs it once immediately (so the deploy itself
+#      restores the app if it was left paused).
+#
+# The script only removes the validate-paused nodeSelector — it does NOT touch
+# hostPID or terminationGracePeriodSeconds, so the BL-62 poweroff settings are
+# preserved.
+#
+# Usage:
+#   set -a; source .env.local; set +a
+#   ansible-playbook -i ansible/inventory/jetsons.yml \
+#                    ansible/playbooks/system/configure_boot_cleanup.yml
+
+- name: Configure boot cleanup — ensure countingapp starts at boot (BL-63)
+  hosts: all
+  become: true
+  gather_facts: yes
+
+  vars:
+    app_namespace: "{{ lookup('env', 'APP_NAMESPACE') | default('countingapp-dev', true) }}"
+    app_name: "{{ lookup('env', 'APP_NAME')     | default('countingapp',     true) }}"
+    cleanup_script: /usr/local/bin/countingapp-ensure-running.sh
+    cleanup_service: countingapp-ensure-running.service
+
+  tasks:
+    # -------------------------------------------------------------------
+    # 1. Install the boot-cleanup script.
+    # -------------------------------------------------------------------
+    - name: Install countingapp-ensure-running.sh
+      copy:
+        dest: "{{ cleanup_script }}"
+        owner: root
+        group: root
+        mode: '0755'
+        content: |
+          #!/bin/bash
+          # BL-63: guarantee the {{ app_name }} DaemonSet is RUNNING at boot,
+          # regardless of prior state (clean shutdown, power cut, a validation
+          # that left the DaemonSet paused with nodeSelector validate-paused=true,
+          # dangling jobs, etc.). Best-effort: never fails the boot.
+          set -u
+
+          # Wait for k3s/kubectl to be ready (up to ~2 min).
+          for i in $(seq 1 60); do
+            if kubectl get nodes >/dev/null 2>&1; then break; fi
+            sleep 2
+          done
+
+          # 1. Remove the validate-paused nodeSelector if a validation left the
+          #    DaemonSet paused. Idempotent (no-op if the key is absent). Does
+          #    NOT touch hostPID or terminationGracePeriodSeconds, so the BL-62
+          #    poweroff settings are preserved.
+          kubectl patch daemonset {{ app_name }} -n {{ app_namespace }} --type=json \
+            -p='[{"op":"remove","path":"/spec/template/spec/nodeSelector/validate-paused"}]' >/dev/null 2>&1 || true
+
+          # 2. Delete dangling validate/test jobs so the GPU is free for the DaemonSet.
+          kubectl delete job countingapp-validate -n {{ app_namespace }} --ignore-not-found >/dev/null 2>&1 || true
+          kubectl delete job countingapp-test -n {{ app_namespace }} --ignore-not-found >/dev/null 2>&1 || true
+
+          # 3. Wait for the {{ app_name }} pod to be Running (up to ~3 min).
+          for i in $(seq 1 60); do
+            ST=$(kubectl get pods -l app={{ app_name }} -n {{ app_namespace }} -o jsonpath='{.items[0].status.phase}' 2>/dev/null)
+            [ "$ST" = "Running" ] && break
+            sleep 3
+          done
+
+          exit 0
+
+    # -------------------------------------------------------------------
+    # 2. Install the one-shot systemd service (runs at every boot, After=k3s).
+    # -------------------------------------------------------------------
+    - name: Install countingapp-ensure-running.service
+      copy:
+        dest: "/etc/systemd/system/{{ cleanup_service }}"
+        owner: root
+        group: root
+        mode: '0644'
+        content: |
+          [Unit]
+          Description=Ensure {{ app_name }} DaemonSet is running at boot (BL-63)
+          After=k3s.service
+          Wants=k3s.service
+
+          [Service]
+          Type=oneshot
+          ExecStart={{ cleanup_script }}
+          RemainAfterExit=yes
+          # Best-effort: never fail the boot if the restore can't complete.
+          SuccessExitStatus=0
+
+          [Install]
+          WantedBy=multi-user.target
+
+    # -------------------------------------------------------------------
+    # 3. Enable the service (runs at every boot) + run it once now.
+    # -------------------------------------------------------------------
+    - name: Enable countingapp-ensure-running.service
+      systemd:
+        name: "{{ cleanup_service }}"
+        enabled: yes
+        daemon_reload: yes
+
+    - name: Run the boot-cleanup script once now (apply immediately)
+      command: "{{ cleanup_script }}"
+      changed_when: false
