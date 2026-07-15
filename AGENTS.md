@@ -332,3 +332,57 @@ CLI above (what the relay agent uses) and plannotator for plan review.
   re-apply them); files (videos): `/data/orin/files/` (`FILES_PATH`);
   Docker: `/data/orin/docker/` (`DOCKER_PATH`). Note the on-Jetson dir is
   `animal-counting`, not `animal-counter` (the repo name).
+
+---
+
+## 8. Pi bundled patch — local fix for #6101 / #6102 (PR #6501)
+
+The bundled pi-coding-agent (0.80.7) carries a **local patch** transposed from
+upstream PR **#6501** (`wloonis:fix/embedded-library-runtime-theme`), which pi
+**closed NOT_PLANNED** and never merged. It fixes two bugs that break Archon's
+planner node (clarify disposes session 1 → the **shared extension runtime** is
+poisoned → plannotator-plan inherits it → every `pi.*` API call throws
+`This extension ctx is stale ...` on deny+resubmit):
+
+- **#6101** — `AgentSession.dispose()` → `ExtensionRunner.invalidate()` sets a
+  write-only `state.staleMessage` on the extension runtime. When a host reuses
+  the same resource loader across sequential sessions (Archon's
+  `getOrCreateReloadedExtensionLoader` → all nodes share one loader → one
+  runtime), every later session reuses that runtime and throws from
+  `runtime.assertActive()` on every Extension API call. **Fix:** add
+  `clearInvalidation()` to the runtime and call it at the top of
+  `ExtensionRunner.bindCore()`, so a reused runtime is reactivated when a new
+  session rebinds it. `invalidate()` keeps its write-only `??=` semantics.
+- **#6102** — `theme` is a Proxy that throws `Theme not initialized` until the
+  TUI calls `initTheme()`. Library hosts (Archon) never run the TUI, so shared
+  code paths that read `theme` throw. **Fix:** lazily bootstrap the builtin
+  `dark` theme on first `theme` access instead of throwing. (Archon's dev+#2124
+  `createArchonUIContext` already stubs `ctx.ui.theme`; this patch covers the
+  global `theme` proxy read directly by loader/extension code.)
+
+**Applied to** (compiled `dist/*.js`, transposed from the PR's `src/*.ts`):
+- `packages/providers/node_modules/@earendil-works/pi-coding-agent/dist/core/extensions/loader.js`
+- `.../dist/core/extensions/runner.js`
+- `.../dist/modes/interactive/theme/theme.js`
+
+These files live in `node_modules` and are **wiped by `bun install`**. Re-apply
+after any install that touches `@earendil-works/pi-coding-agent`:
+```bash
+bash /home/tt/repository/Archon/patches/pi-6501-embedded-runtime-theme.sh   # bundled
+sudo bash /home/tt/repository/Archon/patches/pi-6501-embedded-runtime-theme.sh \
+    /usr/lib/node_modules/@earendil-works/pi-coding-agent                  # global CLI
+```
+The script is idempotent (guards each edit with a `grep -q`) and asserts the
+pi version is `0.80.7` (warns otherwise).
+
+**Validation:** the patch was confirmed by a repro mirroring the PR's regression
+test — `createExtensionRuntime()` → `invalidate()` (assertActive throws) →
+`new ExtensionRunner(...).bindCore(...)` → `assertActive()` no longer throws
+(runtime reactivated). In real Archon runs, each new session calls `bindCore()`
+(via `_buildRuntime`/`bindExtensions`) on the runner wrapping the **shared**
+runtime, so the poisoned marker from the previous node's dispose is cleared.
+
+**When the upstream fix eventually lands** (a future pi release merges #6501 or
+an equivalent), drop this patch: delete the script + remove this section. Until
+then this is the **one** local patch on pi (Archon itself has 0 local patches —
+dev + #2124 only).
