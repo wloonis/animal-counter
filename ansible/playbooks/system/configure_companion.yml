@@ -239,12 +239,19 @@
 
                   # Validate the time is parseable ISO8601.
                   try:
-                      datetime.datetime.fromisoformat(time_str)
+                      parsed_dt = datetime.datetime.fromisoformat(time_str)
                   except ValueError:
                       msg = "invalid ISO8601 time: {!r}".format(time_str)
                       self._log("POST /api/time -> 400 ({})".format(msg))
                       _send_json(self, 400, {"error": msg})
                       return
+
+                  # Strip timezone offset and reformat for timedatectl, which
+                  # rejects ISO8601 strings with a +HH:MM suffix (e.g. the
+                  # output of `date -Iseconds`). We set the timezone separately
+                  # via set-timezone, so the naive local-time string is correct.
+                  local_time_str = parsed_dt.replace(tzinfo=None).strftime(
+                      "%Y-%m-%d %H:%M:%S")
 
                   # Validate the timezone is a known IANA name.
                   known = _valid_timezones()
@@ -255,7 +262,7 @@
                       return
 
                   # Apply via timedatectl (shell=False, argument-list form).
-                  ok, apply_err = _apply_time(time_str, tz)
+                  ok, apply_err = _apply_time(local_time_str, tz)
                   if not ok:
                       self._log("POST /api/time -> 500 ({})".format(apply_err))
                       _send_json(self, 500, {"error": apply_err})
