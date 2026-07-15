@@ -1,70 +1,60 @@
-# Plan: BL-62 — Bouton « Arrêt » à l'écran (finalise vidéos + poweroff Jetson)
+# Plan: BL-64 — Jetson Companion Clock-Sync Service
 
 ## Summary
-
-Add a permanent « Arrêt » (power-off) button at the top-left of the counting screen (x=20, y=20) that finalizes any in-progress recording (flush moov atom, rename `tmp-counting` → `tocompress-counting`), stops the app cleanly, then powers off the Jetson via `nsenter` → `systemctl poweroff`. This replaces the current brutal power-cut (which corrupts mp4s and leaves K3s in an error state) with a graceful shutdown: the user clicks Arrêt, the machine halts cleanly, then they cut the electric power on an already-off machine.
+A stdlib-only Python HTTP service (`jetson-companion`) running on the Jetson **host** (not k3s) on port **8090** that receives time/timezone from an Android phone (BL-65) over the HotSpot and applies it via `timedatectl`, fixing the Jetson's lack of RTC at offline boot. Deployed by an Ansible playbook modeled on BL-63's `configure_boot_cleanup.yml` structure, plus a numbered doc `docs/11_jetson_companion.md`.
 
 ## In Scope
-- New asset `app/img/arret.png` (~30×90 BGRA, power/stop icon, same style as `reset.png`)
-- `app/src/ui/rendering.py`: load `btn_arret`; draw it permanently at (20, 20) in all states; shift the play/pause/stop sprite right to avoid overlap; `handle_click` sets `shared_state.arret_requested = True`; show on-screen message "Le compteur va s'arrêter..." when `arret_requested` is True
-- `app/src/utils/shared_state.py`: add `self.arret_requested = False` and `self.poweroff_requested = False`
-- `app/src/main.py`: `DisplayThread.run` detects `arret_requested` → status=0/auto_mode=False/learning_mode=False → `_finalize_recording()` (CRITICAL, synchronous, BEFORE poweroff) → `stop_event.set()` → `poweroff_requested=True`; `__main__` CAMERA/serve mode adds wait loop → `stop()` → `nsenter systemctl poweroff`
-- `k3s/templates/countingapp-dep.j2`: add `hostPID: true`; change `terminationGracePeriodSeconds: 0` → `15`
+- NEW `ansible/playbooks/system/configure_companion.yml` — playbook + inline Python script (`/usr/local/bin/jetson-companion`, 0755) + inline systemd unit (`/etc/systemd/system/jetson-companion.service`).
+- NEW `docs/11_jetson_companion.md` — role, endpoints, deploy command, curl examples, HotSpot/Android (BL-65) context, NTP handling, why port 8090 (8080 taken by filebrowser).
+- Python stdlib HTTP server (http.server, json, subprocess, datetime, os, sys) — NO external deps, NO venv/pip.
+- `POST /api/time` — body `{"time":"<ISO8601>","tz":"Europe/Paris"}` → `timedatectl set-ntp false` → `timedatectl set-time "<time>"` → `timedatectl set-timezone "<tz>"` → 200 + JSON confirmation.
+- `GET /api/identify` — `{"service":"jetson-companion","version":"1"}`.
+- Port configurable via `COMPANION_PORT` env (default 8090), bind 0.0.0.0.
+- Strict input validation on `POST /api/time`: ISO8601 parse + tz check + `subprocess.run([...], shell=False)` → 400 JSON error on bad input.
+- Journald logging via stdout (logs every set-time / identify / error).
 
 ## Out of Scope
-- Any counting/tracking/params logic (OC-SORT, FPS_OUTPUT=30, config.json mode='standard' untouched)
-- The `--full` validation mode
-- Committing `.env.local` or `.archon-relay/`
+- `/api/count` (live counting) → BL-66.
+- Android app (push time) → BL-65.
+- Token/auth (omitted in v1).
+- Any change to counting code (`app/src/counting.py`, `main.py` tracking/counting, core, params).
+- Changes to `validation/config.json` (stays `mode: "standard"`) or `scripts/validate_on_jetson.sh`.
 
 ## Architecture Decisions
-
-- **Button Arrêt standalone at x=20, y=20; sprite shifted right** — The Arrêt button occupies the top-left corner alone (x=20), and the existing play/pause/stop sprite is shifted right to `x = 20 + (base_width // 3) + 30` (gap=30px). Both aligned on the same row at y=20 (no vertical offset). This keeps the Arrêt at the ~20px-from-edge position per spec while avoiding overlap with the sprite (currently at `margin_x = 0.03*w` ≈ 38px).
-
-- **Bouton Arrêt is PERMANENT in ALL states** — Unlike the learning/auto buttons which have on/off states, the Arrêt button is always visible (it's a power button, not a toggle). It's drawn unconditionally in `draw_ui()` for CAMERA input, regardless of `shared_state.status` or `shared_state.learning_mode`. This ensures the user can power off at any moment.
-
-- **`handle_click` only sets a flag; `DisplayThread.run` does the heavy sequence** — The click callback runs in the mouse callback context (on the display thread via `cv2.setMouseCallback`). Setting `shared_state.arret_requested = True` is the only action. The main loop in `DisplayThread.run` detects this flag and executes the ordered shutdown sequence. This avoids any heavy/blocking logic in the click handler.
-
-- **`_finalize_recording()` MUST run synchronously BEFORE any poweroff** — The moov atom flush (cv2.VideoWriter.release) and the `tmp-counting` → `tocompress-counting` rename happen in `DisplayThread.run` before `stop_event.set()` and `poweroff_requested=True`. This guarantees the recording is safe on disk before the machine begins shutting down. `_finalize_recording()` is already idempotent (guards on `writer is None / not isOpened / not recording`), so it's safe even if already finalized.
-
-- **Main thread serve mode: wait loop → stop() → poweroff** — Currently in CAMERA/serve mode (RESULT_JSON_PATH not set), the main thread stays alive via non-daemon threads after `start()`. Add a `while not shared_state.stop_event.is_set(): time.sleep(0.5)` loop after `start()`, then `stop()` (join threads, TensorRT cleanup, destroy windows), then if `poweroff_requested`: `subprocess.run(['nsenter','-t','1','-m','-u','-i','-n','--','sh','-c','sync; systemctl poweroff'], check=False)`. The `nsenter -t 1` targets PID 1 in the host's PID namespace (systemd), which requires `hostPID: true` in the pod manifest.
-
-- **`hostPID: true` + `terminationGracePeriodSeconds: 15`** — The pod is already `privileged: true` but needs `hostPID: true` to share the host's PID namespace so `nsenter -t 1` reaches the host's systemd. The grace period is bumped from 0 to 15 to give `stop()` (~5s) time to finish during the poweroff sequence (and also helps normal K3s restarts).
-
-- **On-screen message during shutdown** — When `arret_requested` is True, display "Le compteur va s'arrêter..." on screen during the finalization/poweroff phase so the user knows the shutdown is in progress and doesn't click again or cut power prematurely.
+- **Host service, not k3s** — the service must call `timedatectl set-time`, which requires host root + systemd; running on the host (not in a k3s pod) is the simplest path to host clock control. Same rationale as BL-63's host-side boot cleanup.
+- **Port 8090, not 8080** — 8080 is already bound by `filebrowser` on the Jetson (pid 4118, `*:8080`); 8090 is free. Documented in the doc + the spec.
+- **`Type=simple` long-running unit (adapted from BL-63's oneshot)** — a persistent HTTP server needs `Type=simple` + `Restart=on-failure`, `After=network-online.target` + `Wants=network-online.target`, `User=root`. The **playbook structure** (inline `copy: content: |`, vars, systemd module daemon_reload/enabled/started, `hosts: all`, `become: true`, header comment + "Usage:" block) stays identical to BL-63 — only the unit type adapts to a long-running daemon.
+- **stdlib-only Python** — no Flask/FastAPI/uvicorn; the Jetson's host Python runs the service directly. Zero install footprint, matches the "no venv/pip" constraint.
+- **`User=root` in the unit** — `timedatectl set-time` requires root; same approach as BL-63.
+- **NTP disabled before set-time** — `timedatectl set-ntp false` must run before `set-time`, otherwise systemd-timesyncd can reject the write or immediately overwrite it.
+- **`subprocess.run([...], shell=False)`** — argument-list form, never `shell=True`, to avoid injection from the JSON body. Each timedatectl call is a separate `subprocess.run` with checked return codes; any failure → 500 with the stderr captured.
+- **Strict input validation** — parse `time` with `datetime.datetime.fromisoformat()` (reject unparseable → 400); validate `tz` is a known timezone by checking `/usr/share/zoneinfo/<tz>` existence or running `timedatectl list-timezones` cache (reject → 400). Never pass raw body strings to a shell.
+- **Deploy during implement** — run the playbook live on the Jetson (192.168.0.180) and verify the acceptance curls. For `POST /api/time`, send the dev machine's real current time (`date -Iseconds`) so the Jetson keeps a correct clock, not a bogus 2025 test value that would mis-date subsequent videos/logs.
+- **Standard validation as regression** — run `scripts/validate_on_jetson.sh` (reference video only, no `--full`) per AGENTS.md infra convention, confirming the root service on port 8090 does not disturb counting. `validation/config.json` `mode` stays `standard`.
 
 ## Tasks
-
-- [x] Task 1: CREATE `app/img/arret.png` — Generate a ~30×90 BGRA PNG power/stop icon matching the style of `reset.png` (30×90, ratio ~1:3, alpha channel). If a polished icon can't be generated, create a functional 30×90 BGRA PNG (the user will refine the visual later). Must load successfully via `load_button()` (which requires `cv2.IMREAD_UNCHANGED` → 4 channels).
-
-- [x] Task 2: EDIT `app/src/utils/shared_state.py` — Add `self.arret_requested = False` and `self.poweroff_requested = False` in `__init__` (near the end, after `self.stop_event = Event()`).
-
-- [x] Task 3: EDIT `app/src/ui/rendering.py` — In `__init__` (after the `btn_reset` load, ~line 47), add: `self.btn_arret, self.btn_arret_inv_alpha, self.btn_arret_size = self.load_button("/app/img/arret.png")`.
-
-- [x] Task 4: EDIT `app/src/ui/rendering.py` — In `draw_ui()`: (a) Draw the Arrêt button permanently at (x=20, y=20) with `base_width // 3` width via `self._draw_button(img, self.btn_arret, self.btn_arret_inv_alpha, 20, 20, base_width // 3, button_name="arret")` — this must be drawn BEFORE the sprite so the sprite (shifted right) doesn't overlap; (b) Change the sprite x position from `margin_x` to `x = 20 + (base_width // 3) + 30` (gap=30px) so it's shifted right of the Arrêt button; (c) If `shared_state.arret_requested` is True, draw the message "Le compteur va s'arrêter..." on screen (e.g. centered, red text, via `cv2.putText`).
-
-- [x] Task 5: EDIT `app/src/ui/rendering.py` — In `handle_click()`: add a branch for `name == "arret"` that sets `shared_state.arret_requested = True` (no other logic — no status change, no finalize, no stop here).
-
-- [x] Task 6: EDIT `app/src/main.py` — In `DisplayThread.run()`, at the TOP of the `while not self.stop_event.is_set():` loop (before the existing recording-stop logic), add a check: if `shared_state.arret_requested` is True, execute the ordered shutdown sequence: (a) `shared_state.status = 0`, `shared_state.auto_mode = False`, `shared_state.learning_mode = False`; (b) `self._finalize_recording()` (synchronous, flushes moov atom + renames tmp→tocompress — CRITICAL before any poweroff); (c) `shared_state.stop_event.set()`; (d) `shared_state.poweroff_requested = True`; then `break` out of the loop. The existing post-loop `self._finalize_recording()` safety-net call remains (idempotent no-op).
-
-- [x] Task 7: EDIT `app/src/main.py` — In `__main__`, in the CAMERA/serve path (the `else` branch where `result_json_path` is empty/falsy — i.e. NOT the validate mode): after `start(input_source, video)` and `logger.info("Inference Started")`, add a wait loop `while not shared_state.stop_event.is_set(): time.sleep(0.5)`, then `stop()`, then `if shared_state.poweroff_requested: subprocess.run(["nsenter", "-t", "1", "-m", "-u", "-i", "-n", "--", "sh", "-c", "sync; systemctl poweroff"], check=False)`. Add `import subprocess` at the top of the file if not already present. This must NOT affect the validate mode (RESULT_JSON_PATH set) which has its own join/wait/stop logic.
-
-- [x] Task 8: EDIT `k3s/templates/countingapp-dep.j2` — (a) Add `hostPID: true` at the pod spec level (under `spec.template.spec`, near `terminationGracePeriodSeconds`); (b) Change `terminationGracePeriodSeconds: 0` to `terminationGracePeriodSeconds: 15`.
-
-- [x] Task 9: VERIFY — Run `python3 -m py_compile app/src/ui/rendering.py app/src/main.py app/src/utils/shared_state.py` to confirm no syntax errors. Confirm `config.json` mode is still 'standard' (untouched). Confirm no counting/tracking/params logic was changed.
-
-- [x] Task 10: VALIDATE — Prepare the fresh worktree (copy gitignored files: `.env.local`, `app/model/`, `app/.env`, `validation/videos/*.mp4` from the main worktree via `git worktree list` → first worktree path; do NOT symlink `app/model` — copy files for real). Run `scripts/validate_on_jetson.sh` in STANDARD mode (validation-1-#9, expected count 9). Do NOT use `--full`.
-
-- [x] Task 11: PR — Create a PR with body including `Closes #60` to auto-close the GitHub issue on merge.
+- [x] Task 1: CREATE `ansible/playbooks/system/configure_companion.yml` — Ansible playbook modeled exactly on `ansible/playbooks/system/configure_boot_cleanup.yml` structure: header comment block + "Usage:" block, `hosts: all` / `become: true` / `gather_facts: yes`, `vars:` with `companion_script: /usr/local/bin/jetson-companion`, `companion_service: jetson-companion.service`, `companion_port: 8090`. Three tasks: (1) `copy` the inline Python script to `{{ companion_script }}` mode 0755 owner/group root; (2) `copy` the inline systemd unit to `/etc/systemd/system/{{ companion_service }}` mode 0644; (3) `systemd` module with `daemon_reload: yes`, `enabled: yes`, `state: started` (and a handler/task to restart the service when the script/unit changes so the running instance picks up the new code).
+- [x] Task 2: WRITE inline Python script (inside the playbook's first `copy: content: |`) — `~80 lines`, stdlib only (`http.server`, `json`, `subprocess`, `datetime`, `os`, `sys`): `BaseHTTPRequestHandler` subclass with `do_GET` (route `/api/identify` → `{"service":"jetson-companion","version":"1"}` 200; 404 otherwise) and `do_POST` (route `/api/time` → parse JSON body → validate `time` via `datetime.fromisoformat` → validate `tz` via zoneinfo/list-timezones → run `subprocess.run(["timedatectl","set-ntp","false"], check=True)`, `subprocess.run(["timedatectl","set-time",time_str], check=True)`, `subprocess.run(["timedatectl","set-timezone",tz], check=True)` → 200 + `{"status":"ok","time":...,"tz":...}`; 400 on bad JSON/parse/tz; 500 on timedatectl failure with captured stderr). `ThreadingHTTPServer` on `0.0.0.0` and `int(os.environ.get("COMPANION_PORT","8090"))`. Log every request + result to stdout (journald). `if __name__ == "__main__"` entrypoint.
+- [x] Task 3: WRITE inline systemd unit (inside the playbook's second `copy: content: |`) — `[Unit]` Description=Jetson companion clock-sync service (BL-64), `After=network-online.target`, `Wants=network-online.target`. `[Service]` `Type=simple`, `User=root`, `ExecStart={{ companion_script }}`, `Restart=on-failure`, `RestartSec=3`, `Environment=COMPANION_PORT={{ companion_port }}`. `[Install]` `WantedBy=multi-user.target`.
+- [ ] Task 4: CREATE `docs/11_jetson_companion.md` — numbered-doc style matching `docs/01`–`docs/10`. Sections: (a) role — offline clock sync via Android phone (BL-65) connecting to the Jetson HotSpot; (b) the Jetson-has-no-RTC problem (1970/build date at offline boot, mis-dated `tocompress-counting-*.mp4` and logs); (c) endpoints table — `GET /api/identify` and `POST /api/time` with request/response JSON; (d) deploy command — `set -a; source .env.local; set +a; ansible-playbook -i ansible/inventory/jetsons.yml ansible/playbooks/system/configure_companion.yml`; (e) curl examples for both endpoints (identify + set time with `date -Iseconds`); (f) NTP note — `set-ntp false` before `set-time` so timesyncd doesn't reject/overwrite; (g) why port 8090 — 8080 taken by filebrowser, 8090 free, configurable via `COMPANION_PORT`; (h) link to BL-65 (Android push) and BL-66 (/api/count, future). Cross-link from README's table of contents row (add `docs/11` entry).
+- [ ] Task 5: RUN playbook live on Jetson — `set -a; source .env.local; set +a; ansible-playbook -i ansible/inventory/jetsons.yml ansible/playbooks/system/configure_companion.yml` against 192.168.0.180; confirm idempotent (re-run is clean / changed=0 on second run after handler restart logic is correct).
+- [ ] Task 6: VERIFY acceptance curls live — `curl http://192.168.0.180:8090/api/identify` → `{"service":"jetson-companion","version":"1"}`; `curl -X POST http://192.168.0.180:8090/api/time -H 'Content-Type: application/json' -d "{\"time\":\"$(date -Iseconds)\",\"tz\":\"Europe/Paris\"}"` → 200 confirmation; then `ssh ... timedatectl` on the Jetson reflects the new time; `systemctl is-enabled jetson-companion` → enabled; negative test — POST with bad ISO → 400.
+- [ ] Task 7: RUN standard validation regression — `scripts/validate_on_jetson.sh` (reference video, standard mode, no `--full`); confirm counting result unchanged vs baseline (the host service on 8090 must not disturb the k3s countingapp). `validation/config.json` stays `mode: "standard"`.
+- [ ] Task 8: VERIFY no external Python deps — confirm the inline script imports only `http.server`, `json`, `subprocess`, `datetime`, `os`, `sys` (grep the playbook content for `import`/`from`); no `pip`/`venv` references; `python3 -m py_compile` the script (extracted locally) passes.
 
 ## Validation
-- `python3 -m py_compile app/src/ui/rendering.py app/src/main.py app/src/utils/shared_state.py` — no syntax errors
-- `scripts/validate_on_jetson.sh` (STANDARD mode, validation-1-#9, expected 9) — counting logic unchanged
-- Confirm `config.json` mode is still 'standard'
-- Confirm only the 5 allowed files were touched: `app/img/arret.png`, `app/src/ui/rendering.py`, `app/src/main.py`, `app/src/utils/shared_state.py`, `k3s/templates/countingapp-dep.j2`
+- `curl http://192.168.0.180:8090/api/identify` → `{"service":"jetson-companion","version":"1"}`.
+- `curl -X POST http://192.168.0.180:8090/api/time -H 'Content-Type: application/json' -d "{\"time\":\"$(date -Iseconds)\",\"tz\":\"Europe/Paris\"}"` → 200 JSON; `timedatectl` on the Jetson reflects the change.
+- `ssh ... 'systemctl is-enabled jetson-companion'` → `enabled`; `systemctl is-active jetson-companion` → `active`.
+- Playbook is idempotent: second `ansible-playbook` run reports the script/unit tasks unchanged (changed=0 except the restart handler).
+- Bad-input test: `curl -X POST .../api/time -d '{"time":"not-a-date","tz":"Europe/Paris"}'` → 400 JSON error; `curl -X POST .../api/time -d '{"time":"2025-07-15T14:30:00","tz":"Mars/Olympus"}'` → 400.
+- `scripts/validate_on_jetson.sh` standard run → counting PASS (regression, unchanged from baseline).
+- `python3 -m py_compile` on the inline script → no errors; imports limited to stdlib.
 
 ## Risks
-- **arret.png fails to load** — `load_button()` returns `(None, None, None)` if the PNG isn't 4-channel or can't be read. `_draw_button` already guards on `btn is not None`, so a failed load is a no-op (button invisible but no crash). Mitigation: verify the PNG is BGRA 4-channel 30×90 after creation.
-- **nsenter fails on the Jetson** — If `hostPID: true` doesn't grant access to the host's systemd PID 1, `nsenter -t 1 ... systemctl poweroff` may fail. Mitigation: `check=False` means it won't raise; the app still stops cleanly (stop() already ran). The poweroff just won't happen and the user can cut power manually (same as today, but with finalized videos). To be validated on the Jetson.
-- **DisplayThread doesn't get to process arret_requested before stop_event** — The arret check is at the top of the loop, before the frame queue get. If the queue is empty, the `get(timeout=1)` times out and loops back to the arret check. So the flag is detected within ~1s. Mitigation: the check is at loop top, before any blocking get.
-- **Main thread serve mode blocks forever if stop_event never sets** — The `while not stop_event.is_set(): sleep(0.5)` loop exits when DisplayThread sets stop_event (in the arret sequence) or on SIGTERM (handle_sigterm calls stop() which sets stop_event). Mitigation: stop_event is set by both the arret sequence and SIGTERM, so the loop always exits.
-- **Sprite shift breaks existing button click coordinates** — The sprite is shifted right, but `draw_ui()` rebuilds `self.buttons` every frame with the new x position, and `handle_click()` reads from `self.buttons`, so the click hit-boxes move with the sprite. No hardcoded coordinates in handle_click. Mitigation: the buttons dict is the single source of truth for hit areas.
+- **timedatectl set-time fails under timesyncd** — mitigate by always running `set-ntp false` first and checking the return code; on failure return 500 with stderr so the Android app can surface the error.
+- **Port 8090 collision discovered later** — low risk (verified free); if it occurs, `COMPANION_PORT` env var in the unit lets us change it without editing the script.
+- **Playbook not idempotent (restart loop)** — mitigate by using a handler or `notify` on the copy tasks so the service restarts only when content changes, and by testing the second run reports changed=0 for the copy tasks.
+- **Injection via JSON body** — mitigate with `subprocess.run([...], shell=False)` argument-list form and strict ISO8601/timezone validation; never `shell=True`, never string-interpolate the body into a shell command.
+- **Root service security** — service is open (no auth in v1) on the HotSpot LAN only; documented as v1 limitation. Acceptable because the HotSpot is a closed offline network and auth is explicitly out of scope (future BL).
+- **Validation regression false-fail** — if the live `set-time` shifts the clock during a counting validation, video timestamps could confuse the run; mitigate by running validation after the clock is correctly set (not mid-set), and the standard reference-video run is robust to wall-clock.

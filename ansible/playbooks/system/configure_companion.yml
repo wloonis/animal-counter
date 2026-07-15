@@ -1,0 +1,328 @@
+---
+# configure_companion.yml
+#
+# BL-64 — Jetson companion clock-sync service.
+#
+# The production Jetson has no RTC (no coin-cell battery). On every offline
+# boot it comes up with the clock stuck at the build date (or 1970), which
+# mis-dates the `tocompress-counting-*.mp4` videos and the journald logs. When
+# the Jetson is in WiFi HotSpot mode the Android phone (BL-65) is the only
+# source of wall-clock time: it connects to the HotSpot and POSTs the current
+# time + timezone to this small HTTP service on the Jetson HOST (not k3s),
+# which applies it via `timedatectl`.
+#
+# What it does:
+#   1. Installs /usr/local/bin/jetson-companion — a stdlib-only Python HTTP
+#      server (http.server, json, subprocess, datetime, os, sys — NO external
+#      deps, NO venv/pip). It exposes:
+#        GET  /api/identify  -> {"service":"jetson-companion","version":"1"}
+#        POST /api/time      -> {"time":"<ISO8601>","tz":"Europe/Paris"}
+#                               -> timedatectl set-ntp false
+#                               -> timedatectl set-time  "<time>"
+#                               -> timedatectl set-timezone "<tz>"
+#                               -> {"status":"ok","time":...,"tz":...}
+#      Input is strictly validated (ISO8601 parse + known timezone); the
+#      timedatectl calls use subprocess.run([...], shell=False) so the JSON
+#      body is never interpolated into a shell.
+#   2. Installs a long-running systemd service jetson-companion.service
+#      (Type=simple, After=network-online.target, User=root, Restart=on-failure)
+#      that runs the script at boot. User=root because `timedatectl set-time`
+#      requires root.
+#   3. Enables + starts the service (and reloads the daemon). A notify
+#      handler restarts it whenever the script or unit content changes so the
+#      running instance picks up the new code, and the second playbook run is
+#      idempotent (changed=0 on the copy tasks).
+#
+# Port 8090 (not 8080): 8080 is already bound by filebrowser on the Jetson;
+# 8090 is free. Configurable via the COMPANION_PORT env var in the unit.
+#
+# Usage:
+#   set -a; source .env.local; set +a
+#   ansible-playbook -i ansible/inventory/jetsons.yml \
+#                    ansible/playbooks/system/configure_companion.yml
+
+- name: Configure Jetson companion clock-sync service (BL-64)
+  hosts: all
+  become: true
+  gather_facts: yes
+
+  vars:
+    companion_script: /usr/local/bin/jetson-companion
+    companion_service: jetson-companion.service
+    companion_port: 8090
+
+  handlers:
+    # -------------------------------------------------------------------
+    # Restart the service when the script or unit content changes, so the
+    # running instance picks up the new code. Only fires on content change,
+    # which keeps the second run idempotent (changed=0 on the copy tasks).
+    # -------------------------------------------------------------------
+    - name: Restart jetson-companion service
+      systemd:
+        name: "{{ companion_service }}"
+        state: restarted
+
+  tasks:
+    # -------------------------------------------------------------------
+    # 1. Install the companion HTTP server script (stdlib-only Python).
+    # -------------------------------------------------------------------
+    - name: Install jetson-companion script
+      copy:
+        dest: "{{ companion_script }}"
+        owner: root
+        group: root
+        mode: '0755'
+        content: |
+          #!/usr/bin/env python3
+          # BL-64: Jetson companion clock-sync service.
+          #
+          # A stdlib-only HTTP server that runs on the Jetson HOST (not k3s) and
+          # receives the current time/timezone from the Android phone (BL-65)
+          # over the HotSpot, then applies it via timedatectl. The Jetson has no
+          # RTC, so on every offline boot its clock is stuck at the build date
+          # (or 1970) until this service sets it.
+          #
+          # Endpoints:
+          #   GET  /api/identify  -> {"service":"jetson-companion","version":"1"}
+          #   POST /api/time      -> {"time":"<ISO8601>","tz":"Europe/Paris"}
+          #                          -> timedatectl set-ntp false
+          #                          -> timedatectl set-time  "<time>"
+          #                          -> timedatectl set-timezone "<tz>"
+          #                          -> {"status":"ok","time":...,"tz":...}
+          #
+          # Input is strictly validated; timedatectl is invoked via
+          # subprocess.run([...], shell=False) so the JSON body is never passed
+          # to a shell. Every request + result is logged to stdout (journald).
+          #
+          # No external dependencies. Uses only the Python standard library.
+          import datetime
+          import json
+          import os
+          import subprocess
+          import sys
+          from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+          SERVICE_NAME = "jetson-companion"
+          SERVICE_VERSION = "1"
+          HOST = "0.0.0.0"
+          DEFAULT_PORT = 8090
+
+          # Cache of valid IANA timezone names (populated lazily on first use).
+          _VALID_TIMEZONES = None
+
+
+          def _valid_timezones():
+              """Return the set of valid IANA timezone names from timedatectl."""
+              global _VALID_TIMEZONES
+              if _VALID_TIMEZONES is None:
+                  try:
+                      result = subprocess.run(
+                          ["timedatectl", "list-timezones"],
+                          check=True,
+                          capture_output=True,
+                          text=True,
+                      )
+                      _VALID_TIMEZONES = {
+                          line.strip()
+                          for line in result.stdout.splitlines()
+                          if line.strip()
+                      }
+                  except (subprocess.CalledProcessError, FileNotFoundError):
+                      # Fallback: if timedatectl is unavailable, accept any
+                      # non-empty string and let set-timezone reject bad ones.
+                      _VALID_TIMEZONES = None
+              return _VALID_TIMEZONES
+
+
+          def _send_json(handler, status, payload):
+              """Send a JSON response with the given HTTP status and dict."""
+              body = json.dumps(payload).encode("utf-8")
+              handler.send_response(status)
+              handler.send_header("Content-Type", "application/json")
+              handler.send_header("Content-Length", str(len(body)))
+              handler.end_headers()
+              handler.wfile.write(body)
+
+
+          def _read_json_body(handler):
+              """Read + parse the request body as JSON. Returns (obj, None) on
+              success or (None, error_message) on failure."""
+              try:
+                  length = int(handler.headers.get("Content-Length", 0))
+              except (TypeError, ValueError):
+                  return None, "invalid Content-Length header"
+              if length <= 0:
+                  return None, "empty request body"
+              try:
+                  raw = handler.rfile.read(length)
+                  return json.loads(raw), None
+              except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+                  return None, "malformed JSON: {}".format(exc)
+
+
+          def _apply_time(time_str, tz):
+              """Run the timedatectl sequence to set the clock + timezone.
+
+              Always disables NTP first so systemd-timesyncd does not reject or
+              immediately overwrite the manual time. Returns (ok, error_msg).
+              """
+              steps = [
+                  ["timedatectl", "set-ntp", "false"],
+                  ["timedatectl", "set-time", time_str],
+                  ["timedatectl", "set-timezone", tz],
+              ]
+              for cmd in steps:
+                  result = subprocess.run(
+                      cmd,
+                      capture_output=True,
+                      text=True,
+                  )
+                  if result.returncode != 0:
+                      err = result.stderr.strip() or result.stdout.strip()
+                      return False, "'{}' failed: {}".format(
+                          " ".join(cmd), err
+                      )
+              return True, None
+
+
+          class CompanionHandler(BaseHTTPRequestHandler):
+              """HTTP request handler for the companion clock-sync service."""
+
+              # Quieter access log prefix in journald.
+              def log_message(self, fmt, *args):
+                  sys.stdout.write(
+                      "{} - - {}\n".format(self.address_string(), fmt % args)
+                  )
+                  sys.stdout.flush()
+
+              def _log(self, message):
+                  sys.stdout.write("[{}] {}\n".format(
+                      datetime.datetime.now().isoformat(), message))
+                  sys.stdout.flush()
+
+              def do_GET(self):
+                  if self.path == "/api/identify":
+                      payload = {
+                          "service": SERVICE_NAME,
+                          "version": SERVICE_VERSION,
+                      }
+                      self._log("GET /api/identify -> 200")
+                      _send_json(self, 200, payload)
+                  else:
+                      self._log("GET {} -> 404".format(self.path))
+                      _send_json(self, 404, {"error": "not found"})
+
+              def do_POST(self):
+                  if self.path != "/api/time":
+                      self._log("POST {} -> 404".format(self.path))
+                      _send_json(self, 404, {"error": "not found"})
+                      return
+
+                  body, err = _read_json_body(self)
+                  if err is not None:
+                      self._log("POST /api/time -> 400 ({})".format(err))
+                      _send_json(self, 400, {"error": err})
+                      return
+
+                  time_str = body.get("time")
+                  tz = body.get("tz")
+                  if not time_str or not isinstance(time_str, str):
+                      msg = "missing or invalid 'time' field"
+                      self._log("POST /api/time -> 400 ({})".format(msg))
+                      _send_json(self, 400, {"error": msg})
+                      return
+                  if not tz or not isinstance(tz, str):
+                      msg = "missing or invalid 'tz' field"
+                      self._log("POST /api/time -> 400 ({})".format(msg))
+                      _send_json(self, 400, {"error": msg})
+                      return
+
+                  # Validate the time is parseable ISO8601.
+                  try:
+                      datetime.datetime.fromisoformat(time_str)
+                  except ValueError:
+                      msg = "invalid ISO8601 time: {!r}".format(time_str)
+                      self._log("POST /api/time -> 400 ({})".format(msg))
+                      _send_json(self, 400, {"error": msg})
+                      return
+
+                  # Validate the timezone is a known IANA name.
+                  known = _valid_timezones()
+                  if known is not None and tz not in known:
+                      msg = "unknown timezone: {!r}".format(tz)
+                      self._log("POST /api/time -> 400 ({})".format(msg))
+                      _send_json(self, 400, {"error": msg})
+                      return
+
+                  # Apply via timedatectl (shell=False, argument-list form).
+                  ok, apply_err = _apply_time(time_str, tz)
+                  if not ok:
+                      self._log("POST /api/time -> 500 ({})".format(apply_err))
+                      _send_json(self, 500, {"error": apply_err})
+                      return
+
+                  payload = {
+                      "status": "ok",
+                      "time": time_str,
+                      "tz": tz,
+                  }
+                  self._log("POST /api/time -> 200 (time={}, tz={})".format(
+                      time_str, tz))
+                  _send_json(self, 200, payload)
+
+
+          def main():
+              port = int(os.environ.get("COMPANION_PORT", DEFAULT_PORT))
+              server = ThreadingHTTPServer((HOST, port), CompanionHandler)
+              print("[{}] jetson-companion listening on {}:{}".format(
+                  datetime.datetime.now().isoformat(), HOST, port))
+              sys.stdout.flush()
+              try:
+                  server.serve_forever()
+              except KeyboardInterrupt:
+                  pass
+              finally:
+                  server.server_close()
+
+
+          if __name__ == "__main__":
+              main()
+      notify: Restart jetson-companion service
+
+    # -------------------------------------------------------------------
+    # 2. Install the long-running systemd service.
+    # -------------------------------------------------------------------
+    - name: Install jetson-companion.service
+      copy:
+        dest: "/etc/systemd/system/{{ companion_service }}"
+        owner: root
+        group: root
+        mode: '0644'
+        content: |
+          [Unit]
+          Description=Jetson companion clock-sync service (BL-64)
+          After=network-online.target
+          Wants=network-online.target
+
+          [Service]
+          Type=simple
+          User=root
+          ExecStart={{ companion_script }}
+          Restart=on-failure
+          RestartSec=3
+          Environment=COMPANION_PORT={{ companion_port }}
+
+          [Install]
+          WantedBy=multi-user.target
+      notify: Restart jetson-companion service
+
+    # -------------------------------------------------------------------
+    # 3. Enable + start the service (daemon_reload so the new unit is seen).
+    #    The handler above restarts it if the script/unit content changed.
+    # -------------------------------------------------------------------
+    - name: Enable + start jetson-companion.service
+      systemd:
+        name: "{{ companion_service }}"
+        enabled: yes
+        daemon_reload: yes
+        state: started
