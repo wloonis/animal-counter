@@ -45,6 +45,7 @@ class Rendering:
         self.btn_auto_on, self.btn_auto_on_inv_alpha, self.btn_auto_on_size = self.load_button("/app/img/auto_on.png")
         self.btn_auto_off, self.btn_auto_off_inv_alpha, self.btn_auto_off_size = self.load_button("/app/img/auto_off.png")
         self.btn_reset, self.btn_reset_inv_alpha, self.btn_reset_size = self.load_button("/app/img/reset.png")
+        self.btn_arret, self.btn_arret_inv_alpha, self.btn_arret_size = self.load_button("/app/img/arret.png")
         self.play_0, self.play_0_inv, self.play_0_size = self.load_button("/app/img/0.png")
         self.play_1, self.play_1_inv, self.play_1_size = self.load_button("/app/img/1.png")
         self.play_2, self.play_2_inv, self.play_2_size = self.load_button("/app/img/2.png")
@@ -116,10 +117,18 @@ class Rendering:
         base_width = int(0.25 * w)  # largeur du sprite (important)
 
         # =========================
+        # 🛑 BOUTON ARRÊT (BL-62) — permanent, tous états, coin haut-gauche
+        # =========================
+        # Bouton d'extinction standalone à (x=20, y=20), dessiné AVANT le sprite
+        # pour que le sprite (décalé à droite) ne chevauche pas l'Arrêt.
+        self._draw_button(img, self.btn_arret, self.btn_arret_inv_alpha, 20, 20, base_width // 3, button_name="arret")
+
+        # =========================
         # 🎮 BOUTON PLAY/PAUSE/STOP (SPRITE UNIQUE)
         # =========================
-        x = margin_x
-        y = margin_y
+        # Sprite décalé à droite de l'Arrêt: x = 20 + largeur_arret + gap(30)
+        x = 20 + (base_width // 3) + 30
+        y = 20
 
         if shared_state.status == 0:
             btn = self.play_0
@@ -156,7 +165,17 @@ class Rendering:
             self._draw_button(img, self.btn_reset, self.btn_reset_inv_alpha, x_reset, y, base_width // 3, button_name="reset")
         else:
             self._draw_button(img, self.btn_auto_off, self.btn_auto_off_inv_alpha, x_auto, y, base_width // 3, button_name="auto")
-    
+
+        # =========================
+        # MESSAGE D'ARRÊT (BL-62) — affiché pendant la finalisation/poweroff
+        # =========================
+        if shared_state.arret_requested:
+            msg = "Le compteur va s'arrêter..."
+            text_size = cv2.getTextSize(msg, cv2.FONT_HERSHEY_SIMPLEX, 1.0, 2)[0]
+            text_x = (w - text_size[0]) // 2
+            text_y = h // 2
+            cv2.putText(img, msg, (text_x, text_y), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 0, 255), 2)
+
         return img
 
 
@@ -166,7 +185,11 @@ class Rendering:
 
             if x1 <= x <= x2 and y1 <= y <= y2:
 
-                if name == "learning":
+                if name == "arret":
+                    # BL-62: demande d'arrêt propre + poweroff (logique lourde dans DisplayThread)
+                    shared_state.arret_requested = True
+
+                elif name == "learning":
                     shared_state.learning_mode = not shared_state.learning_mode
                     shared_state.learning_start_time = time.time()
                     shared_state.image_counter = 0
