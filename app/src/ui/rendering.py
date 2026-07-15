@@ -45,7 +45,7 @@ class Rendering:
         self.btn_auto_on, self.btn_auto_on_inv_alpha, self.btn_auto_on_size = self.load_button("/app/img/auto_on.png")
         self.btn_auto_off, self.btn_auto_off_inv_alpha, self.btn_auto_off_size = self.load_button("/app/img/auto_off.png")
         self.btn_reset, self.btn_reset_inv_alpha, self.btn_reset_size = self.load_button("/app/img/reset.png")
-        self.btn_arret, self.btn_arret_inv_alpha, self.btn_arret_size = self.load_button("/app/img/arret.png")
+        self.btn_arret, self.btn_arret_inv_alpha, self.btn_arret_size = self.load_button("/app/img/shutdown.png")
         self.play_0, self.play_0_inv, self.play_0_size = self.load_button("/app/img/0.png")
         self.play_1, self.play_1_inv, self.play_1_size = self.load_button("/app/img/1.png")
         self.play_2, self.play_2_inv, self.play_2_size = self.load_button("/app/img/2.png")
