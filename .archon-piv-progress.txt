@@ -16,3 +16,8 @@ Task 8: K3s hostPID + terminationGracePeriodSeconds:15 — fb48643
 Task 9: VERIFY py_compile PASS, config.json mode=standard, only 5 allowed files touched — fb48643 (bookkeeping)
 Task 10: VALIDATE validate_on_jetson.sh STANDARD mode — PASS (validation-1-#9: expected 9, actual 9)
 Task 11: PR #62 created — https://github.com/wloonis/animal-counter/pull/62 (Closes #60) — b36f0a0
+Task 1: CREATE configure_companion.yml playbook (vars, 3 tasks, restart handler) — ba8b779
+Task 2: WRITE inline Python script (stdlib-only, /api/identify + /api/time, py_compile PASS) — ba8b779
+Task 3: WRITE inline systemd unit (Type=simple, After=network-online, User=root, Restart=on-failure) — ba8b779
+Task 4: CREATE docs/11_jetson_companion.md — efa4131
+Task 5: RUN playbook live on Jetson — 1st run changed=4 (script+unit+systemd+handler restart), 2nd run changed=0 idempotent (no handler fired) — efa4131 (live exec, no code change)
