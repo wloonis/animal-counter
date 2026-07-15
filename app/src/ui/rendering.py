@@ -78,11 +78,21 @@ class Rendering:
 
         return overlay_premult, inv_alpha, overlay.shape[:2]
     
-    def _draw_button(self, img, btn, inv, x, y, target_width, button_name=None, is_sprite=False):
-        """Helper method to draw a button with consistent scaling and overlay."""
+    def _draw_button(self, img, btn, inv, x, y, target_width=None, button_name=None, is_sprite=False, target_height=None):
+        """Helper method to draw a button with consistent scaling and overlay.
+
+        By default sizes by ``target_width`` (aspect ratio preserved). If
+        ``target_height`` is given, sizes by height instead — so buttons with
+        different aspect ratios (e.g. the wide shutdown button vs the taller
+        reset/auto buttons) can share the same rendered height.
+        Returns ``(new_w, new_h)``, or ``(0, 0)`` if the asset failed to load.
+        """
         if btn is not None:
             h_btn, w_btn = btn.shape[:2]
-            scale = target_width / w_btn
+            if target_height is not None:
+                scale = target_height / h_btn
+            else:
+                scale = target_width / w_btn
             new_w = int(w_btn * scale)
             new_h = int(h_btn * scale)
 
@@ -102,6 +112,8 @@ class Rendering:
                 self.buttons["stop"] = (x + 2 * third, y, x + new_w, y + new_h)
             elif button_name:
                 self.buttons[button_name] = (x, y, x + new_w, y + new_h)
+            return new_w, new_h
+        return 0, 0
     
     def draw_ui(self, img, shared_state, input_type):
         if input_type != "CAMERA":
@@ -121,13 +133,17 @@ class Rendering:
         # =========================
         # Bouton d'extinction standalone à (x=20, y=20), dessiné AVANT le sprite
         # pour que le sprite (décalé à droite) ne chevauche pas l'Arrêt.
-        self._draw_button(img, self.btn_arret, self.btn_arret_inv_alpha, 20, 20, base_width // 3, button_name="arret")
+        # Dimensionné par HAUTEUR (button_height) pour aligner avec les autres
+        # boutons (reset/auto), dont l'image source est plus carrée — sinon le
+        # bouton shutdown (image large 141×31) rendrait plus court à largeur égale.
+        button_height = base_width // 9  # = hauteur rendue de reset (base_width//3 largeur, ratio ~3)
+        arret_w, _ = self._draw_button(img, self.btn_arret, self.btn_arret_inv_alpha, 20, 20, button_name="arret", target_height=button_height)
 
         # =========================
         # 🎮 BOUTON PLAY/PAUSE/STOP (SPRITE UNIQUE)
         # =========================
-        # Sprite décalé à droite de l'Arrêt: x = 20 + largeur_arret + gap(30)
-        x = 20 + (base_width // 3) + 30
+        # Sprite décalé à droite de l'Arrêt: x = 20 + largeur_arret_réelle + gap(30)
+        x = 20 + arret_w + 30
         y = 20
 
         if shared_state.status == 0:
