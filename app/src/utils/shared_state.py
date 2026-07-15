@@ -58,3 +58,6 @@ class SharedState:
         self.reset = False
         ### MODIFICATION: Learning Mode - End
         self.stop_event = Event()
+        # BL-62: Arrêt button — flags for graceful shutdown + poweroff
+        self.arret_requested = False
+        self.poweroff_requested = False
