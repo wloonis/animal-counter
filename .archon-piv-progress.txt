@@ -21,3 +21,4 @@ Task 2: WRITE inline Python script (stdlib-only, /api/identify + /api/time, py_c
 Task 3: WRITE inline systemd unit (Type=simple, After=network-online, User=root, Restart=on-failure) — ba8b779
 Task 4: CREATE docs/11_jetson_companion.md — efa4131
 Task 5: RUN playbook live on Jetson — 1st run changed=4 (script+unit+systemd+handler restart), 2nd run changed=0 idempotent (no handler fired) — efa4131 (live exec, no code change)
+Task 6: VERIFY acceptance curls live — identify 200, POST /api/time 200, timedatectl reflects new time, systemctl enabled+active, bad-ISO 400, bad-tz 400 — 397c6a2 (fix: strip ISO8601 offset for timedatectl)
