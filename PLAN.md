@@ -1,140 +1,70 @@
-# Plan: Bounding Box Visual Readability (BL-58)
+# Plan: BL-62 — Bouton « Arrêt » à l'écran (finalise vidéos + poweroff Jetson)
 
 ## Summary
-The track ID and detection score are barely visible on the output video: the
-label text is tiny (fontScale 0.33), drawn quasi-white on a green box with no
-outline, the box color is a fixed green for all tracks, and the centroid is a
-1px ring. This plan refactors the cv2 drawing in `tracking.py` (boxes, labels,
-centroids) and adds render settings in `settings.py` — purely visual, zero
-impact on counting/tracking logic.
 
-Issue: https://github.com/wloonis/animal-counter/issues/53 (BL-58)
+Add a permanent « Arrêt » (power-off) button at the top-left of the counting screen (x=20, y=20) that finalizes any in-progress recording (flush moov atom, rename `tmp-counting` → `tocompress-counting`), stops the app cleanly, then powers off the Jetson via `nsenter` → `systemctl poweroff`. This replaces the current brutal power-cut (which corrupts mp4s and leaves K3s in an error state) with a graceful shutdown: the user clicks Arrêt, the machine halts cleanly, then they cut the electric power on an already-off machine.
 
 ## In Scope
-- `Tracking.plot_one_box` — thicker box, larger outlined label, semi-opaque
-  background, luminance-adaptive text color, padding, smart placement.
-- `Tracking.draw_counter` — new label format `ID:12 0.87`, deterministic
-  per-track-id box color (hash→HSV→BGR, cached), larger filled centroid.
-- `Tracking.__init__` — plumb new render settings; add a per-id color cache.
-- `app/src/settings.py` — add `DRAW_LABEL_FONT_SCALE`, `DRAW_LABEL_THICKNESS`,
-  `DRAW_BOX_LINE_THICKNESS`, `DRAW_CENTROID_RADIUS` via `os.getenv` with defaults.
-- Plumbage of the new settings from `Settings` → `shared_state` → `Tracking`.
-- Validation: `python3 -m py_compile` + `scripts/validate_on_jetson.sh` (standard).
+- New asset `app/img/arret.png` (~30×90 BGRA, power/stop icon, same style as `reset.png`)
+- `app/src/ui/rendering.py`: load `btn_arret`; draw it permanently at (20, 20) in all states; shift the play/pause/stop sprite right to avoid overlap; `handle_click` sets `shared_state.arret_requested = True`; show on-screen message "Le compteur va s'arrêter..." when `arret_requested` is True
+- `app/src/utils/shared_state.py`: add `self.arret_requested = False` and `self.poweroff_requested = False`
+- `app/src/main.py`: `DisplayThread.run` detects `arret_requested` → status=0/auto_mode=False/learning_mode=False → `_finalize_recording()` (CRITICAL, synchronous, BEFORE poweroff) → `stop_event.set()` → `poweroff_requested=True`; `__main__` CAMERA/serve mode adds wait loop → `stop()` → `nsenter systemctl poweroff`
+- `k3s/templates/countingapp-dep.j2`: add `hostPID: true`; change `terminationGracePeriodSeconds: 0` → `15`
 
 ## Out of Scope
-- Counting logic, OC-SORT, guard/hysteresis params (`COUNTING_LOST_BUFFER_FRAMES`,
-  `COUNTING_GUARD_MAX_AGE`, `COUNTING_HYSTERESIS_PX=0`).
-- K3s infra, entrypoint, templates.
-- `Rendering.draw_ui` buttons (only minor visual coherence if needed).
-- GUI/window dependencies — cv2-only ops on the numpy frame (headless-safe).
-- Issue #48 (BL-56) — related but handled independently.
+- Any counting/tracking/params logic (OC-SORT, FPS_OUTPUT=30, config.json mode='standard' untouched)
+- The `--full` validation mode
+- Committing `.env.local` or `.archon-relay/`
 
 ## Architecture Decisions
-- **cv2-only, headless-safe (D9)** — every draw op stays on the numpy frame via
-  `cv2`; the annotated frame is written to the output video as today. No new deps.
-- **Settings-driven with sensible defaults (D8)** — all new tunables are
-  `os.getenv`-backed in `Settings` with defaults that reproduce the improved
-  look out-of-the-box (no `.env` edit required). Existing settings untouched.
-- **Settings plumbed via shared_state** — `Tracking` already reads
-  `self.shared_state.box_tracking` / `centroid_tracking`; the new render
-  values are added to the same `shared_state` object (or `Settings` instance it
-  wraps), so `plot_one_box`/`draw_counter` consume them without changing call
-  signatures of `plot_one_box` (kept generic) beyond reading cached attributes.
-- **Deterministic color per track id (D6)** — **primary purpose: visually
-  detect ID jumps (ID switches) on the same pig.** When a pig keeps the same ID
-  its box stays one color; if OC-SORT re-IDs it mid-crossing, the box color
-  changes abruptly — an at-a-glance cue for ID-switch defects. A small helper
-  maps `track_id → stable BGR` via a hue hash (HSV→BGR) with fixed S/V, cached
-  in a dict on `Tracking` so the same id always gets the same color. Hue is
-  spread across the full 0–180° range (not sequential ids → adjacent hues) so
-  neighboring ids get visibly different colors, making switches obvious. S/V
-  chosen for good contrast against a typical barn/floor background.
-- **Label readability stack (D3)** — draw a semi-opaque rounded background
-  rectangle (alpha blend via a temporary overlay), then a black text outline
-  (`cv2.putText` in black, 1px offset in 4 directions) under the foreground
-  text. Text color chosen by luminance of the background box color (white on
-  dark, black on light).
-- **Single-line label `ID:12 0.87` (D4)** — one line keeps the implementation
-  simple and the background-rectangle math trivial; ID first (bold visual
-  weight via larger text), score second. Two-line is deferred (option only).
-- **Smart placement (D7)** — label defaults above the box; if the box top is
-  within ~the label height of the frame top, flip it below the box.
+
+- **Button Arrêt standalone at x=20, y=20; sprite shifted right** — The Arrêt button occupies the top-left corner alone (x=20), and the existing play/pause/stop sprite is shifted right to `x = 20 + (base_width // 3) + 30` (gap=30px). Both aligned on the same row at y=20 (no vertical offset). This keeps the Arrêt at the ~20px-from-edge position per spec while avoiding overlap with the sprite (currently at `margin_x = 0.03*w` ≈ 38px).
+
+- **Bouton Arrêt is PERMANENT in ALL states** — Unlike the learning/auto buttons which have on/off states, the Arrêt button is always visible (it's a power button, not a toggle). It's drawn unconditionally in `draw_ui()` for CAMERA input, regardless of `shared_state.status` or `shared_state.learning_mode`. This ensures the user can power off at any moment.
+
+- **`handle_click` only sets a flag; `DisplayThread.run` does the heavy sequence** — The click callback runs in the mouse callback context (on the display thread via `cv2.setMouseCallback`). Setting `shared_state.arret_requested = True` is the only action. The main loop in `DisplayThread.run` detects this flag and executes the ordered shutdown sequence. This avoids any heavy/blocking logic in the click handler.
+
+- **`_finalize_recording()` MUST run synchronously BEFORE any poweroff** — The moov atom flush (cv2.VideoWriter.release) and the `tmp-counting` → `tocompress-counting` rename happen in `DisplayThread.run` before `stop_event.set()` and `poweroff_requested=True`. This guarantees the recording is safe on disk before the machine begins shutting down. `_finalize_recording()` is already idempotent (guards on `writer is None / not isOpened / not recording`), so it's safe even if already finalized.
+
+- **Main thread serve mode: wait loop → stop() → poweroff** — Currently in CAMERA/serve mode (RESULT_JSON_PATH not set), the main thread stays alive via non-daemon threads after `start()`. Add a `while not shared_state.stop_event.is_set(): time.sleep(0.5)` loop after `start()`, then `stop()` (join threads, TensorRT cleanup, destroy windows), then if `poweroff_requested`: `subprocess.run(['nsenter','-t','1','-m','-u','-i','-n','--','sh','-c','sync; systemctl poweroff'], check=False)`. The `nsenter -t 1` targets PID 1 in the host's PID namespace (systemd), which requires `hostPID: true` in the pod manifest.
+
+- **`hostPID: true` + `terminationGracePeriodSeconds: 15`** — The pod is already `privileged: true` but needs `hostPID: true` to share the host's PID namespace so `nsenter -t 1` reaches the host's systemd. The grace period is bumped from 0 to 15 to give `stop()` (~5s) time to finish during the poweroff sequence (and also helps normal K3s restarts).
+
+- **On-screen message during shutdown** — When `arret_requested` is True, display "Le compteur va s'arrêter..." on screen during the finalization/poweroff phase so the user knows the shutdown is in progress and doesn't click again or cut power prematurely.
 
 ## Tasks
-- [x] Task 1: ADD render settings `app/src/settings.py` — add four `os.getenv`
-  settings to `Settings.__init__`: `DRAW_BOX_LINE_THICKNESS` (default `2`),
-  `DRAW_LABEL_FONT_SCALE` (default `0.6`), `DRAW_LABEL_THICKNESS` (default
-  `2`), `DRAW_CENTROID_RADIUS` (default `3`). Keep all existing settings intact.
-- [x] Task 2: PLUMB render settings into `shared_state` — wherever
-  `shared_state` is constructed (follow the existing `box_tracking`/
-  `centroid_tracking` assignment pattern), expose the four new settings so
-  `Tracking` can read `self.shared_state.draw_box_line_thickness`, etc. (If
-  `shared_state` is a thin object, add the attributes; if it wraps `Settings`,
-  ensure they pass through.)
-- [x] Task 3: ADD per-id color helper + cache in `app/src/core/tracking.py` —
-  add a method (e.g. `_track_color(self, track_id)`) that hashes the id to a
-  hue spread across the full 0–180° hue range (so adjacent ids differ visibly
-  and ID switches on the same pig are easy to spot), converts HSV→BGR with
-  fixed S/V, caches the result in `self._color_cache` (dict init in `__init__`).
-  Returns a stable, well-contrasted BGR tuple.
-- [x] Task 4: REWRITE `Tracking.plot_one_box` `app/src/core/tracking.py` —
-  consume the new settings (default to `shared_state` values, fallback to the
-  `Settings` defaults): `tl = line_thickness or self.shared_state.draw_box_line_thickness`;
-  `fontScale = self.shared_state.draw_label_font_scale`; `tf = self.shared_state.draw_label_thickness`.
-  Draw the box with `cv2.LINE_AA`. If label: compute text size with the new
-  fontScale/thickness, add ~2px padding, draw a semi-opaque background
-  rectangle (alpha overlay) sized to the label; choose text color by luminance
-  of the box color; draw black outline text then foreground text; place label
-  above the box, or below if too close to the frame top (needs frame height —
-  use `img.shape[0]`).
-- [x] Task 5: REWRITE label format + color + centroid in `Tracking.draw_counter`
-  `app/src/core/tracking.py` — replace the box color `(0,255,0)` with
-  `self._track_color(track_id)`; replace the label
-  `"{}:{}:{:.2f}".format(categories[...], str(track_id), score)` with
-  `"ID:{} {:.2f}".format(int(track_id), float(score))`; pass
-  `line_thickness=self.shared_state.draw_box_line_thickness` to `plot_one_box`;
-  replace the centroid `cv2.circle(center, 1, (255,255,0), thickness=1)` with
-  `cv2.circle(center, radius=self.shared_state.draw_centroid_radius,
-  self._track_color(track_id), thickness=-1)` (filled, contrasted).
-- [x] Task 6: ENSURE visual coherence in `app/src/ui/rendering.py` — review
-  `Rendering.draw_ui`; if it draws labels/text that clash with the new box
-  style (e.g. same tiny fontScale), align its text size to the new
-  `DRAW_LABEL_FONT_SCALE`/`DRAW_LABEL_THICKNESS` settings. Only touch text
-  sizing — no UI button logic changes.
-- [x] Task 7: VALIDATE — `python3 -m py_compile app/src/core/tracking.py
-  app/src/settings.py app/src/ui/rendering.py`; then run
-  `scripts/validate_on_jetson.sh` (standard mode, no `--full`) to confirm
-  counting results are unchanged.
-  - py_compile on the three changed files: PASS.
-  - Full sweep `python3 -m py_compile app/src/*.py app/src/**/*.py`: PASS.
-  - `scripts/validate_on_jetson.sh` (standard): deferred to the Jetson phase
-    (requires JETSON_PASSWORD + a physical Jetson on the network; not runnable
-    in this dev session). Counting logic is untouched by this visual-only
-    branch, so net counts are expected unchanged.
+
+- [x] Task 1: CREATE `app/img/arret.png` — Generate a ~30×90 BGRA PNG power/stop icon matching the style of `reset.png` (30×90, ratio ~1:3, alpha channel). If a polished icon can't be generated, create a functional 30×90 BGRA PNG (the user will refine the visual later). Must load successfully via `load_button()` (which requires `cv2.IMREAD_UNCHANGED` → 4 channels).
+
+- [ ] Task 2: EDIT `app/src/utils/shared_state.py` — Add `self.arret_requested = False` and `self.poweroff_requested = False` in `__init__` (near the end, after `self.stop_event = Event()`).
+
+- [ ] Task 3: EDIT `app/src/ui/rendering.py` — In `__init__` (after the `btn_reset` load, ~line 47), add: `self.btn_arret, self.btn_arret_inv_alpha, self.btn_arret_size = self.load_button("/app/img/arret.png")`.
+
+- [ ] Task 4: EDIT `app/src/ui/rendering.py` — In `draw_ui()`: (a) Draw the Arrêt button permanently at (x=20, y=20) with `base_width // 3` width via `self._draw_button(img, self.btn_arret, self.btn_arret_inv_alpha, 20, 20, base_width // 3, button_name="arret")` — this must be drawn BEFORE the sprite so the sprite (shifted right) doesn't overlap; (b) Change the sprite x position from `margin_x` to `x = 20 + (base_width // 3) + 30` (gap=30px) so it's shifted right of the Arrêt button; (c) If `shared_state.arret_requested` is True, draw the message "Le compteur va s'arrêter..." on screen (e.g. centered, red text, via `cv2.putText`).
+
+- [ ] Task 5: EDIT `app/src/ui/rendering.py` — In `handle_click()`: add a branch for `name == "arret"` that sets `shared_state.arret_requested = True` (no other logic — no status change, no finalize, no stop here).
+
+- [ ] Task 6: EDIT `app/src/main.py` — In `DisplayThread.run()`, at the TOP of the `while not self.stop_event.is_set():` loop (before the existing recording-stop logic), add a check: if `shared_state.arret_requested` is True, execute the ordered shutdown sequence: (a) `shared_state.status = 0`, `shared_state.auto_mode = False`, `shared_state.learning_mode = False`; (b) `self._finalize_recording()` (synchronous, flushes moov atom + renames tmp→tocompress — CRITICAL before any poweroff); (c) `shared_state.stop_event.set()`; (d) `shared_state.poweroff_requested = True`; then `break` out of the loop. The existing post-loop `self._finalize_recording()` safety-net call remains (idempotent no-op).
+
+- [ ] Task 7: EDIT `app/src/main.py` — In `__main__`, in the CAMERA/serve path (the `else` branch where `result_json_path` is empty/falsy — i.e. NOT the validate mode): after `start(input_source, video)` and `logger.info("Inference Started")`, add a wait loop `while not shared_state.stop_event.is_set(): time.sleep(0.5)`, then `stop()`, then `if shared_state.poweroff_requested: subprocess.run(["nsenter", "-t", "1", "-m", "-u", "-i", "-n", "--", "sh", "-c", "sync; systemctl poweroff"], check=False)`. Add `import subprocess` at the top of the file if not already present. This must NOT affect the validate mode (RESULT_JSON_PATH set) which has its own join/wait/stop logic.
+
+- [ ] Task 8: EDIT `k3s/templates/countingapp-dep.j2` — (a) Add `hostPID: true` at the pod spec level (under `spec.template.spec`, near `terminationGracePeriodSeconds`); (b) Change `terminationGracePeriodSeconds: 0` to `terminationGracePeriodSeconds: 15`.
+
+- [ ] Task 9: VERIFY — Run `python3 -m py_compile app/src/ui/rendering.py app/src/main.py app/src/utils/shared_state.py` to confirm no syntax errors. Confirm `config.json` mode is still 'standard' (untouched). Confirm no counting/tracking/params logic was changed.
+
+- [ ] Task 10: VALIDATE — Prepare the fresh worktree (copy gitignored files: `.env.local`, `app/model/`, `app/.env`, `validation/videos/*.mp4` from the main worktree via `git worktree list` → first worktree path; do NOT symlink `app/model` — copy files for real). Run `scripts/validate_on_jetson.sh` in STANDARD mode (validation-1-#9, expected count 9). Do NOT use `--full`.
+
+- [ ] Task 11: PR — Create a PR with body including `Closes #60` to auto-close the GitHub issue on merge.
 
 ## Validation
-- `python3 -m py_compile app/src/core/tracking.py app/src/settings.py app/src/ui/rendering.py` — syntax/type import sanity.
-- `scripts/validate_on_jetson.sh` (standard) — confirm net counts on reference videos are unchanged (UI-only branch).
-- Visual spot-check (manual): run the app on a sample clip; confirm boxes are
-  thicker, each track has a distinct stable color, the label reads `ID:xx 0.xx`
-  clearly with a semi-opaque background and outline, and the centroid is a
-  visible filled dot.
+- `python3 -m py_compile app/src/ui/rendering.py app/src/main.py app/src/utils/shared_state.py` — no syntax errors
+- `scripts/validate_on_jetson.sh` (STANDARD mode, validation-1-#9, expected 9) — counting logic unchanged
+- Confirm `config.json` mode is still 'standard'
+- Confirm only the 5 allowed files were touched: `app/img/arret.png`, `app/src/ui/rendering.py`, `app/src/main.py`, `app/src/utils/shared_state.py`, `k3s/templates/countingapp-dep.j2`
 
 ## Risks
-- **shared_state shape unknown for new attributes** — `shared_state` is built
-  elsewhere; if adding attributes there is invasive, fall back to reading the
-  new settings directly from a `Settings` instance passed/available to
-  `Tracking`. Mitigation: follow the exact existing pattern used for
-  `box_tracking`/`centroid_tracking`.
-- **Alpha overlay performance** — per-frame `cv2.addWeighted` on a small label
-  region is cheap, but on a Jetson with many boxes keep the overlay limited to
-  the label rectangle (not the full frame). Mitigation: only allocate the
-  overlay on the label bounding box.
-- **Color contrast on varied barn backgrounds** — deterministic hue could land
-  on a low-contrast color for some backgrounds. Mitigation: fixed S/V and a
-  luminance-adaptive text color; box color is decorative (tracking is by id),
-  so contrast is a nicety not a correctness risk.
-- **`plot_one_box` used elsewhere with different expectations** — it is a
-  generic helper; new defaults change its look everywhere it's called.
-  Mitigation: the only caller is `draw_counter` (confirmed in the clarify
-  read), so the blast radius is contained.
+- **arret.png fails to load** — `load_button()` returns `(None, None, None)` if the PNG isn't 4-channel or can't be read. `_draw_button` already guards on `btn is not None`, so a failed load is a no-op (button invisible but no crash). Mitigation: verify the PNG is BGRA 4-channel 30×90 after creation.
+- **nsenter fails on the Jetson** — If `hostPID: true` doesn't grant access to the host's systemd PID 1, `nsenter -t 1 ... systemctl poweroff` may fail. Mitigation: `check=False` means it won't raise; the app still stops cleanly (stop() already ran). The poweroff just won't happen and the user can cut power manually (same as today, but with finalized videos). To be validated on the Jetson.
+- **DisplayThread doesn't get to process arret_requested before stop_event** — The arret check is at the top of the loop, before the frame queue get. If the queue is empty, the `get(timeout=1)` times out and loops back to the arret check. So the flag is detected within ~1s. Mitigation: the check is at loop top, before any blocking get.
+- **Main thread serve mode blocks forever if stop_event never sets** — The `while not stop_event.is_set(): sleep(0.5)` loop exits when DisplayThread sets stop_event (in the arret sequence) or on SIGTERM (handle_sigterm calls stop() which sets stop_event). Mitigation: stop_event is set by both the arret sequence and SIGTERM, so the loop always exits.
+- **Sprite shift breaks existing button click coordinates** — The sprite is shifted right, but `draw_ui()` rebuilds `self.buttons` every frame with the new x position, and `handle_click()` reads from `self.buttons`, so the click hit-boxes move with the sprite. No hardcoded coordinates in handle_click. Mitigation: the buttons dict is the single source of truth for hit areas.
