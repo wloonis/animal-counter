@@ -22,3 +22,4 @@ Task 3: WRITE inline systemd unit (Type=simple, After=network-online, User=root,
 Task 4: CREATE docs/11_jetson_companion.md — efa4131
 Task 5: RUN playbook live on Jetson — 1st run changed=4 (script+unit+systemd+handler restart), 2nd run changed=0 idempotent (no handler fired) — efa4131 (live exec, no code change)
 Task 6: VERIFY acceptance curls live — identify 200, POST /api/time 200, timedatectl reflects new time, systemctl enabled+active, bad-ISO 400, bad-tz 400 — 397c6a2 (fix: strip ISO8601 offset for timedatectl)
+Task 7: RUN standard validation regression — PASS (validation-1-#9.mp4 expected 9 actual 9 diff 0, host service on 8090 did not disturb k3s countingapp, config.json mode=standard)
