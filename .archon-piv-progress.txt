@@ -14,3 +14,4 @@ Task 6: DisplayThread.run arret shutdown sequence — d5ab24f
 Task 7: __main__ serve mode wait loop + poweroff — d5ab24f (committed with Task 6, same file)
 Task 8: K3s hostPID + terminationGracePeriodSeconds:15 — fb48643
 Task 9: VERIFY py_compile PASS, config.json mode=standard, only 5 allowed files touched — fb48643 (bookkeeping)
+Task 10: VALIDATE validate_on_jetson.sh STANDARD mode — PASS (validation-1-#9: expected 9, actual 9)

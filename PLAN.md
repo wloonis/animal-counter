@@ -52,7 +52,7 @@ Add a permanent « Arrêt » (power-off) button at the top-left of the counting 
 
 - [x] Task 9: VERIFY — Run `python3 -m py_compile app/src/ui/rendering.py app/src/main.py app/src/utils/shared_state.py` to confirm no syntax errors. Confirm `config.json` mode is still 'standard' (untouched). Confirm no counting/tracking/params logic was changed.
 
-- [ ] Task 10: VALIDATE — Prepare the fresh worktree (copy gitignored files: `.env.local`, `app/model/`, `app/.env`, `validation/videos/*.mp4` from the main worktree via `git worktree list` → first worktree path; do NOT symlink `app/model` — copy files for real). Run `scripts/validate_on_jetson.sh` in STANDARD mode (validation-1-#9, expected count 9). Do NOT use `--full`.
+- [x] Task 10: VALIDATE — Prepare the fresh worktree (copy gitignored files: `.env.local`, `app/model/`, `app/.env`, `validation/videos/*.mp4` from the main worktree via `git worktree list` → first worktree path; do NOT symlink `app/model` — copy files for real). Run `scripts/validate_on_jetson.sh` in STANDARD mode (validation-1-#9, expected count 9). Do NOT use `--full`.
 
 - [ ] Task 11: PR — Create a PR with body including `Closes #60` to auto-close the GitHub issue on merge.
 
