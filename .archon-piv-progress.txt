@@ -15,3 +15,4 @@ Task 7: __main__ serve mode wait loop + poweroff — d5ab24f (committed with Tas
 Task 8: K3s hostPID + terminationGracePeriodSeconds:15 — fb48643
 Task 9: VERIFY py_compile PASS, config.json mode=standard, only 5 allowed files touched — fb48643 (bookkeeping)
 Task 10: VALIDATE validate_on_jetson.sh STANDARD mode — PASS (validation-1-#9: expected 9, actual 9)
+Task 11: PR #62 created — https://github.com/wloonis/animal-counter/pull/62 (Closes #60) — b36f0a0
