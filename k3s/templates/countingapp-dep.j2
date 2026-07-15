@@ -19,7 +19,8 @@ spec:
         app: "{{ app_name }}"
 
     spec:
-      terminationGracePeriodSeconds: 0
+      terminationGracePeriodSeconds: 15
+      hostPID: true
 
 #      initContainers:
 #      - name: wait-for-batch

@@ -15,6 +15,7 @@ import sys
 import os
 import signal
 import json
+import subprocess
 import numpy as np
 from queue import Queue
 from argparse import ArgumentParser
@@ -298,6 +299,19 @@ class DisplayThread(threading.Thread):
 
         while not self.stop_event.is_set():
             time_start = time.time()
+
+            # BL-62: Arrêt propre — détecte la demande d'arrêt et lance la séquence
+            # d'extinction: (1) status=0/auto/learning off, (2) _finalize_recording
+            # (flush moov atom + rename tmp->tocompress, CRITIQUE avant poweroff),
+            # (3) stop_event.set(), (4) poweroff_requested=True.
+            if shared_state.arret_requested:
+                shared_state.status = 0
+                shared_state.auto_mode = False
+                shared_state.learning_mode = False
+                self._finalize_recording()
+                shared_state.stop_event.set()
+                shared_state.poweroff_requested = True
+                break
 
             if logger.isEnabledFor(logging.DEBUG):
                 logger.debug(f"Value Recording: {shared_state.recording}; Value Status: {shared_state.status}; Video Writer: {self.video_writer}; delay reinit: {shared_state.delay_reinit}")
@@ -657,8 +671,8 @@ if __name__ == "__main__":
         logger.info("Inference Started")
 
         # Mode validate only: wait for threads to finish and write result JSON.
-        # In normal serve mode (RESULT_JSON_PATH not set), behavior is unchanged:
-        # the process stays alive via non-daemon threads, the app counts continuously.
+        # In normal serve mode (RESULT_JSON_PATH not set), the main thread waits
+        # for stop_event (bouton Arrêt or SIGTERM), then stop() + poweroff (BL-62).
         result_json_path = os.getenv("RESULT_JSON_PATH", "")
         if result_json_path:
             # 1) Wait for the InferThread to finish reading the WHOLE video (it
@@ -684,6 +698,23 @@ if __name__ == "__main__":
             if shared_state.display_thread and shared_state.display_thread.is_alive():
                 shared_state.display_thread.join(timeout=60)
             write_result_json(result_json_path, video, shared_state, start_time)
+        else:
+            # BL-62: CAMERA/serve mode — attend une demande d'arrêt propre (bouton
+            # Arrêt ou SIGTERM), puis stop() + poweroff du Jetson.
+            while not shared_state.stop_event.is_set():
+                time.sleep(0.5)
+            stop()
+            if shared_state.poweroff_requested:
+                # Éteint le Jetson proprement via le systemd hôte (hostPID: true
+                # dans le manifeste K3s permet nsenter -t 1 vers systemd).
+                # L'enregistrement est déjà finalisé (DisplayThread._finalize_recording
+                # appelé avant stop_event.set()), donc le moov atom est sur disque.
+                logger.info("Poweroff requested — shutting down Jetson...")
+                subprocess.run(
+                    ["nsenter", "-t", "1", "-m", "-u", "-i", "-n", "--",
+                     "sh", "-c", "sync; systemctl poweroff"],
+                    check=False
+                )
     except Exception as e:
         logger.error(f"Exception: {repr(e)}")
         # In validate mode, write error result JSON before exiting

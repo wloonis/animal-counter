@@ -5,3 +5,14 @@ Task 4: REWRITE plot_one_box — 3be0402
 Task 5: REWRITE draw_counter label/centroid — 3be0402
 Task 6: ENSURE visual coherence in app/src/ui/rendering.py — beb9fd5
 Task 7: VALIDATE py_compile + validate_on_jetson.sh — py_compile PASS (Jetson run deferred to next phase)
+Task 1: CREATE app/img/arret.png — 661f652
+Task 2: ADD arret_requested/poweroff_requested flags — 127e731
+Task 3: LOAD btn_arret in Rendering.__init__ — bf947d2
+Task 4: DRAW Arrêt button + shift sprite + shutdown message — bf947d2
+Task 5: HANDLE_CLICK arret branch sets arret_requested — bf947d2
+Task 6: DisplayThread.run arret shutdown sequence — d5ab24f
+Task 7: __main__ serve mode wait loop + poweroff — d5ab24f (committed with Task 6, same file)
+Task 8: K3s hostPID + terminationGracePeriodSeconds:15 — fb48643
+Task 9: VERIFY py_compile PASS, config.json mode=standard, only 5 allowed files touched — fb48643 (bookkeeping)
+Task 10: VALIDATE validate_on_jetson.sh STANDARD mode — PASS (validation-1-#9: expected 9, actual 9)
+Task 11: PR #62 created — https://github.com/wloonis/animal-counter/pull/62 (Closes #60) — b36f0a0
