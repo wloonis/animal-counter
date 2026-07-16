@@ -337,6 +337,21 @@ CLI above (what the relay agent uses) and plannotator for plan review.
 
 ## 8. Pi bundled patch — local fix for #6101 / #6102 (PR #6501)
 
+**Archon branch:** `archon-dev-0807-v2` (tracking `origin/dev` + 1 commit: the
+pi pin below). `origin/dev` now contains #2124 **merged** (per-node extension
+posture, #2073), #2126 (interactive-loop completion), #2144 (portable per-node
+posture), and ~14 other PRs. **#2124 is #2073, NOT #6101** — its own diff says
+"we MUST reuse a process-cached, already-reloaded loader", so the runtime
+stays **shared** across nodes and the stale-ctx bug persists; the patch below is
+still required.
+
+The bundled pi-coding-agent is **pinned to exact `0.80.7`** (not `^0.80.6`):
+caret resolves to 0.80.9, whose `@earendil-works/pi-ai` ships a broken
+`./oauth` subpath (`dist/oauth.js` is an empty `export {}` instead of re-
+exporting from `./utils/oauth/index.js`), breaking Archon's
+`@earendil-works/pi-ai/oauth` import (`getOAuthProvider not found`). pi-ai
+0.80.7 has the correct barrel. Keep the exact pin.
+
 The bundled pi-coding-agent (0.80.7) carries a **local patch** transposed from
 upstream PR **#6501** (`wloonis:fix/embedded-library-runtime-theme`), which pi
 **closed NOT_PLANNED** and never merged. It fixes two bugs that break Archon's
@@ -384,5 +399,8 @@ runtime, so the poisoned marker from the previous node's dispose is cleared.
 
 **When the upstream fix eventually lands** (a future pi release merges #6501 or
 an equivalent), drop this patch: delete the script + remove this section. Until
-then this is the **one** local patch on pi (Archon itself has 0 local patches —
-dev + #2124 only).
+then this is the **one** local patch on pi. Archon itself has **0 local patches**
+— it runs purely on `origin/dev` (the pi pin commit is the only local commit on
+the Archon branch). Fallback branches: `archon-dev-0807-exp` (pre-merge #2124
+cherry-pick, kept as rollback), `archon-piv-patches` (0.4.1 + 3 patches, older
+rollback).
