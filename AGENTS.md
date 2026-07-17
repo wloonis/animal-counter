@@ -389,15 +389,25 @@ poisoned → plannotator-plan inherits it → every `pi.*` API call throws
 - `.../dist/core/extensions/runner.js`
 - `.../dist/modes/interactive/theme/theme.js`
 
+⚠️ **The plannotator extension resolves `@earendil-works/pi-coding-agent` from
+the bun hoisted cache (`node_modules/.bun/@earendil-works+pi-coding-agent@*/...`),
+NOT from `packages/providers/node_modules`.** Patching only the providers copy
+leaves plannotator's `continueWhenIdle() -> isIdle() -> assertActive()` using an
+UNPATCHED `runner.js`, so the stale-ctx (#6101) crash persists on plan
+submit/approve. **All copies must be patched.**
+
 These files live in `node_modules` and are **wiped by `bun install`**. Re-apply
-after any install that touches `@earendil-works/pi-coding-agent`:
+after any install that touches `@earendil-works/pi-coding-agent`. With **no
+argument** the script auto-discovers and patches EVERY copy (providers + global
++ all `.bun/` cache versions):
 ```bash
-bash /home/tt/repository/Archon/patches/pi-6501-embedded-runtime-theme.sh   # bundled
-sudo bash /home/tt/repository/Archon/patches/pi-6501-embedded-runtime-theme.sh \
-    /usr/lib/node_modules/@earendil-works/pi-coding-agent                  # global CLI
+bash /home/tt/repository/Archon/patches/pi-6501-embedded-runtime-theme.sh   # all copies
+# (optional) single explicit path, legacy mode:
+bash /home/tt/repository/Archon/patches/pi-6501-embedded-runtime-theme.sh \
+    /usr/lib/node_modules/@earendil-works/pi-coding-agent
 ```
-The script is idempotent (guards each edit with a `grep -q`) and asserts the
-pi version is `0.80.7` (warns otherwise).
+The script is idempotent (guards each edit with a `grep -q`) and warns if the
+pi version is not `0.80.7` (anchors still apply across 0.79.1–0.80.9).
 
 **Validation:** the patch was confirmed by a repro mirroring the PR's regression
 test — `createExtensionRuntime()` → `invalidate()` (assertActive throws) →
