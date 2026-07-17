@@ -44,7 +44,7 @@ Greenfield Kotlin 2.0 + Jetpack Compose + Material 3 Android app under `android/
 
 ### App module build config
 - [x] Task 8: CREATE `android/app/build.gradle.kts` — `com.android.application` + `org.jetbrains.kotlin.android` + `org.jetbrains.kotlin.plugin.compose` plugins; `namespace="com.animalcounter"`, `compileSdk=35`, `buildToolsVersion="34.0.0"`; `defaultConfig` applicationId `com.animalcounter`, minSdk 33, targetSdk 35, versionCode 1/versionName "1.0"; buildTypes release minify false; `compileOptions` Java 17; `kotlinOptions jvmTarget=17`; Compose `buildFeatures { compose = true }` + Compose compiler; Compose BOM + Material3 + activity-compose + lifecycle-viewmodel-compose + datastore-preferences + coroutines deps; `packaging { resources.excludes += "/META-INF/{AL2.0,LGPL2.1}" }`.
-- [ ] Task 9: CREATE `android/app/proguard-rules.pro` — empty/default rules (release minify disabled; keep stub for future).
+- [x] Task 9: CREATE `android/app/proguard-rules.pro` — empty/default rules (release minify disabled; keep stub for future).
 
 ### Manifest + permissions
 - [x] Task 10: CREATE `android/app/src/main/AndroidManifest.xml` — package-less manifest (namespace in gradle); `<uses-permission>` for INTERNET, ACCESS_NETWORK_STATE, RECEIVE_BOOT_COMPLETED, FOREGROUND_SERVICE, FOREGROUND_SERVICE_DATA_SYNC, POST_NOTIFICATIONS; `<application>` with MainActivity (exported, LAUNCHER), TimeSyncService (`android:foregroundServiceType="dataSync"`, exported=false), BootReceiver (`BOOT_COMPLETED` intent-filter); `android:theme` pointing at the Material3 theme; `android:label="@string/app_name"`; adaptive icon refs (`android:icon`/`android:roundIcon`).
