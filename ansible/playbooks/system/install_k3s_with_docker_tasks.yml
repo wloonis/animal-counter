@@ -84,10 +84,10 @@
     line: '\1 cgroup_enable=cpuset cgroup_memory=1 cgroup_enable=memory'
     backrefs: yes
 
-- name: Reboot si nécessaire
-  reboot:
-    msg: "Reboot après modification"
-    reboot_timeout: 600
+# - name: Reboot si nécessaire
+#   reboot:
+#     msg: "Reboot après modification"
+#     reboot_timeout: 600
 
 - name: Vérifier que la machine est revenue
   command: uptime
@@ -294,15 +294,29 @@
 # INSTALL NVIDIA DEVICE PLUGIN
 # -------------------------
 
+- name: Ensure marker directory exists
+  file:
+    path: /var/lib/countingapp
+    state: directory
+    mode: '0755'
+  tags: nvidia
+
+- name: Copy NVIDIA device plugin manifest (offline)
+  copy:
+    src: nvidia-device-plugin.yml
+    dest: /usr/local/etc/nvidia-device-plugin.yml
+    mode: '0644'
+  tags: nvidia
+
 - name: Deploy NVIDIA device plugin
   shell: |
-    k3s kubectl apply -f https://raw.githubusercontent.com/NVIDIA/k8s-device-plugin/v0.14.1/nvidia-device-plugin.yml
+    k3s kubectl apply -f /usr/local/etc/nvidia-device-plugin.yml
   args:
-    creates: /tmp/nvidia-device-plugin-installed
+    creates: /var/lib/countingapp/nvidia-device-plugin-installed
   tags: nvidia
 
 - name: Mark plugin installed
   file:
-    path: /tmp/nvidia-device-plugin-installed
+    path: /var/lib/countingapp/nvidia-device-plugin-installed
     state: touch
   tags: nvidia
