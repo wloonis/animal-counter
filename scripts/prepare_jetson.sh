@@ -48,6 +48,28 @@ fi
 
 echo "SSH access successful!"
 
+#Step 2.5: Grow root partition to fill the whole disk
+# A Jetson migrated to NVMe/SD often boots from a rootfs partition smaller
+# than the physical disk (e.g. 58G on a 128G SSD). Grow it to use all the
+# space before installing anything big (docker images). Idempotent: no-op
+# if the partition already fills the disk.
+echo ""
+echo "Step 2.5: Growing root partition to fill the whole disk (if needed)..."
+if [ -z "${JETSON_USER}" ]; then
+    export JETSON_USER="nano-counter"
+fi
+export ANSIBLE_HOST_KEY_CHECKING=False
+if ansible-playbook -i ansible/inventory/jetsons.yml ansible/playbooks/system/grow_root_partition.yml; then
+    echo ""
+    echo "✅ Root partition grown (or already at full size)"
+    echo ""
+else
+    echo ""
+    echo "❌ Error: Growing root partition failed"
+    echo "Check the logs above for details"
+    exit 1
+fi
+
 #Step 3: Run Ansible system preparation (commented for now)
 echo ""
 echo "Step 3: Running Ansible system preparation..."
@@ -203,11 +225,12 @@ echo "ALL STEPS COMPLETED SUCCESSFULLY!"
 echo "=========================================="
 echo ""
 echo "Summary:"
-echo "1. ✅ System preparation"
-echo "2. ✅ Application deployment"
-echo "3. ✅ Static WiFi IP (192.168.0.180 on internet WiFi)"
-echo "4. ✅ Splash Screen & LXDE Protection"
-echo "5. ✅ HotSpot Setup (Jetson rebooting into hotspot mode)"
+echo "1. ✅ Root partition grown to fill the disk"
+echo "2. ✅ System preparation"
+echo "3. ✅ Application deployment"
+echo "4. ✅ Static WiFi IP (192.168.0.180 on internet WiFi)"
+echo "5. ✅ Splash Screen & LXDE Protection"
+echo "6. ✅ HotSpot Setup (Jetson rebooting into hotspot mode)"
 echo ""
 echo "The Jetson is now ready!"
 echo "- Splash screen will show during countingapp startup"

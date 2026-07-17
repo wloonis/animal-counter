@@ -1,0 +1,69 @@
+---
+# Grow the root partition to fill all available space on its disk.
+#
+# Why: a Jetson migrated to NVMe (or SD) often boots from a rootfs partition
+# sized smaller than the physical disk (e.g. 58G on a 128G SSD). The remaining
+# space is left unallocated, so the Jetson fills up at ~80% while the disk is
+# half empty. This grows the partition + the ext4 fs to use it all.
+#
+# Idempotent: growpart reports NOCHANGE if the partition already fills the disk
+# (rc!=0, "cannot be grown"), which we tolerate; resize2fs is skipped when no
+# grow happened. Safe to run repeatedly + on already-grown disks.
+
+- name: Grow root partition to fill available disk space
+  hosts: all
+  become: true
+  gather_facts: no
+
+  tasks:
+    - name: Detect root partition device
+      command: findmnt -no SOURCE /
+      register: root_part
+      changed_when: false
+
+    - name: Show root partition
+      debug:
+        msg: "Root is on {{ root_part.stdout }}"
+
+    - name: Derive root disk and partition number (nvmeXnYpN / mmcblkXpN)
+      set_fact:
+        root_disk: "{{ root_part.stdout | regex_replace('p[0-9]+$', '') }}"
+        root_part_num: "{{ root_part.stdout | regex_replace('^.*p', '') }}"
+
+    - name: Ensure growpart is installed
+      apt:
+        name: cloud-guest-utils
+        state: present
+
+    - name: Grow root partition (tolerate already-grown)
+      command: growpart {{ root_disk }} {{ root_part_num }}
+      register: growpart_result
+      changed_when: "'CHANGED' in (growpart_result.stdout | default(''))"
+      failed_when: >
+        growpart_result.rc != 0 and
+        'NOCHANGE' not in (growpart_result.stdout | default('')) and
+        'cannot be grown' not in (growpart_result.stdout | default('')) and
+        'NOCHANGE' not in (growpart_result.stderr | default('')) and
+        'cannot be grown' not in (growpart_result.stderr | default(''))
+
+    - name: Resize ext4 filesystem (online, idempotent)
+      command: resize2fs {{ root_part.stdout }}
+      when: growpart_result is changed
+      register: resize_result
+      changed_when: "'now' in (resize_result.stderr | default(''))"
+
+    - name: Report final disk usage
+      command: df -h /
+      register: df_root
+      changed_when: false
+      when: growpart_result is changed
+
+    - name: Show new disk usage
+      debug:
+        var: df_root.stdout_lines
+      when: growpart_result is changed
+
+    - name: Already at full size (no grow needed)
+      debug:
+        msg: "Root partition already fills the disk — nothing to do."
+      when: not (growpart_result is changed)
