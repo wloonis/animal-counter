@@ -170,6 +170,27 @@ This reloads the clock **immediately before** K3s's `ExecStart` — the last
 possible moment, after any late RTC sync. This is the layer that actually made
 the live test pass (clock was 1970 → `ExecStartPre` → 2026 → K3s `active`).
 
+### 5.5 `Requires=dummy0-net` — the install-moment dependency
+
+A subtle trap: the override originally used only `After=dummy0-net.service`.
+**`After=` orders a dependency but does NOT start it.** The K3s installer runs
+`systemctl start k3s` immediately after install — with only `After=`, systemd
+starts K3s **without** starting dummy0-net → `dummy0` doesn't exist → K3s fatal
+`unable to find interface dummy0: no such network interface`.
+
+(On the first Jetson this was masked: dummy0-net had been started manually and
+is pulled at boot via `WantedBy=multi-user.target`, so a *reboot* worked — but a
+*fresh install* hit it because dummy0-net was only enabled, not yet started
+mid-install.)
+
+Fix: the override uses `Requires=docker.service dummy0-net.service
+fake-hwclock.service` so `systemctl start k3s` **pulls in** dummy0-net (and
+fake-hwclock) and starts them. `k3s-clock-ready` stays `After=` only — it is
+boot-enabled via `WantedBy=` and must not be `Requires=` (that would hang the
+install up to 10 min if the clock isn't synced yet). The service tasks also use
+`state: started` so dummy0 is up during the playbook, before the K3s install
+step.
+
 > **Why three layers?** Each alone is insufficient: fake-hwclock gets reset by
 > the late RTC sync; the gate's single load can be beaten by a reset after it;
 > the `ExecStartPre` alone wouldn't wait for the phone on a first boot with no
