@@ -26,6 +26,21 @@ object SyncLog {
     val events: StateFlow<List<SyncEvent>> = _events.asStateFlow()
 
     /**
+     * Whether the phone is currently connected to the Jetson HotSpot WiFi.
+     *
+     * Updated by [com.animalcounter.service.TimeSyncService]'s `NetworkCallback`
+     * (`onAvailable`/`onLost`); observed by the UI to show the out-of-range
+     * message when the companion services are unreachable. Defaults to `false`.
+     */
+    private val _hotspotConnected = MutableStateFlow(false)
+    val hotspotConnected: StateFlow<Boolean> = _hotspotConnected.asStateFlow()
+
+    /** Update the shared HotSpot connectivity state (service-side). */
+    fun setConnected(connected: Boolean) {
+        _hotspotConnected.value = connected
+    }
+
+    /**
      * Append [event] to the log, evicting the oldest entry when the cap
      * is exceeded. The most-recent event is always at index 0.
      */
