@@ -111,6 +111,7 @@
   service:
     name: fake-hwclock
     enabled: true
+    state: started
   become: yes
 
 # --------------------------------------------------
@@ -141,10 +142,11 @@
       WantedBy=multi-user.target
   become: yes
 
-- name: Activer dummy0-net au boot
+- name: Activer + démarrer dummy0-net (doit etre UP avant l install k3s)
   service:
     name: dummy0-net
     enabled: true
+    state: started
   become: yes
 
 # --------------------------------------------------
@@ -252,6 +254,13 @@
 # Override k3s : demarrer APRES docker + dummy0 + fake-hwclock + clock-ready,
 # et recharger fake-hwclock au tout dernier moment (ExecStartPre) pour qu'une
 # synchro RTC tardive (RTC mort -> 1970) ne desynchronise pas k3s.
+# Requires= sur dummy0-net + fake-hwclock : `After=` seul n'active PAS la
+# dependance, il l'ordonne seulement. Sans Requires=, l'installeur k3s
+# (`systemctl start k3s`) ne demarrait pas dummy0-net -> dummy0 absent ->
+# k3s plantait "unable to find interface dummy0". Requires= force le demarrage.
+# k3s-clock-ready reste en After= seulement (active au boot via WantedBy= ;
+# ne pas le Requires= pour eviter un hang de 10 min a l install si l horloge
+# n est pas encore syncée).
 - name: Configurer l override k3s (dependances + ExecStartPre clock)
   copy:
     dest: /etc/systemd/system/k3s.service.d/override.conf
@@ -259,7 +268,7 @@
     content: |
       [Unit]
       After=docker.service dummy0-net.service fake-hwclock.service k3s-clock-ready.service
-      Requires=docker.service
+      Requires=docker.service dummy0-net.service fake-hwclock.service
 
       [Service]
       ExecStartPre=/sbin/fake-hwclock load
