@@ -11,6 +11,7 @@ import com.animalcounter.data.SyncEvent
 import com.animalcounter.data.SyncLog
 import com.animalcounter.net.JetsonClient
 import com.animalcounter.net.activeWifiNetwork
+import com.animalcounter.net.nowIsoForCompanion
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -134,7 +135,7 @@ class TimeSyncViewModel(app: Application) : AndroidViewModel(app) {
                 val wifi = cm?.let { activeWifiNetwork(it) }
                 val event = JetsonClient.postTime(
                     ip = _ip.value,
-                    timeIso = Instant.now().toString(),
+                    timeIso = nowIsoForCompanion(),
                     tz = ZoneId.systemDefault().id,
                     network = wifi,
                 )

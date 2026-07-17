@@ -43,6 +43,26 @@ fun activeWifiNetwork(cm: ConnectivityManager): Network? {
     return null
 }
 
+/**
+ * Current instant formatted as an ISO-8601 LOCAL offset datetime truncated to
+ * microseconds, e.g. `2025-07-15T16:30:00.123456+02:00`.
+ *
+ * Why not `Instant.now().toString()` (UTC `...Z` with nanoseconds):
+ *  1. The Jetson companion parses with Python `datetime.fromisoformat`, which
+ *     on Python 3.10 (Jetson JetPack) rejects the `Z` suffix and >6 fractional
+ *     digits → HTTP 400 "invalid ISO8601 time".
+ *  2. The companion strips the offset and uses the wall-clock value as the
+ *     LOCAL time (it sets the timezone separately via `set-timezone`), so a
+ *     UTC instant would set the clock off by the UTC offset.
+ * A local [java.time.OffsetDateTime] truncated to microseconds is accepted by
+ * `fromisoformat` and carries the correct local wall time.
+ */
+fun nowIsoForCompanion(): String {
+    val odt = java.time.OffsetDateTime.now(java.time.ZoneId.systemDefault())
+        .truncatedTo(java.time.temporal.ChronoUnit.MICROS)
+    return odt.format(java.time.format.DateTimeFormatter.ISO_OFFSET_DATE_TIME)
+}
+
 private const val JETSON_PORT = 8090
 
 /** Read/connect timeout for the companion probe/push. */

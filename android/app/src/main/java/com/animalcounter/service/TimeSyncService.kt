@@ -20,6 +20,7 @@ import com.animalcounter.data.SettingsRepository
 import com.animalcounter.data.SyncEvent
 import com.animalcounter.data.SyncLog
 import com.animalcounter.net.JetsonClient
+import com.animalcounter.net.nowIsoForCompanion
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -173,7 +174,7 @@ class TimeSyncService : Service() {
             val ip = settings.jetsonIp.first()
             val event = JetsonClient.postTime(
                 ip = ip,
-                timeIso = Instant.now().toString(),
+                timeIso = nowIsoForCompanion(),
                 tz = ZoneId.systemDefault().id,
                 network = network,
             )
