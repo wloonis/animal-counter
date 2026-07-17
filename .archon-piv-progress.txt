@@ -41,3 +41,5 @@ Task 13: CREATE ui/placeholder/PlaceholderScreen.kt — scaffold
 + minimal ui/timesync/TimeSyncScreen.kt placeholder (full screen = Task 19)
 BUILD: cd android && ./gradlew assembleDebug — BUILD SUCCESSFUL, app-debug.apk (58 MB)
 Task 5 (manifest w/ service+receiver entries), 14, 15, 16, 17, 18, 19, 20 — remaining
+Task 5: CREATE AndroidManifest.xml (TimeSyncService dataSync + BootReceiver BOOT_COMPLETED) — e1c6b41
+Task 14: ADD data/SyncEvent.kt + data/SyncLog.kt (bounded ring buffer StateFlow, cap 200) — e1aac62
