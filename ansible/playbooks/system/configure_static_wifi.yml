@@ -1,0 +1,83 @@
+---
+# Configure a STATIC IP on the Jetson's internet WiFi connection.
+#
+# Why: the Jetson's internet WiFi was DHCP, so its IP drifted (e.g.
+# 192.168.0.180 -> .181), making SSH access unpredictable. This pins it.
+#
+# This only touches the ACTIVE INFRASTRUCTURE WiFi connection (the client
+# connection to the router, e.g. TP-Link_49F0) — it does NOT touch the hotspot
+# AP connection (JetsonHotspot, 192.168.100.1), which keeps its own IP.
+#
+# `nmcli connection modify` only rewrites the connection profile; it does NOT
+# drop the active session. The static IP applies on the next activation
+# (reboot, or `nmcli connection down <con> && nmcli connection up <con>`).
+# Run this playbook while the Jetson is connected to the internet WiFi (not in
+# hotspot mode), so the active infrastructure connection can be discovered.
+- name: Configure static IP on internet WiFi
+  hosts: all
+  become: true
+  gather_facts: yes
+
+  tasks:
+    - name: Set static WiFi variables from environment
+      set_fact:
+        wifi:
+          interface: "{{ lookup('env', 'JETSON_WIFI_INTERFACE') | default('wlP1p1s0', true) }}"
+          static_ip: "{{ lookup('env', 'JETSON_WIFI_STATIC_IP') | default('192.168.0.180/24', true) }}"
+          gateway: "{{ lookup('env', 'JETSON_WIFI_GATEWAY') | default('192.168.0.1', true) }}"
+          dns: "{{ lookup('env', 'JETSON_WIFI_DNS') | default('192.168.0.1 8.8.8.8', true) }}"
+      tags: always
+
+    - name: Ensure NetworkManager is running
+      systemd:
+        name: NetworkManager
+        state: started
+        enabled: yes
+      tags: networkmanager
+
+    - name: Enable WiFi radio
+      command: nmcli radio wifi on
+      changed_when: false
+      tags: wifi
+
+    - name: Find the active infrastructure WiFi connection (not the hotspot AP)
+      shell: |
+        # List active connections on the WiFi radio (NAME:DEVICE), keep those on
+        # the WiFi interface, then keep only wifi type + infrastructure mode
+        # (exclude the hotspot AP connection, which is 802-11-wireless mode ap).
+        for c in $(nmcli -t -f NAME,DEVICE connection show --active \
+                   | grep ":{{ wifi.interface }}$" | cut -d: -f1); do
+          type=$(nmcli -g connection.type connection show "$c" 2>/dev/null)
+          [ "$type" = "802-11-wireless" ] || continue
+          mode=$(nmcli -g 802-11-wireless.mode connection show "$c" 2>/dev/null)
+          [ "$mode" = "infrastructure" ] && echo "$c"
+        done | head -1
+      register: active_wifi_conn
+      changed_when: false
+
+    - name: Fail clearly if no active infrastructure WiFi connection found
+      fail:
+        msg: >-
+          No active infrastructure WiFi connection found on {{ wifi.interface }}.
+          Ensure the Jetson is connected to the internet WiFi (not in hotspot
+          mode) before running this playbook.
+      when: active_wifi_conn.stdout | length == 0
+
+    - name: Pin static IP on the active WiFi connection (no session drop — applies on next activation)
+      command: >
+        nmcli connection modify "{{ active_wifi_conn.stdout }}"
+        ipv4.method manual
+        ipv4.addresses {{ wifi.static_ip }}
+        ipv4.gateway {{ wifi.gateway }}
+        ipv4.dns "{{ wifi.dns }}"
+        connection.autoconnect yes
+        connection.autoconnect-priority 50
+
+    - name: Save the connection name for the summary
+      debug:
+        msg: >-
+          Static IP {{ wifi.static_ip }} (gw {{ wifi.gateway }}, dns
+          {{ wifi.dns }}) configured on WiFi connection
+          '{{ active_wifi_conn.stdout }}'. Applies on next activation
+          (reboot or `nmcli connection down "{{ active_wifi_conn.stdout }}"
+          && nmcli connection up "{{ active_wifi_conn.stdout }}"`).

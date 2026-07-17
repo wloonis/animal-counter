@@ -112,6 +112,30 @@ else
     exit 1
 fi
 
+# Step 4.5: Pin a static IP on the internet WiFi (TP-Link) connection.
+# Run BEFORE hotspot_setup: the discovery needs the active infrastructure WiFi
+# connection, which goes away once the Jetson switches to hotspot (AP) mode.
+# `nmcli connection modify` only rewrites the profile — it does NOT drop the
+# current SSH session. The static IP (192.168.0.180) applies on the next
+# activation of the TP-Link connection (i.e. when the hotspot is cut and the
+# Jetson rejoins the internet WiFi).
+echo ""
+echo "Step 4.5: Pinning static IP on internet WiFi (192.168.0.180)..."
+if [ -z "${JETSON_USER}" ]; then
+    export JETSON_USER="nano-counter"
+fi
+export ANSIBLE_HOST_KEY_CHECKING=False
+if ansible-playbook -i ansible/inventory/jetsons.yml ansible/playbooks/system/configure_static_wifi.yml; then
+    echo ""
+    echo "✅ Static WiFi IP configured (applies when Jetson rejoins internet WiFi)"
+    echo ""
+else
+    echo ""
+    echo "❌ Error: Static WiFi configuration failed"
+    echo "Check the logs above for details"
+    exit 1
+fi
+
 #Step 5: Run Ansible HotSpot Setup (commented for now)
 echo ""
 echo "Step 3: Running Ansible HotSpot Setup..."
@@ -169,8 +193,9 @@ echo ""
 echo "Summary:"
 echo "1. ✅ System preparation"
 echo "2. ✅ Application deployment"
-echo "3. ✅ HotSpot Setup"
-echo "4. ✅ Splash Screen & LXDE Protection"
+echo "3. ✅ Static WiFi IP (192.168.0.180 on internet WiFi)"
+echo "4. ✅ HotSpot Setup"
+echo "5. ✅ Splash Screen & LXDE Protection"
 echo ""
 echo "The Jetson is now ready!"
 echo "- Splash screen will show during countingapp startup"
@@ -178,8 +203,9 @@ echo "- LXDE is blocked until countingapp is running"
 echo ""
 echo "Next steps:"
 echo "1. Connect to Jetson hotspot: $JETSON_HOTSPOT_SSID"
-echo "2. Access Jetson via SSH: ssh $JETSON_USER@$JETSON_IP"
-echo "3. Access countingapp: http://$JETSON_IP:31501"
+echo "2. Access Jetson via SSH (hotspot): ssh $JETSON_USER@$JETSON_HOTSPOT_IP"
+echo "3. Access Jetson via SSH (internet WiFi, static): ssh $JETSON_USER@192.168.0.180"
+echo "4. Access countingapp: http://$JETSON_HOTSPOT_IP:31501"
 echo ""
 
 exit 0

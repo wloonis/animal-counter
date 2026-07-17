@@ -345,9 +345,10 @@ CLI above (what the relay agent uses) and plannotator for plan review.
   gates k3s until the year is sane (first boot with no fake-hwclock data waits
   for the phone BL-65 time push). Do **NOT** revert K3s to the physical
   ethernet interface (`enP8p1s0`, linkdown without a cable) — it crash-loops.
-- Jetson: Orin Nano 8GB "Super", **WiFi IP is DHCP** (was static `192.168.0.180`,
-  now dynamic — rediscover with `scripts/jetson_discover.sh`; in hotspot mode
-  it's `JETSON_HOTSPOT_IP` `192.168.100.1`), user `nano-counter`,
+- Jetson: Orin Nano 8GB "Super", **WiFi IP is static `192.168.0.180`** (pinned by
+  `configure_static_wifi.yml`, run by `prepare_jetson.sh` before hotspot setup;
+  if it ever drifts, rediscover with `scripts/jetson_discover.sh`; in hotspot
+  mode it's `JETSON_HOTSPOT_IP` `192.168.100.1`), user `nano-counter`,
   password from `.env.local` (`JETSON_PASSWORD`). App path on Jetson:
   `/data/orin/git/animal-counting/app` (`APP_PATH`); rendered k3s manifests:
   `/data/orin/git/animal-counting/k3s/` (`K3S_APP_PATH`, applied via explicit
