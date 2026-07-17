@@ -136,26 +136,13 @@ else
     exit 1
 fi
 
-#Step 5: Run Ansible HotSpot Setup (commented for now)
+#Step 5: Configure Splash Screen and LXDE Protection
+# Run BEFORE hotspot_setup: the splash step runs `apt install feh`, which needs
+# internet, so it must run while the Jetson is still on the internet WiFi.
+# hotspot_setup reboots the Jetson into hotspot mode (no internet) as its last
+# action, so it must be the FINAL step.
 echo ""
-echo "Step 3: Running Ansible HotSpot Setup..."
-echo "This may take several minutes depending on network speed and Jetson performance..."
-
-# Run Ansible playbook for system preparation
-if ansible-playbook -i ansible/inventory/jetsons.yml ansible/playbooks/system/hotspot_setup.yml; then
-    echo ""
-    echo "✅ HotSpot Setup completed successfully!"
-    echo ""
-else
-    echo ""
-    echo "❌ Error: HotSpot Setup failed"
-    echo "Check the logs above for details"
-    exit 1
-fi
-
-#Step 6: Configure Splash Screen and LXDE Protection
-echo ""
-echo "Step 6: Configuring Splash Screen and LXDE Protection..."
+echo "Step 5: Configuring Splash Screen and LXDE Protection..."
 echo "This will:"
 echo "- Display splash.png while countingapp is loading"
 echo "- Block LXDE access until countingapp service is running in k3s"
@@ -184,6 +171,31 @@ else
     exit 1
 fi
 
+#Step 6: Run Ansible HotSpot Setup (MUST be last — it reboots the Jetson)
+# hotspot_setup.yml schedules a delayed reboot (systemd-run --on-active=3 reboot)
+# into hotspot mode. After it, the Jetson reboots onto the hotspot network
+# (192.168.100.1) and is unreachable from the internet WiFi, so no further SSH
+# steps can run. It must be the final action.
+echo ""
+echo "Step 6: Running Ansible HotSpot Setup (final step — reboots the Jetson)..."
+echo "The Jetson will reboot into hotspot mode when this completes."
+
+if [ -z "${JETSON_USER}" ]; then
+    export JETSON_USER="nano-counter"
+fi
+export ANSIBLE_HOST_KEY_CHECKING=False
+
+if ansible-playbook -i ansible/inventory/jetsons.yml ansible/playbooks/system/hotspot_setup.yml; then
+    echo ""
+    echo "✅ HotSpot Setup completed successfully — Jetson is rebooting."
+    echo ""
+else
+    echo ""
+    echo "❌ Error: HotSpot Setup failed"
+    echo "Check the logs above for details"
+    exit 1
+fi
+
 
 echo ""
 echo "=========================================="
@@ -194,8 +206,8 @@ echo "Summary:"
 echo "1. ✅ System preparation"
 echo "2. ✅ Application deployment"
 echo "3. ✅ Static WiFi IP (192.168.0.180 on internet WiFi)"
-echo "4. ✅ HotSpot Setup"
-echo "5. ✅ Splash Screen & LXDE Protection"
+echo "4. ✅ Splash Screen & LXDE Protection"
+echo "5. ✅ HotSpot Setup (Jetson rebooting into hotspot mode)"
 echo ""
 echo "The Jetson is now ready!"
 echo "- Splash screen will show during countingapp startup"
