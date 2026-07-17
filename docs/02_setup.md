@@ -41,9 +41,21 @@ host PC:
 
 ## 2. First boot
 
-Complete the Ubuntu setup wizard (locale, timezone, user). Create the user
-that the scripts will SSH into — the validated setup uses **`nano-counter`**;
-set the same in `.env.local` (`JETSON_USER` / `JETSON_PASSWORD`).
+Complete the Ubuntu setup wizard. During the wizard, set exactly:
+
+- **Username:** `nano-counter` (the scripts SSH into this user — it must
+  match `JETSON_USER` in `.env.local`).
+- **Computer name (hostname):** `nano-counter-desktop` (this is the hostname
+  K3s registers as the node name; the deployment expects it).
+- **Connect to your box / router WiFi** during setup (so the Jetson has
+  internet for the next steps — package installs, K3s download, etc.). This is
+  the internet WiFi connection that will later be pinned to a static IP by
+  `configure_static_wifi.yml`.
+
+> The wizard may offer to install **Chromium** — **skip it**, it is not needed
+> (the countingapp runs headless in K3s; no browser is required on the Jetson).
+
+Set the same credentials in `.env.local` (`JETSON_USER` / `JETSON_PASSWORD`).
 
 After first boot, ensure:
 - SSH is enabled (`sudo systemctl enable --now ssh`).
