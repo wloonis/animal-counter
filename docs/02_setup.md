@@ -85,19 +85,26 @@ Procedure:
    ```bash
    ssh nano-counter@<IP>
    ```
-3. Create the tools directory under `/data`:
+3. Give `nano-counter` full ownership of `/data` (so the tools dir and the
+   JetsonHacks workspace are writable without `sudo`; k3s/docker run as root
+   and are unaffected):
    ```bash
-   sudo mkdir -p /data/tools
+   sudo chown -R nano-counter:nano-counter /data
    ```
-4. Enter it and clone the JetsonHacks project:
+4. Create the tools directory under `/data` (no `sudo` needed now):
+   ```bash
+   mkdir -p /data/tools
+   ```
+5. Enter it and clone the JetsonHacks project:
    ```bash
    cd /data/tools
    git clone https://github.com/jetsonhacks/migrate-jetson-to-ssd.git
    cd migrate-jetson-to-ssd
    ```
-5. Follow the project's `README.md` from there (it scripts the rootfs clone
-   onto the NVMe drive + the boot-config switch). Reboot when it tells you to,
-   then remove the SD card.
+6. Follow the project's `README.md` from there — **run the JetsonHacks
+   commands with `sudo`** (they write the boot config + clone the rootfs onto
+   the NVMe drive, which require root). Reboot when it tells you to, then remove
+   the SD card.
 
 ## 3. Install Ansible on the control machine
 
