@@ -62,6 +62,19 @@ After first boot, ensure:
 - The Jetson is on the same network as the control machine (WiFi or Ethernet).
 - The webcam is at `/dev/video0` (`ls -l /dev/video0`).
 
+### 2.1 (Optional) Migrate to NVMe SSD — drop the SD card
+
+After the setup is complete, you can optionally move the root filesystem to an
+**NVMe SSD** for reliability and speed. Follow the
+[**JetsonHacks `migrate-jetson-to-ssd`**](https://github.com/jetsonhacks/migrate-jetson-to-ssd)
+project's instructions — it clones the SD-card rootfs onto the NVMe drive and
+points the boot config at it. Once done, **the SD card is no longer needed**
+(the Jetson boots from the NVMe SSD; you can remove the SD card).
+
+> Do this **after** the first-boot setup wizard is complete (the migration
+> copies the already-configured rootfs, so the `nano-counter` user, hostname,
+> and WiFi connection are preserved on the SSD).
+
 ## 3. Install Ansible on the control machine
 
 On **your** machine (not the Jetson):
