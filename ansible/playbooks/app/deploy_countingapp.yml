@@ -87,6 +87,15 @@
   template:
     src: "../../../k3s/templates/countingapp-validate.j2"
     dest: "{{ app_path }}/../k3s/countingapp-validate.yaml"
+  # validate_video is provided at run-time by scripts/validate_on_jetson.sh,
+  # which renders this template itself (sed substitution) with the reference
+  # video from validation/config.json. This deploy-time render only produces a
+  # scaffold file (not used by the validation script); provide an empty default
+  # so the Jinja render does not fail on an undefined var. Do NOT change the
+  # template literal `{{ validate_video }}` — validate_on_jetson.sh's sed matches
+  # it exactly.
+  vars:
+    validate_video: ""
   become: yes
 
 - name: Render countingapp deployment template
