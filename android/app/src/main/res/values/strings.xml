@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- App identity -->
+    <string name="app_name">Animal Counter</string>
+
+    <!-- Bottom-nav tabs -->
+    <string name="tab_time_sync">Time sync</string>
+    <string name="tab_live_count">Live count</string>
+    <string name="tab_videos">Videos</string>
+
+    <!-- Time sync screen -->
+    <string name="jetson_ip_label">Jetson IP address</string>
+    <string name="sync_now">Sync now</string>
+    <string name="refresh">Refresh</string>
+    <string name="jetson_connected">Jetson connected</string>
+    <string name="jetson_out_of_range">Jetson out of range</string>
+    <string name="jetson_checking">Checking…</string>
+    <string name="time_sync_placeholder">Time sync screen — coming next</string>
+
+    <!-- Placeholder screens -->
+    <string name="coming_soon">Coming soon</string>
+
+    <!-- Foreground service / notifications -->
+    <string name="notification_channel_id">time_sync</string>
+    <string name="notification_channel_title">Time sync</string>
+    <string name="notification_channel_desc">Keeps the Jetson clock in sync over the hotspot.</string>
+    <string name="foreground_notification_title">Animal Counter</string>
+    <string name="foreground_notification_text">Syncing Jetson clock…</string>
+
+    <!-- Sync log outcome labels -->
+    <string name="outcome_success">Success</string>
+    <string name="outcome_bad_request">Bad request</string>
+    <string name="outcome_server_error">Server error</string>
+    <string name="outcome_network">Network error</string>
+    <string name="log_empty">No events yet</string>
+
+    <!-- Sync event type labels -->
+    <string name="type_probe">Probe</string>
+    <string name="type_sync">Sync</string>
+</resources>

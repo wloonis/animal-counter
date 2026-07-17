@@ -91,6 +91,10 @@ Thumbs.db
 data/
 datasets/
 
+# Keep the Android Kotlin `data` package (BL-65) — the broad `data/` rule
+# above would otherwise ignore it.
+!android/app/src/main/java/com/animalcounter/data/
+
 # Archon cross-run state (never commit)
 .archon/state/
 .archon-relay/
@@ -113,3 +117,13 @@ PRESENTATION.md
 # (validate_on_jetson.sh without --full uses config.json "reference_video")
 validation/videos/*.mp4
 !validation/videos/validation-1-#9.mp4
+
+# Android (BL-65)
+/android/local.properties
+/android/.gradle/
+/android/build/
+/android/app/build/
+/android/captures/
+/android/.idea/
+/android/*.iml
+/android/app/*.iml

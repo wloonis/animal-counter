@@ -24,3 +24,28 @@ Task 5: RUN playbook live on Jetson — 1st run changed=4 (script+unit+systemd+h
 Task 6: VERIFY acceptance curls live — identify 200, POST /api/time 200, timedatectl reflects new time, systemctl enabled+active, bad-ISO 400, bad-tz 400 — 397c6a2 (fix: strip ISO8601 offset for timedatectl)
 Task 7: RUN standard validation regression — PASS (validation-1-#9.mp4 expected 9 actual 9 diff 0, host service on 8090 did not disturb k3s countingapp, config.json mode=standard)
 Task 8: VERIFY no external Python deps — extracted script py_compile PASS, imports only stdlib (datetime, json, os, subprocess, sys, http.server), no pip/venv/flask refs
+
+=== BL-65 Android app — scaffold session ===
+Task 1: CREATE settings.gradle.kts + gradle.properties + libs.versions.toml — scaffold
+Task 2: CREATE build.gradle.kts (root + app, AGP 8.7.0, Kotlin 2.0.21, Compose BOM 2024.09.03) — scaffold
+Task 3: CREATE Gradle wrapper (8.9, bin) — scaffold
+Task 4: CREATE local.properties (gitignored) + append android/ to .gitignore — scaffold
+Task 6: CREATE values/strings.xml (EN) — scaffold
+Task 7: CREATE values-fr/strings.xml (FR) — scaffold
+Task 8: CREATE values/themes.xml + values/colors.xml — scaffold
+Task 9: CREATE adaptive pig icon (mipmap-anydpi-v26 + drawable foreground + ic_launcher_background) — scaffold
+Task 10: CREATE MainActivity.kt (edge-to-edge, POST_NOTIFICATIONS request, setContent AnimalCounterApp) — scaffold
+Task 11: CREATE ui/theme/Theme.kt + Color.kt + Type.kt (forced dark + dynamicDarkColorScheme) — scaffold
+Task 12: CREATE ui/nav/AnimalCounterApp.kt (3-tab NavigationBar + NavHost) — scaffold
+Task 13: CREATE ui/placeholder/PlaceholderScreen.kt — scaffold
++ minimal ui/timesync/TimeSyncScreen.kt placeholder (full screen = Task 19)
+BUILD: cd android && ./gradlew assembleDebug — BUILD SUCCESSFUL, app-debug.apk (58 MB)
+Task 5 (manifest w/ service+receiver entries), 14, 15, 16, 17, 18, 19, 20 — remaining
+Task 5: CREATE AndroidManifest.xml (TimeSyncService dataSync + BootReceiver BOOT_COMPLETED) — e1c6b41
+Task 14: ADD data/SyncEvent.kt + data/SyncLog.kt (bounded ring buffer StateFlow, cap 200) — e1aac62
+Task 13: ADD data/SettingsRepository.kt (DataStore Preferences, jetsonIp Flow default 192.168.100.1, setJetsonIp) — 9305f4a
+Task 9: CREATE android/app/proguard-rules.pro (empty/default rules) — 2be68dd
+Task 14: CREATE JetsonClient.kt (HttpURLConnection GET /api/identify + POST /api/time, sealed SyncEvent outcomes) — 5b5d070
+Task 15: CREATE TimeSyncService.kt (foreground dataSync + NetworkCallback push) — 5e4200d
+Task 16: CREATE BootReceiver.kt (BOOT_COMPLETED → start TimeSyncService, no direct push) — 66ed584
+Task 21: CREATE TimeSyncScreen.kt (ViewModel-backed, IP field + debounced DataStore, HotSpot banner, auto-scroll log) — 4959d94

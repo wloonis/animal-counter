@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- App identity -->
+    <string name="app_name">Animal Counter</string>
+
+    <!-- Bottom-nav tabs -->
+    <string name="tab_time_sync">Synchronisation</string>
+    <string name="tab_live_count">Comptage en direct</string>
+    <string name="tab_videos">Vidéos</string>
+
+    <!-- Time sync screen -->
+    <string name="jetson_ip_label">Adresse IP du Jetson</string>
+    <string name="sync_now">Synchroniser</string>
+    <string name="refresh">Actualiser</string>
+    <string name="jetson_connected">Jetson connecté</string>
+    <string name="jetson_out_of_range">Jetson hors de portée</string>
+    <string name="jetson_checking">Vérification…</string>
+    <string name="time_sync_placeholder">Écran de synchronisation — à venir</string>
+
+    <!-- Placeholder screens -->
+    <string name="coming_soon">Bientôt disponible</string>
+
+    <!-- Foreground service / notifications -->
+    <string name="notification_channel_id">time_sync</string>
+    <string name="notification_channel_title">Synchronisation</string>
+    <string name="notification_channel_desc">Maintient l\'horloge du Jetson synchronisée via le hotspot.</string>
+    <string name="foreground_notification_title">Animal Counter</string>
+    <string name="foreground_notification_text">Synchronisation de l\'horloge du Jetson…</string>
+
+    <!-- Sync log outcome labels -->
+    <string name="outcome_success">Succès</string>
+    <string name="outcome_bad_request">Requête invalide</string>
+    <string name="outcome_server_error">Erreur serveur</string>
+    <string name="outcome_network">Erreur réseau</string>
+    <string name="log_empty">Aucun événement</string>
+
+    <!-- Sync event type labels -->
+    <string name="type_probe">Sonde</string>
+    <string name="type_sync">Sync</string>
+</resources>
