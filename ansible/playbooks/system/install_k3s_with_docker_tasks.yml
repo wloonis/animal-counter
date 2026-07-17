@@ -1,13 +1,25 @@
 ---
+# K3s installation for Jetson Orin Nano — WiFi-only deployment.
+#
+# The Jetson has NO ethernet cable in production and NO RTC battery, so:
+#   - K3s node-ip lives on a DUMMY virtual interface (always UP, no carrier
+#     needed) instead of the physical ethernet (which is linkdown without a
+#     cable). This keeps the node-ip stable regardless of WiFi mode
+#     (internet WiFi vs hotspot).
+#   - The system clock is restored at boot by fake-hwclock (no RTC battery)
+#     and re-applied right before k3s starts (ExecStartPre) — a late RTC
+#     sync from the dead onboard RTC would otherwise reset it to 1970.
+#   - k3s-clock-ready is a belt-and-suspenders gate: on a fresh install with
+#     no fake-hwclock data yet, it waits for the phone (BL-65) to push time
+#     over the hotspot before letting k3s start.
 - name: Set docker and k3s variables from environment
   set_fact:
     docker_path: "{{ lookup('env', 'DOCKER_PATH') | default('/data/orin/docker', true) }}"
-    ethernet:
-      ip: "{{ lookup('env', 'JETSON_ETH_IP') | default('192.168.50.10/24', true) }}"
-      gateway: "{{ lookup('env', 'JETSON_ETH_GATEWAY') | default('192.168.50.1', true) }}"
-      dns: "{{ lookup('env', 'JETSON_ETH_DNS') | default('192.168.50.1', true) }}"
-      interface: "{{ lookup('env', 'JETSON_ETH_INTERFACE') | default('enP8p1s0', true) }}"
-      name: "{{ lookup('env', 'JETSON_ETH_NAME') | default('JetsonEthernet', true) }}"
+    # node_ip reuses JETSON_ETH_IP (192.168.50.10/24) — the value is now carried
+    # by the dummy0 interface, not ethernet. Kept under the same env key to
+    # avoid touching .env.local.
+    node_ip: "{{ lookup('env', 'JETSON_ETH_IP') | default('192.168.50.10/24', true) }}"
+    dummy_iface: dummy0
   tags: always
 
 - name: Créer le dossier K3s
@@ -85,67 +97,107 @@
   when: ansible_facts['swaptotal_mb'] > 0
   tags: prepare
 
-# Il faut absolument une IP réseau pour que K3s puisse fonctionner
-- name: Check if connection exists
-  command: nmcli -t -f NAME connection show
-  register: nmcli_connections
-  changed_when: false
+# --------------------------------------------------
+# 6. fake-hwclock — restore system clock at boot (no RTC battery)
+# --------------------------------------------------
+- name: Installer fake-hwclock (pas de pile RTC sur le Jetson)
+  apt:
+    name: fake-hwclock
+    state: present
+    update_cache: yes
+  become: yes
 
-- name: Create ethernet connection if not exists
-  command: >
-    nmcli connection add
-    type ethernet
-    ifname {{ ethernet.interface }}
-    con-name {{ ethernet.name }}
-    autoconnect yes
-  when: ethernet.name not in nmcli_connections.stdout
+- name: Activer fake-hwclock au boot
+  service:
+    name: fake-hwclock
+    enabled: true
+  become: yes
 
-- name: Configure ethernet static IP
-  command: >
-    nmcli connection modify {{ ethernet.name }}
-    ipv4.method manual
-    ipv4.addresses {{ ethernet.ip }}
-    ipv4.gateway {{ ethernet.gateway }}
-    ipv4.dns "{{ ethernet.dns }}"
-    ipv6.method ignore
-    connection.autoconnect-priority 999
-
-- name: Create systemd service file
+# --------------------------------------------------
+# 7. Interface dummy0 — IP stable pour K3s (pas de câble ethernet)
+# --------------------------------------------------
+- name: Créer le service systemd dummy0-net (interface dummy virtuelle)
   copy:
-    dest: /etc/systemd/system/jetson-eth.service
+    dest: /etc/systemd/system/dummy0-net.service
+    mode: '0644'
     content: |
       [Unit]
-      Description=Force Ethernet connection up
-      After=NetworkManager.service network-online.target
-      Wants=network-online.target
+      Description=Dummy interface {{ dummy_iface }} (stable k3s node-ip {{ node_ip.split('/')[0] }}, no ethernet cable)
+      DefaultDependencies=no
+      After=network-pre.target
+      Before=k3s.service
 
       [Service]
       Type=oneshot
-      ExecStart=/usr/bin/nmcli connection up {{ ethernet.name }}
       RemainAfterExit=yes
+      ExecStartPre=-/sbin/modprobe dummy
+      ExecStart=-/sbin/ip link add {{ dummy_iface }} type dummy
+      ExecStart=/sbin/ip addr flush dev {{ dummy_iface }}
+      ExecStart=/sbin/ip addr add {{ node_ip }} dev {{ dummy_iface }}
+      ExecStart=/sbin/ip link set {{ dummy_iface }} up
+      ExecStop=-/sbin/ip link del {{ dummy_iface }}
 
       [Install]
       WantedBy=multi-user.target
+  become: yes
 
-- name: Create systemd override directory for k3s
-  file:
-    path: /etc/systemd/system/k3s.service.d
-    state: directory
+- name: Activer dummy0-net au boot
+  service:
+    name: dummy0-net
+    enabled: true
+  become: yes
 
-- name: Configure k3s to wait for network and ethernet
+# --------------------------------------------------
+# 8. Porte clock-ready — attend une horloge saine avant k3s
+# --------------------------------------------------
+- name: Créer le script k3s-clock-ready
   copy:
-    dest: /etc/systemd/system/k3s.service.d/override.conf
+    dest: /usr/local/bin/k3s-clock-ready.sh
+    mode: '0755'
+    content: |
+      #!/bin/sh
+      # k3s-clock-ready: attend une horloge saine (annee>=2025) avant k3s.
+      # Recharge fake-hwclock a chaque iteration (couvre la synchro RTC tardive).
+      # En prod, le telephone (BL-65) pousse l heure via le companion si
+      # fake-hwclock n a pas encore de donnee saine (premier boot).
+      for i in $(seq 1 300); do
+        /sbin/fake-hwclock load 2>/dev/null
+        y=$(date +%Y)
+        [ "$y" -ge 2025 ] && exit 0
+        sleep 2
+      done
+      exit 1
+  become: yes
+
+- name: Créer le service systemd k3s-clock-ready
+  copy:
+    dest: /etc/systemd/system/k3s-clock-ready.service
+    mode: '0644'
     content: |
       [Unit]
-      After=network-online.target jetson-eth.service
-      Wants=network-online.target
-      Requires=jetson-eth.service          
+      Description=Wait for sane system clock (year>=2025) before k3s (no RTC battery)
+      DefaultDependencies=no
+      After=local-fs.target
+      Before=k3s.service
 
-- name: Reload systemd
+      [Service]
+      Type=oneshot
+      RemainAfterExit=yes
+      ExecStart=/usr/local/bin/k3s-clock-ready.sh
+
+      [Install]
+      WantedBy=multi-user.target
+  become: yes
+
+- name: Activer k3s-clock-ready au boot
+  service:
+    name: k3s-clock-ready
+    enabled: true
+  become: yes
+
+- name: Recharger systemd
   command: systemctl daemon-reexec
-
-- name: Enable service
-  command: systemctl enable jetson-eth.service
+  become: yes
 
 - name: Créer le dossier K3s pour la config rancher
   file:
@@ -161,21 +213,17 @@
     mode: '0755'
   become: yes
 
-- name: Configurer K3s pour Jetson
+- name: Configurer K3s pour Jetson (WiFi-only, interface dummy)
   copy:
     dest: /etc/rancher/k3s/config.yaml
     mode: '0644'
     content: |
-      # K3s server configuration for NVIDIA Jetson
+      # K3s server configuration for NVIDIA Jetson (WiFi-only)
       token: "JetsonClusterToken"
-      
-      node-ip: {{ ethernet.ip.split('/')[0] }}
-      advertise-address: {{ ethernet.ip.split('/')[0] }}
-      flannel-iface: {{ ethernet.interface }}
 
-      #tls-san:
-      #  - $(hostname -I | awk '{print $1}')
-      #  - $(hostname)
+      node-ip: {{ node_ip.split('/')[0] }}
+      advertise-address: {{ node_ip.split('/')[0] }}
+      flannel-iface: {{ dummy_iface }}
 
       # Kubelet configuration for Jetson
       kubelet-arg:
@@ -195,20 +243,26 @@
         - "accelerator=nvidia-gpu"
         - "nvidia.com/gpu=true"
 
-# Docker doit absolument être lancé avant k3s
 - name: Create systemd override directory for k3s
   file:
     path: /etc/systemd/system/k3s.service.d
     state: directory
     mode: '0755'
 
-- name: Add override to make k3s depend on Docker
+# Override k3s : demarrer APRES docker + dummy0 + fake-hwclock + clock-ready,
+# et recharger fake-hwclock au tout dernier moment (ExecStartPre) pour qu'une
+# synchro RTC tardive (RTC mort -> 1970) ne desynchronise pas k3s.
+- name: Configurer l override k3s (dependances + ExecStartPre clock)
   copy:
     dest: /etc/systemd/system/k3s.service.d/override.conf
+    mode: '0644'
     content: |
       [Unit]
-      After=docker.service
+      After=docker.service dummy0-net.service fake-hwclock.service k3s-clock-ready.service
       Requires=docker.service
+
+      [Service]
+      ExecStartPre=/sbin/fake-hwclock load
 
 - name: Install K3s
   shell: |
@@ -243,5 +297,3 @@
     path: /tmp/nvidia-device-plugin-installed
     state: touch
   tags: nvidia
-
-  

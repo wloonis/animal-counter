@@ -333,7 +333,21 @@ CLI above (what the relay agent uses) and plannotator for plan review.
 - **`build_countingapp.yml` rsync must `--exclude='model/old/'`** — the
   `app/model/old/` dir holds root-owned files from prior deploys; without the
   exclude, the `--delete` rsync fails with rc=23 (permission denied).
-- Jetson: Orin Nano 8GB "Super", IP `192.168.0.180`, user `nano-counter`,
+- **K3S is WiFi-only — runs on a DUMMY interface, not ethernet.** The Jetson
+  has no ethernet cable in production and no RTC battery, so
+  `install_k3s_with_docker_tasks.yml` puts the K3s node-ip (`192.168.50.10`,
+  `JETSON_ETH_IP` — the name is historical, the value is now carried by
+  `dummy0`) on a virtual `dummy0` interface (always UP, no carrier needed) and
+  sets `flannel-iface: dummy0`. The system clock is restored at boot by
+  `fake-hwclock` (no RTC battery) and re-applied right before k3s starts via
+  `ExecStartPre=/sbin/fake-hwclock load` (a late sync from the dead onboard
+  RTC would otherwise reset it to 1970 → k3s crash-loop). `k3s-clock-ready`
+  gates k3s until the year is sane (first boot with no fake-hwclock data waits
+  for the phone BL-65 time push). Do **NOT** revert K3s to the physical
+  ethernet interface (`enP8p1s0`, linkdown without a cable) — it crash-loops.
+- Jetson: Orin Nano 8GB "Super", **WiFi IP is DHCP** (was static `192.168.0.180`,
+  now dynamic — rediscover with `scripts/jetson_discover.sh`; in hotspot mode
+  it's `JETSON_HOTSPOT_IP` `192.168.100.1`), user `nano-counter`,
   password from `.env.local` (`JETSON_PASSWORD`). App path on Jetson:
   `/data/orin/git/animal-counting/app` (`APP_PATH`); rendered k3s manifests:
   `/data/orin/git/animal-counting/k3s/` (`K3S_APP_PATH`, applied via explicit
