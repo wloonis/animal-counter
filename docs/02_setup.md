@@ -29,6 +29,16 @@ host PC:
 > JetPack 6.1 Rev.1 also works and enables the "Super Orin Nano" mode on the
 > dev kit. Anything older is not supported.
 
+> **SD card not recognized by the flasher / Windows?** It is **not necessarily
+> defective.** A card that Windows refuses to mount or that BalenaEtcher / SD
+> Card Formatter can't see often just has a corrupted or missing partition
+> table. Open **Windows Disk Management** (`diskmgmt.msc`) or **diskpart**,
+> delete all existing partitions on the SD card, create a single new simple
+> volume (FAT32 or exFAT), and the card will reappear — then retry the
+> flasher. (In `diskpart`: `list disk` → `select disk <N>` → `clean` →
+> `create partition primary` → `format fs=fat32 quick` → `assign`.) This
+> recovers most "dead" SD cards without replacing them.
+
 ## 2. First boot
 
 Complete the Ubuntu setup wizard (locale, timezone, user). Create the user
