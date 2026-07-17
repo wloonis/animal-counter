@@ -20,21 +20,27 @@ import java.net.URL
  * isolated network — see `AndroidManifest.xml` `usesCleartextTraffic`).
  */
 /**
- * Find the active (default) network that carries WIFI transport, or null.
+ * Find a network that carries WIFI transport, or null.
  *
  * Why this matters: when the phone has mobile data (5G) AND is joined to the
- * Jetson HotSpot WiFi (which has no internet), Android routes traffic over the
- * internet-capable mobile network by default, so `http://192.168.100.1:8090/...`
- * never reaches the Jetson. Binding the [HttpURLConnection] to the specific
- * WiFi [Network] (via [Network.openConnection]) forces the request onto the
- * HotSpot regardless of mobile data being up. Callers that have a [Network]
- * from a [ConnectivityManager.NetworkCallback] should pass it directly;
- * foreground/UI callers can use this helper to look up the active WiFi network.
+ * Jetson HotSpot WiFi (which has no internet), Android's *active/default*
+ * network is the mobile one (it has internet), so [ConnectivityManager.activeNetwork]
+ * returns the carrier network — routing `http://192.168.100.1:8090/...` over 5G
+ * where it never reaches the Jetson. We must therefore NOT rely on the active
+ * network: scan ALL networks and pick the one with WIFI transport, then bind
+ * the [HttpURLConnection] to it via [Network.openConnection] so the request
+ * goes onto the HotSpot regardless of mobile data being the default uplink.
+ * Callers that already have a [Network] from a
+ * [ConnectivityManager.NetworkCallback] (the foreground service) pass it
+ * directly; foreground/UI callers use this helper.
  */
 fun activeWifiNetwork(cm: ConnectivityManager): Network? {
-    val active = cm.activeNetwork ?: return null
-    val caps = cm.getNetworkCapabilities(active) ?: return null
-    return if (caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)) active else null
+    @Suppress("DEPRECATION")
+    for (network in cm.allNetworks) {
+        val caps = cm.getNetworkCapabilities(network) ?: continue
+        if (caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)) return network
+    }
+    return null
 }
 
 private const val JETSON_PORT = 8090
