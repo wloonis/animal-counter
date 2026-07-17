@@ -47,3 +47,5 @@ Task 13: ADD data/SettingsRepository.kt (DataStore Preferences, jetsonIp Flow de
 Task 9: CREATE android/app/proguard-rules.pro (empty/default rules) — 2be68dd
 Task 14: CREATE JetsonClient.kt (HttpURLConnection GET /api/identify + POST /api/time, sealed SyncEvent outcomes) — 5b5d070
 Task 15: CREATE TimeSyncService.kt (foreground dataSync + NetworkCallback push) — 5e4200d
+Task 16: CREATE BootReceiver.kt (BOOT_COMPLETED → start TimeSyncService, no direct push) — 66ed584
+Task 21: CREATE TimeSyncScreen.kt (ViewModel-backed, IP field + debounced DataStore, HotSpot banner, auto-scroll log) — 4959d94
