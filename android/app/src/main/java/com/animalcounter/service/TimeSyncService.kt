@@ -135,7 +135,7 @@ class TimeSyncService : Service() {
                         detail = "WiFi joined — pushing time",
                     ),
                 )
-                pushTime()
+                pushTime(network)
             }
 
             override fun onLost(network: Network) {
@@ -168,13 +168,14 @@ class TimeSyncService : Service() {
      * Read the configured Jetson IP and POST the current time + zone. Runs on
      * a service-scoped coroutine; failures surface as [SyncEvent]s in the log.
      */
-    private fun pushTime() {
+    private fun pushTime(network: Network? = null) {
         scope.launch {
             val ip = settings.jetsonIp.first()
             val event = JetsonClient.postTime(
                 ip = ip,
                 timeIso = Instant.now().toString(),
                 tz = ZoneId.systemDefault().id,
+                network = network,
             )
             SyncLog.add(event)
         }

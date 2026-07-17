@@ -1,6 +1,9 @@
 package com.animalcounter.net
 
 import com.animalcounter.data.SyncEvent
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
@@ -16,6 +19,24 @@ import java.net.URL
  * All requests target `http://<ip>:8090/...` (cleartext; the Jetson HotSpot is an
  * isolated network — see `AndroidManifest.xml` `usesCleartextTraffic`).
  */
+/**
+ * Find the active (default) network that carries WIFI transport, or null.
+ *
+ * Why this matters: when the phone has mobile data (5G) AND is joined to the
+ * Jetson HotSpot WiFi (which has no internet), Android routes traffic over the
+ * internet-capable mobile network by default, so `http://192.168.100.1:8090/...`
+ * never reaches the Jetson. Binding the [HttpURLConnection] to the specific
+ * WiFi [Network] (via [Network.openConnection]) forces the request onto the
+ * HotSpot regardless of mobile data being up. Callers that have a [Network]
+ * from a [ConnectivityManager.NetworkCallback] should pass it directly;
+ * foreground/UI callers can use this helper to look up the active WiFi network.
+ */
+fun activeWifiNetwork(cm: ConnectivityManager): Network? {
+    val active = cm.activeNetwork ?: return null
+    val caps = cm.getNetworkCapabilities(active) ?: return null
+    return if (caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)) active else null
+}
+
 private const val JETSON_PORT = 8090
 
 /** Read/connect timeout for the companion probe/push. */
@@ -42,11 +63,11 @@ object JetsonClient {
      * @return a [SyncEvent] typed [SyncEvent.Type.Probe] capturing the
      *   companion's `service`/`version` on success, or a failure outcome.
      */
-    suspend fun identify(ip: String): SyncEvent = withContext(Dispatchers.IO) {
+    suspend fun identify(ip: String, network: Network? = null): SyncEvent = withContext(Dispatchers.IO) {
         val now = java.time.Instant.now()
         try {
             val url = URL("http://${sanitizeIp(ip)}:$JETSON_PORT/api/identify")
-            val conn = (url.openConnection() as HttpURLConnection).apply {
+            val conn = (openBound(url, network) as HttpURLConnection).apply {
                 requestMethod = "GET"
                 connectTimeout = CONNECT_TIMEOUT_MS
                 readTimeout = READ_TIMEOUT_MS
@@ -93,6 +114,7 @@ object JetsonClient {
         ip: String,
         timeIso: String,
         tz: String,
+        network: Network? = null,
     ): SyncEvent = withContext(Dispatchers.IO) {
         val now = java.time.Instant.now()
         try {
@@ -101,7 +123,7 @@ object JetsonClient {
                 .put("time", timeIso)
                 .put("tz", tz)
                 .toString()
-            val conn = (url.openConnection() as HttpURLConnection).apply {
+            val conn = (openBound(url, network) as HttpURLConnection).apply {
                 requestMethod = "POST"
                 connectTimeout = CONNECT_TIMEOUT_MS
                 readTimeout = READ_TIMEOUT_MS
@@ -137,6 +159,12 @@ object JetsonClient {
             )
         }
     }
+
+    /** Open a connection bound to [network] when non-null (routes over the WiFi
+     *  HotSpot even when mobile data is the default internet uplink), else the
+     *  default network. */
+    private fun openBound(url: URL, network: Network?): java.net.URLConnection =
+        network?.openConnection(url) ?: url.openConnection()
 
     /** Map an HTTP status code to the matching [SyncEvent.Outcome]. */
     private fun outcomeFor(code: Int): SyncEvent.Outcome = when (code) {

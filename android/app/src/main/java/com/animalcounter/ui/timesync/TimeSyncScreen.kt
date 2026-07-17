@@ -19,6 +19,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -62,7 +63,7 @@ fun TimeSyncScreen() {
     val vm: TimeSyncViewModel = viewModel()
     val ip by vm.ip.collectAsState()
     val syncing by vm.syncing.collectAsState()
-    val connected by SyncLog.hotspotConnected.collectAsState()
+    val probeState by vm.probeState.collectAsState()
     val events by SyncLog.events.collectAsState()
 
     Column(
@@ -70,7 +71,7 @@ fun TimeSyncScreen() {
             .fillMaxSize()
             .padding(16.dp),
     ) {
-        HotspotBanner(connected = connected)
+        HotspotBanner(probeState = probeState)
 
         Spacer(Modifier.height(12.dp))
 
@@ -100,6 +101,16 @@ fun TimeSyncScreen() {
             Text(stringResource(R.string.sync_now))
         }
 
+        Spacer(Modifier.height(8.dp))
+
+        OutlinedButton(
+            onClick = vm::probe,
+            enabled = probeState != ProbeState.Probing,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Text(stringResource(R.string.refresh))
+        }
+
         Spacer(Modifier.height(16.dp))
 
         Text(
@@ -120,21 +131,31 @@ fun TimeSyncScreen() {
  * of the companion services is unmistakable.
  */
 @Composable
-private fun HotspotBanner(connected: Boolean) {
-    val container = if (connected) {
-        MaterialTheme.colorScheme.primaryContainer
-    } else {
-        MaterialTheme.colorScheme.errorContainer
+private fun HotspotBanner(probeState: ProbeState) {
+    val container: Color
+    val onContainer: Color
+    val message: String
+    val icon: androidx.compose.ui.graphics.vector.ImageVector
+    when (probeState) {
+        ProbeState.Reachable -> {
+            container = MaterialTheme.colorScheme.primaryContainer
+            onContainer = MaterialTheme.colorScheme.onPrimaryContainer
+            message = stringResource(R.string.jetson_connected)
+            icon = Icons.Filled.Wifi
+        }
+        ProbeState.OutOfRange -> {
+            container = MaterialTheme.colorScheme.errorContainer
+            onContainer = MaterialTheme.colorScheme.onErrorContainer
+            message = stringResource(R.string.jetson_out_of_range)
+            icon = Icons.Filled.WifiOff
+        }
+        ProbeState.Probing, ProbeState.Idle -> {
+            container = MaterialTheme.colorScheme.surfaceVariant
+            onContainer = MaterialTheme.colorScheme.onSurfaceVariant
+            message = stringResource(R.string.jetson_checking)
+            icon = Icons.Filled.Wifi
+        }
     }
-    val onContainer = if (connected) {
-        MaterialTheme.colorScheme.onPrimaryContainer
-    } else {
-        MaterialTheme.colorScheme.onErrorContainer
-    }
-    val message = stringResource(
-        if (connected) R.string.jetson_connected else R.string.jetson_out_of_range,
-    )
-    val icon = if (connected) Icons.Filled.Wifi else Icons.Filled.WifiOff
 
     Surface(
         color = container,

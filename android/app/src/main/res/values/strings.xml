@@ -14,6 +14,7 @@
     <string name="refresh">Refresh</string>
     <string name="jetson_connected">Jetson connected</string>
     <string name="jetson_out_of_range">Jetson out of range</string>
+    <string name="jetson_checking">Checking…</string>
     <string name="time_sync_placeholder">Time sync screen — coming next</string>
 
     <!-- Placeholder screens -->
