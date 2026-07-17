@@ -36,7 +36,13 @@
 # Port 8090 (not 8080): 8080 is already bound by filebrowser on the Jetson;
 # 8090 is free. Configurable via the COMPANION_PORT env var in the unit.
 #
-# Usage:
+# Usage (offline, over the Jetson hotspot — preferred):
+#   ./scripts/install_companion_standalone.sh
+#   (sources .env.local, derives JETSON_IP from JETSON_HOTSPOT_IP, runs this
+#    playbook; the companion is stdlib-only so no internet is needed)
+#
+# Usage (raw ansible, if JETSON_IP is already exported — e.g. after
+# prepare_jetson.sh on the WiFi-internet network):
 #   set -a; source .env.local; set +a
 #   ansible-playbook -i ansible/inventory/jetsons.yml \
 #                    ansible/playbooks/system/configure_companion.yml

@@ -114,18 +114,41 @@ script (`/usr/local/bin/jetson-companion`, mode `0755`) and the systemd unit
 changes, so the running instance picks up new code and the second playbook
 run is idempotent (`changed=0` on the copy tasks).
 
-From the PC (control machine), against the Jetson at `192.168.0.180`:
+The playbook runs on `hosts: all` with `become: true` (root, because
+`timedatectl set-time` requires root). It is safe to re-run — the second run
+reports `changed=0` for the copy tasks (the handler only fires on content
+change).
+
+### Offline, over the Jetson hotspot (preferred)
+
+The companion is **stdlib-only Python** (http.server, json, subprocess,
+datetime — no apt/pip/docker-pull), so it is the only system playbook that can
+be deployed with **no internet** — exactly the situation once the Jetson is in
+WiFi HotSpot mode (isolated LAN, no uplink). Use the standalone wrapper, which
+mirrors `scripts/load_image.sh`'s offline pattern: it derives the target IP
+from `JETSON_HOTSPOT_IP` (CIDR stripped) and pauses for a manual checkpoint
+(the script cannot switch the Jetson to hotspot itself).
+
+```bash
+./scripts/install_companion_standalone.sh
+```
+
+Prereq (manual): switch the Jetson to **HotSpot mode** and connect this PC to
+that hotspot. Required `.env.local` vars: `JETSON_HOTSPOT_IP` (e.g.
+`192.168.100.1/24`), `JETSON_PASSWORD`, `JETSON_USER`. The wrapper sources
+`.env.local`, exports `JETSON_IP` (CIDR stripped) for the env-based inventory,
+checks SSH reachability, then runs the playbook.
+
+### Raw ansible (if `JETSON_IP` is already exported)
+
+If you just ran `prepare_jetson.sh` on the WiFi-internet network (which exports
+`JETSON_IP` via `jetson_discover.sh`), you can run the playbook directly:
 
 ```bash
 set -a; source .env.local; set +a
 ansible-playbook -i ansible/inventory/jetsons.yml \
                  ansible/playbooks/system/configure_companion.yml
 ```
-
-The playbook runs on `hosts: all` with `become: true` (root, because
-`timedatectl set-time` requires root). It is safe to re-run — the second run
-reports `changed=0` for the copy tasks (the handler only fires on content
-change).
 
 ## curl examples
 
