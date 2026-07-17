@@ -101,12 +101,26 @@ nodes:
            project exists, read any existing `android/app/build.gradle*`,
            `AndroidManifest.xml`. Also check the companion contract in
            `docs/11_jetson_companion.md` for the exact /api/time request shape.
-        2. **Output your understanding + 2-3 questions**, max. Focus on what is
-           NOT yet decided: UI details (which tabs/screens to scaffold for
-           BL-66/67 placeholders, color theme, app name/icon), the Jetson IP
-           default + persistence (DataStore/SharedPreferences), how much of the
-           hub shell to build now vs stub, and whether to add a "Push now" test
-           button + a status/log view.
+        2. **Check whether every decision is already resolved.** The
+           "ALREADY DECIDED" list above + the user's request may already close
+           ALL open taste-calls (tab names/order, app name, icon, theme, IP
+           persistence, UI extras). If so, do NOT pause to re-ask.
+
+           **Convergence shortcut**: if the user's request ALREADY resolves
+           every open decision, jump straight to the "Resolved intent for
+           plannotator" block (Building / In scope / Out of scope / Key
+           decisions / Files likely to change), write `STATE: READY_FOR_PLAN`
+           to `.archon-relay/CLARIFY.md`, and emit
+           `<promise>READY_FOR_PLAN</promise>` in THIS response. Do not ask
+           questions that are already answered.
+
+        3. **Otherwise** (genuine open decisions remain) — **Output your
+           understanding + 2-3 questions**, max. Focus on what is NOT yet
+           decided: UI details (which tabs/screens to scaffold for BL-66/67
+           placeholders, color theme, app name/icon), the Jetson IP default +
+           persistence (DataStore/SharedPreferences), how much of the hub shell
+           to build now vs stub, and whether to add a "Push now" test button +
+           a status/log view.
 
            Ask about DECISIONS, not things you can look up.
 
