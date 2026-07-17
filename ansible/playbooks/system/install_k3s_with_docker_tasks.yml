@@ -73,9 +73,19 @@
     state: started
 
 
+- name: Check if NVIDIA runtime already configured
+  command: grep -q nvidia /etc/docker/daemon.json
+  register: nvidia_runtime
+  changed_when: false
+  failed_when: false
+
 - name: Configure NVIDIA runtime for Docker
   command: nvidia-ctk runtime configure --runtime=docker --set-as-default
   become: true
+  # Skip if already configured: nvidia-ctk restarts docker, and k3s
+  # (Requires=docker.service) is stopped when docker restarts — leaving k3s
+  # down on re-runs. Only run the (re)configuration when it's not already set.
+  when: nvidia_runtime.rc != 0
 
 - name: Ajouter options cgroup à la fin de la ligne APPEND
   lineinfile:
@@ -279,6 +289,16 @@
   args:
     creates: /usr/local/bin/k3s
     executable: /bin/bash
+  tags: k3s
+
+- name: Ensure K3s is running
+  systemd:
+    name: k3s
+    state: started
+    enabled: yes
+  # On re-runs, docker may have been restarted (e.g. by nvidia-ctk) which
+  # stops k3s (Requires=docker.service) without restarting it. (Re)start k3s
+  # here so the wait task can reach the API.
   tags: k3s
 
 - name: Wait for K3s node ready
