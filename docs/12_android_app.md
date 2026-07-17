@@ -47,6 +47,90 @@ and pushes time in the background — no app open required.
 
 ---
 
+## Jetson companion — the bridge (install on the Jetson)
+
+The Android app talks to the **Jetson companion service** (BL-64): a small
+stdlib-only Python HTTP server running on the Jetson **host** (not k3s) on port
+**8090**, exposing `GET /api/identify` (reachability probe) and
+`POST /api/time` (set the clock). **Without it, the app has nothing to talk
+to** — the « Jetson hors de portée » banner will stay amber and every push
+will fail. It must be installed on the Jetson **before** the app is usable.
+
+The companion is the only system playbook that deploys **offline, over the
+Jetson's WiFi hotspot** (no internet needed — it's stdlib Python, no
+apt/pip/docker-pull), which is exactly the situation once the Jetson is in
+HotSpot mode (the same network the app will join).
+
+### Prerequisites (`.env.local`)
+
+Make sure these are set in `.env.local` (gitignored — never committed):
+
+```ini
+JETSON_HOTSPOT_IP=192.168.100.1/24   # Jetson hotspot IP with CIDR
+JETSON_PASSWORD=********             # sudo/SSH password on the Jetson
+JETSON_USER=nano-counter             # SSH user (default nano-counter)
+JETSON_HOTSPOT_SSID=********         # hotspot SSID (for the phone to join)
+JETSON_HOTSPOT_PASSWORD=********     # hotspot password
+```
+
+### Steps
+
+1. **Switch the Jetson to WiFi HotSpot mode** (if not already):
+   ```bash
+   set -a; source .env.local; set +a
+   ansible-playbook -i ansible/inventory/jetsons.yml \
+     ansible/playbooks/system/hotspot_setup.yml
+   ```
+   The Jetson reboots and comes up as an access point on `192.168.100.1`.
+   (Requires internet once for the apt packages; see
+   [03_deployment.md](./03_deployment.md).)
+
+2. **Connect this PC to the Jetson hotspot** (join the SSID from
+   `JETSON_HOTSPOT_SSID`). The standalone deploy runs over this isolated LAN —
+   no internet.
+
+3. **Deploy the companion (offline standalone):**
+   ```bash
+   ./scripts/install_companion_standalone.sh
+   ```
+   The wrapper sources `.env.local`, derives the target IP from
+   `JETSON_HOTSPOT_IP` (CIDR stripped → `192.168.100.1`), checks SSH
+   reachability, pauses for a manual checkpoint (it cannot switch the Jetson to
+   hotspot itself — confirm `y`), then runs the Ansible playbook
+   `ansible/playbooks/system/configure_companion.yml`. This installs
+   `/usr/local/bin/jetson-companion` (mode `0755`) + the systemd unit
+   `/etc/systemd/system/jetson-companion.service`, enables + starts it
+   (`User=root`, needed for `timedatectl set-time`). Idempotent — safe to re-run.
+
+   Flags: `--check` (Ansible dry-run), `--tags <t>` (extra Ansible args).
+
+4. **Verify the bridge is up:**
+   ```bash
+   # reachability probe (from this PC, on the hotspot)
+   curl http://192.168.100.1:8090/api/identify
+   # expected: {"service":"jetson-companion","version":"1"}
+
+   # service status on the Jetson
+   ssh nano-counter@192.168.100.1 'systemctl is-active jetson-companion'   # active
+   ssh nano-counter@192.168.100.1 'systemctl is-enabled jetson-companion'  # enabled
+   ```
+
+5. **Test a manual time push** (before using the app):
+   ```bash
+   curl -X POST http://192.168.100.1:8090/api/time \
+     -H 'Content-Type: application/json' \
+     -d '{"time":"2025-07-15T14:30:00+02:00","tz":"Europe/Paris"}'
+   # expected: {"status":"ok",...}
+   ssh nano-counter@192.168.100.1 'timedatectl | grep "Local time"'
+   ```
+
+Once `/api/identify` returns the JSON above, the Android app's « Jetson
+connecté » banner will go green and the background push will work. Full
+companion reference (endpoints, NTP note, why port 8090, raw-ansible deploy,
+curl examples): [11_jetson_companion.md](./11_jetson_companion.md).
+
+---
+
 ## Build the APK
 
 The build environment is already installed on the dev WSL host.
