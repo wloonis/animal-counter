@@ -26,11 +26,18 @@
             </intent-filter>
         </activity>
 
-        <!--
-            TimeSyncService (foreground, dataSync) + BootReceiver are wired in
-            later tasks (BL-65 Tasks 5/17/18). The permissions above are
-            declared up front so the manifest is stable across iterations.
-        -->
+        <service
+            android:name=".service.TimeSyncService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
+
+        <receiver
+            android:name=".receiver.BootReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
 
     </application>
 </manifest>
