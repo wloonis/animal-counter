@@ -75,6 +75,30 @@ points the boot config at it. Once done, **the SD card is no longer needed**
 > copies the already-configured rootfs, so the `nano-counter` user, hostname,
 > and WiFi connection are preserved on the SSD).
 
+Procedure:
+
+1. From the control machine, discover the Jetson's IP:
+   ```bash
+   ./scripts/jetson_discover.sh
+   ```
+2. SSH into it:
+   ```bash
+   ssh nano-counter@<IP>
+   ```
+3. Create the tools directory under `/data`:
+   ```bash
+   sudo mkdir -p /data/tools
+   ```
+4. Enter it and clone the JetsonHacks project:
+   ```bash
+   cd /data/tools
+   git clone https://github.com/jetsonhacks/migrate-jetson-to-ssd.git
+   cd migrate-jetson-to-ssd
+   ```
+5. Follow the project's `README.md` from there (it scripts the rootfs clone
+   onto the NVMe drive + the boot-config switch). Reboot when it tells you to,
+   then remove the SD card.
+
 ## 3. Install Ansible on the control machine
 
 On **your** machine (not the Jetson):
