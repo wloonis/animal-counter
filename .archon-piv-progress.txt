@@ -43,3 +43,7 @@ BUILD: cd android && ./gradlew assembleDebug — BUILD SUCCESSFUL, app-debug.apk
 Task 5 (manifest w/ service+receiver entries), 14, 15, 16, 17, 18, 19, 20 — remaining
 Task 5: CREATE AndroidManifest.xml (TimeSyncService dataSync + BootReceiver BOOT_COMPLETED) — e1c6b41
 Task 14: ADD data/SyncEvent.kt + data/SyncLog.kt (bounded ring buffer StateFlow, cap 200) — e1aac62
+Task 13: ADD data/SettingsRepository.kt (DataStore Preferences, jetsonIp Flow default 192.168.100.1, setJetsonIp) — 9305f4a
+Task 9: CREATE android/app/proguard-rules.pro (empty/default rules) — 2be68dd
+Task 14: CREATE JetsonClient.kt (HttpURLConnection GET /api/identify + POST /api/time, sealed SyncEvent outcomes) — 5b5d070
+Task 15: CREATE TimeSyncService.kt (foreground dataSync + NetworkCallback push) — 5e4200d
