@@ -29,11 +29,23 @@
   become: false
   tags: build
 
+- name: Check if Docker image already exists
+  command: docker image inspect {{ image_name }}:{{ image_tag }}
+  register: app_image
+  changed_when: false
+  failed_when: false
+  tags: build2
+
 - name: Build Docker image
   shell: |
     cd {{ app_path }} && 
     docker buildx build -t {{ image_name }}:{{ image_tag }} .
     docker image prune -f && docker builder prune -f
+  # Skip if the image already exists (avoid a long rebuild on every
+  # prepare_jetson.sh re-run). App code changes are rsync'd to the hostPath
+  # mount and picked up live — only dependency changes (requirements.txt etc.)
+  # need a rebuild, in which case run with `-e force_rebuild=true`.
+  when: app_image.rc != 0 or (force_rebuild | default(false) | bool)
   tags: build2
 #    docker buildx build --no-cache -t {{ image_name }}:{{ image_tag }} .
 
