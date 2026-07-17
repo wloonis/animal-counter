@@ -516,29 +516,55 @@ nodes:
 
         ---
 
-        ## Step 1: Run validation
+        ## Step 1: Decide whether validation is needed, then run
 
-        Choose the validation mode based on what this branch changes:
-        - **Standard** (default, no flag) — validates only the reference video
-          from `validation/config.json`. Use this when the branch does NOT touch
-          the counting pipeline (e.g. k3s/ansible/docs/UI/infra-only changes).
-        - **Full** (`--full`) — validates the full manifest in
-          `validation/expected_counts.json`. Use this ONLY when the branch
-          touches counting code: `app/src/counting.py`, `app/src/main.py`
-          (tracking/counting/display-thread logic), `app/src/core/*`, tracker
-          config / guard params, or anything in the counting pipeline.
-
-        Pick the mode, then run:
+        First check whether this branch touches the counting app at all. The
+        counting-video validation only proves the *counting pipeline* still
+        counts correctly — it says nothing about infra/docs/ansible/companion
+        changes. If this branch does NOT touch any file under `app/`, running it
+        is pure waste (and risks a false mismatch from the model mis-parsing a
+        green run). Skip it and signal VALIDATED.
 
         ```bash
-        # Full mode ONLY when this branch touches the counting pipeline.
-        if [ -n "$(git diff --name-only main...HEAD -- app/src/counting.py app/src/main.py app/src/core/ app/src/settings.py)" ]; then
-          MODE="--full"
+        # Does this branch touch ANY file under app/?
+        APP_CHANGES=$(git diff --name-only main...HEAD -- app/)
+        if [ -z "$APP_CHANGES" ]; then
+          echo "NO_APP_CHANGES: this branch does not touch countingapp (infra/docs/ansible/k3s/companion-only)."
+          echo "Skipping counting-video validation — not applicable."
         else
-          MODE=""
+          # app/ IS touched: pick the mode.
+          #   Full mode ONLY when this branch touches the counting pipeline.
+          if [ -n "$(git diff --name-only main...HEAD -- app/src/counting.py app/src/main.py app/src/core/ app/src/settings.py)" ]; then
+            MODE="--full"
+          else
+            MODE=""
+          fi
+          echo "Running validation in ${MODE:-standard} mode..."
+          bash scripts/validate_on_jetson.sh $MODE 2>&1
         fi
-        bash scripts/validate_on_jetson.sh $MODE 2>&1
         ```
+
+        Then branch on the output:
+
+        ### If the script printed "NO_APP_CHANGES" (no app/ changes)
+        You are DONE — do NOT read or parse any report. Write the relay beacon:
+        ```
+        STATE: PASS
+        SKIPPED: true
+        REASON: no app/ changes — counting-video validation not applicable (infra/docs/ansible/k3s/companion-only branch)
+        ```
+        Then signal: `<promise>VALIDATED</promise>`. Proceed to finalize.
+
+        ### Otherwise (app/ IS touched, the script ran validate_on_jetson.sh)
+        Proceed to Step 2 to read `validation-report.json`.
+
+        > Mode selection recap (only when app/ is touched):
+        > - **Standard** (no flag) — reference video only. For branches that touch
+        >   `app/` but NOT the counting pipeline (UI, img, entrypoint, settings
+        >   UI fields, etc.).
+        > - **Full** (`--full`) — full manifest. ONLY when the branch touches
+        >   `app/src/counting.py`, `app/src/main.py`, `app/src/core/*`, or
+        >   tracker/guard params.
 
         ## Step 2: Read the report
 

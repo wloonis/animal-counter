@@ -274,6 +274,15 @@ CLI above (what the relay agent uses) and plannotator for plan review.
   ONLY when the branch touches counting code** (`app/src/counting.py`,
   `app/src/main.py` tracking/counting logic, `app/src/core/*`, tracker/guard
   params). k3s/ansible/docs/UI/infra-only changes → standard.
+- **Skip validation entirely for branches that touch NO file under `app/`**
+  (companion host service, ansible playbooks, docs, k3s manifests, scripts).
+  The counting-video validation only proves the *counting pipeline* still
+  counts correctly — it is meaningless for infra/docs/ansible/companion-only
+  changes and only risks a false mismatch from the model mis-parsing a green
+  run (BL-64 hit this). The `archon-jetson-dev` workflow's `jetson-validate`
+  node auto-detects this (`git diff --name-only main...HEAD -- app/` empty →
+  signals VALIDATED without running the script). Don't force a validation run
+  on such branches.
 - **`validation/config.json` `mode` field MUST stay `"standard"` by default.**
   `scripts/validate_on_jetson.sh` reads `mode` from config.json as its default;
   do not leave it on `"full"` (a counting-code branch may flip it to `full`
