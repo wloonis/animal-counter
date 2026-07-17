@@ -39,6 +39,8 @@ starting a new batch).
 | [`docs/09_development_workflow.md`](docs/09_development_workflow.md) | Development workflow with `archon-jetson-dev` (CLARIFY → plan → validate → PR) |
 | [`docs/10_offline_image_transfer.md`](docs/10_offline_image_transfer.md) | Transfer a Docker image from a test Jetson to an offline production Jetson via the PC |
 | [`docs/11_jetson_companion.md`](docs/11_jetson_companion.md) | Jetson companion clock-sync service (BL-64) — offline time set from the Android phone |
+| [`docs/12_android_app.md`](docs/12_android_app.md) | Android time-sync app (BL-65) — pushes time to the Jetson companion over the hotspot |
+| [`docs/13_jetson_network_k3s_boot.md`](docs/13_jetson_network_k3s_boot.md) | Jetson networking & K3s boot (WiFi-only, no RTC, no ethernet cable) — why + how |
 
 ---
 
