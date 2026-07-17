@@ -43,7 +43,8 @@ and pushes time in the background — no app open required.
 2. **Jetson WiFi hotspot active** — SSID + password from `.env.local`
    (`JETSON_HOTSPOT_SSID` / `JETSON_HOTSPOT_PASSWORD`), gateway IP
    `192.168.100.1`. Activated via `ansible/playbooks/system/hotspot_setup.yml`.
-3. **The phone** — Android 13+ (minSdk 33), e.g. Samsung Galaxy S20.
+3. **The phone** — Android 13+ (minSdk 33), e.g. Google Pixel 9 (ships with
+   Android 14, upgradable to 15).
 
 ---
 
@@ -166,22 +167,25 @@ This requires a host with a **physical USB connection** to the phone. On this
 setup, run it from **Windows** (the dev environment is WSL, which has no USB
 access).
 
-#### 1. Enable Developer options on the Samsung S20 (One UI)
+#### 1. Enable Developer options on the Pixel 9 (stock Android)
 
-1. On the phone, open **Settings → About phone → Software information**.
+1. On the phone, open **Settings → About phone**.
 2. Find **Build number** and tap it **7 times** rapidly.
-3. You'll see « Developer mode has been enabled ».
+3. You'll see « Developer mode has been enabled » (you may need to enter your
+   PIN/pattern).
 
 #### 2. Enable USB debugging
 
-1. Go back to **Settings → Developer options** (now visible at the bottom of
-   Settings).
+1. Go to **Settings → System → Developer options** (now visible).
 2. Toggle **USB debugging** ON.
 3. (Optional but recommended) toggle **Wireless debugging** OFF for now — USB
    is simpler.
 4. (Recommended) **Disable battery optimization** for the app after install:
-   **Settings → Apps → Animal Counter → Battery → Unrestricted**. This prevents
-   Android killing the foreground service that does the background time push.
+   **Settings → Battery → Battery usage → Animal Counter → Unrestricted**.
+   This helps the foreground service that does the background time push survive
+   doze. Pixels are less aggressive than Samsung at killing background services,
+   but setting it to Unrestricted is still recommended for a service that must
+   fire on every WiFi join.
 
 #### 3. Install ADB on Windows
 
@@ -312,9 +316,10 @@ than verifying the SSID. The Jetson hotspot is an isolated network.
   is running (`curl http://192.168.100.1:8090/api/identify` from a browser).
 - **No background push after reboot** — confirm the foreground service is
   running: the persistent notification should be visible. Some manufacturers
-  (Samsung included) aggressively kill background services; set the app to
-  **Unrestricted** battery and disable **Put unused apps to sleep**
-  (Settings → Battery and device care → Background usage limits).
+  **Unrestricted** battery (Settings → Battery → Battery usage → Animal
+  Counter → Unrestricted). Pixel devices are relatively permissive with
+  background services, but a foreground dataSync service can still be throttled
+  under aggressive doze; Unrestricted keeps the NetworkCallback firing reliably.
 - **Time not set on the Jetson** — the companion calls
   `timedatectl set-ntp false` then `timedatectl set-time`; check
   `journalctl -u jetson-companion` for errors (e.g. NTP still active, or the
@@ -323,9 +328,11 @@ than verifying the SSID. The Jetson hotspot is an isolated network.
   `ANDROID_HOME=$HOME/Android/Sdk` are exported; `java -version` should report
   17. The first Gradle build downloads the Gradle 8.9 distribution (internet
   required once).
-- **`adb devices` empty on Windows** — install the Samsung USB driver; use a
-  data cable; select « Transferring files » USB mode; re-accept the USB
-  debugging prompt.
+- **`adb devices` empty on Windows** — on a Pixel you usually don't need a
+  vendor driver (Google's ADB driver is bundled with Platform Tools). Use a
+  data cable, select « Transferring files » USB mode, and re-accept the USB
+  debugging prompt. If Windows doesn't recognize the device at all, install the
+  Google USB driver from the Android SDK Extras.
 
 ---
 
