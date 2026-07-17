@@ -122,30 +122,33 @@ cp .env.local.example .env.local   # set JETSON_USER, JETSON_PASSWORD, WIFI_NETW
 
 See [`01_quickstart.md`](01_quickstart.md) §2 for the keys.
 
-## 5. System preparation (optional, via Ansible)
+## 5. System preparation (via Ansible)
 
-The repo ships Ansible playbooks under `ansible/playbooks/system/`:
-
-| Playbook | Purpose |
-|----------|---------|
-| `prepare_system.yml` | Base packages, user, sudoers, timezone |
-| `network_ssh.yml` | Network + SSH hardening |
-| `install_k3s_with_docker_tasks.yml` | Install Docker + K3s (single-node) |
-| `hotspot_setup.yml` | WiFi hotspot for offline operation |
-| `install_lxde.yml` | LXDE desktop (kiosk-style boot into the app) |
-| `configure_splash_screen.yml` | Splash screen while the app loads; block LXDE until the pod is up |
-| `diagnose_splash_screen.yml` | Diagnose splash-screen issues |
-
-Run any of them directly, e.g.:
+The repo ships Ansible playbooks under `ansible/playbooks/system/`. **You do not
+run them directly** — `scripts/prepare_jetson.sh` is the one-shot wrapper that
+orchestrates them in the right order (with Jetson discovery + app deployment).
 
 ```bash
-export ANSIBLE_HOST_KEY_CHECKING=False
-ansible-playbook -i ansible/inventory/jetsons.yml ansible/playbooks/system/install_k3s_with_docker_tasks.yml
+./scripts/prepare_jetson.sh
 ```
 
-`scripts/prepare_jetson.sh` is the one-shot wrapper that handles discovery +
-app deployment; the system playbooks above are the building blocks when you
-need finer control.
+It calls these playbooks in sequence (do not invoke them individually):
+
+| Step | Playbook | Purpose |
+|------|----------|---------|
+| 3 | `prepare_system.yml` | Base packages, user, sudoers, timezone |
+| 3 | `network_ssh.yml` | Network + SSH hardening |
+| 3 | `install_k3s_with_docker_tasks.yml` | Install Docker + K3s (single-node, WiFi-only — dummy0 node-ip + fake-hwclock, see [`13_jetson_network_k3s_boot.md`](13_jetson_network_k3s_boot.md)) |
+| 4 | `deploy_app.yml` | Build + deploy the countingapp |
+| 4.5 | `configure_static_wifi.yml` | Pin the internet WiFi to a static IP (`192.168.0.180`) |
+| 5 | `hotspot_setup.yml` | WiFi hotspot for offline operation |
+| 6 | `configure_splash_screen.yml` | Splash screen while the app loads; block LXDE until the pod is up |
+
+`scripts/prepare_jetson.sh` handles Jetson discovery, sets the Ansible env, and
+runs each step in order, aborting on the first failure. The playbooks above are
+the building blocks — only call them individually if you need to re-run a
+specific step on an already-prepared Jetson (advanced; the wrapper is the
+supported path).
 
 ## 6. Verify the cluster
 
