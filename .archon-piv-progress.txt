@@ -58,3 +58,4 @@ Task 6: ADD app/src/core/history.py HistoryWriter + HistoryThread — e98002e
 Task 7: WIRE history recorder in main.py (serve mode) — 5b771c4
 Task 8: EXPOSE history_writer on SharedState — 678b9b1
 Task 9: EDIT configure_companion.yml — read-only JSONL history API + HistoryIndex (version 2) — efd3cda
+Task 10: EXPOSE HISTORY_FILE_HOST env in companion systemd unit — 95be54a

@@ -62,7 +62,7 @@ Add an append-only JSONL counting-session history (sessions, heartbeats, events,
   - `GET /api/history/summary?days=7` → daily aggregates (count per day, sessions, guard events).
   - `GET /api/startups?limit=50` → startup history lines.
   Keep the existing `/api/identify` and `POST /api/time` endpoints intact. Bump `SERVICE_VERSION` to `"2"`. All stdlib (`http.server`, `json`, `os`, `datetime`); no new deps; no mutation of the JSONL.
-- [ ] Task 10: EDIT `ansible/playbooks/system/configure_companion.yml` — ensure the history file path is configurable via env `HISTORY_FILE_HOST` (default `/data/orin/files/counting-history.jsonl`) in the systemd unit `Environment=` lines, mirroring `COMPANION_PORT`.
+- [x] Task 10: EDIT `ansible/playbooks/system/configure_companion.yml` — ensure the history file path is configurable via env `HISTORY_FILE_HOST` (default `/data/orin/files/counting-history.jsonl`) in the systemd unit `Environment=` lines, mirroring `COMPANION_PORT`.
 
 ### Phase 5 — Rsync guard + docs
 - [ ] Task 11: EDIT `scripts/validate_on_jetson.sh` — add `--exclude='counting-history*.jsonl*'` (covers the live file + gz archives) to the rsync `--delete` command in step 3, so a code rsync never wipes the persisted history on the Jetson. Keep the existing excludes (`model/`, `.env`, `video/`, `img/old/`).
