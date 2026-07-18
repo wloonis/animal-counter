@@ -139,4 +139,27 @@
     <string name="event_mirror_guard_enforce">Garde miroir forcé</string>
     <string name="event_mirror_suppress">Miroir supprimé</string>
     <string name="detail_empty">Aucune session chargée</string>
+
+    <!-- BL-69 — dashboard screen -->
+    <string name="tab_dashboard">Tableau de bord</string>
+    <string name="dashboard_title">Tableau de bord</string>
+    <string name="dashboard_period_7">7 jours</string>
+    <string name="dashboard_period_30">30 jours</string>
+    <string name="dashboard_total_counted">Total compté</string>
+    <string name="dashboard_total_sessions">Sessions</string>
+    <string name="dashboard_total_guards">Événements de garde</string>
+    <string name="dashboard_avg_per_day">Moy. / jour</string>
+    <string name="empty_dashboard">Aucune donnée pour cette période</string>
+
+    <!-- BL-69 — startups screen -->
+    <string name="tab_startups">Démarrages</string>
+    <string name="empty_startups">Aucun démarrage enregistré</string>
+    <string name="startup_boot_at">Démarré à</string>
+    <string name="startup_image_tag">Tag image</string>
+    <string name="startup_git_commit">Git commit</string>
+    <string name="startup_mode">Mode</string>
+    <string name="startup_config_notable">Config notable</string>
+
+    <!-- BL-69 — live count status label -->
+    <string name="live_status_label">Statut</string>
 </resources>
