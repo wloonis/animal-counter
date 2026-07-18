@@ -321,8 +321,15 @@ class HistoryWriter:
     def _append(self, obj):
         """Append a line unless writes are suspended (disk CRIT) or
         the session has ended. Never raises: history is best-effort and
-        must never break counting."""
-        if self._stopped or self._writes_suspended:
+        must never break counting.
+
+        Note: ``_stopped`` is intentionally NOT checked here — ``end_session``
+        sets ``_stopped = True`` first (to halt concurrent heartbeats/events,
+        which check ``_stopped`` at their own top) and then must still be
+        able to append its own ``session_end`` line. ``emit_event`` and
+        ``heartbeat`` guard themselves on ``_stopped`` before reaching here.
+        """
+        if self._writes_suspended:
             return False
         try:
             _append_line(self.path, obj)
@@ -886,13 +893,16 @@ class HistoryWriter:
         warn = self.settings.HISTORY_DISK_WARN_GB * 1024 ** 3
         if free < crit:
             if not self._writes_suspended:
-                self._writes_suspended = True
+                # Emit the warning BEFORE flipping the suspended flag, so
+                # the warning line itself is not blocked by the suspension
+                # (it IS the alert that documents the suspension).
                 self.emit_event("disk_warning", {
                     "free_bytes": free,
                     "threshold_bytes": crit,
                     "level": "crit",
                     "message": "history writes suspended (disk CRIT); counting continues",
                 })
+                self._writes_suspended = True
                 logger.error(
                     f"history: disk CRIT ({free/1024**3:.2f} GB free) — "
                     f"writes suspended, counting continues"
@@ -900,6 +910,8 @@ class HistoryWriter:
             return None
         if self._writes_suspended and free >= crit:
             # Hysteresis: only resume once we're comfortably above CRIT.
+            # Clear the suspended flag BEFORE emitting the resume warning so
+            # the warning line is actually written.
             self._writes_suspended = False
             self.emit_event("disk_warning", {
                 "free_bytes": free,
