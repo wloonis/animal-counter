@@ -68,3 +68,6 @@ Task 5: CREATE HistoryViewModel (paginated + client-side date/status filtering) 
 Task 7: CREATE SessionDetailViewModel (SavedStateHandle session id) — 0bbc57e
 Task 4: feccc79
 Task 6: CREATE HistoryScreen.kt — 10fd1e1
+Task 8: CREATE SessionDetailScreen (A–G group ElevatedCards, end_reason pill, heartbeat perf agg) — ed4eea5
+Task 9: CREATE DashboardViewModel (7/30-day period selector, summary aggregation) — 42415d6
+Task 13: ADD EN strings (dashboard/startups/live-status) — aa81ba3
