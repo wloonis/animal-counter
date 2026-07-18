@@ -51,3 +51,4 @@ Task 16: CREATE BootReceiver.kt (BOOT_COMPLETED → start TimeSyncService, no di
 Task 21: CREATE TimeSyncScreen.kt (ViewModel-backed, IP field + debounced DataStore, HotSpot banner, auto-scroll log) — 4959d94
 Task 1: ADD HISTORY_* settings to app/src/settings.py — 7a22a7c
 Task 2: BAKE build-info.json into Dockerfile — 7a1d3a1
+Task 3: EDIT build_countingapp.yml pass IMAGE_TAG+GIT_COMMIT build args — 039f115
