@@ -89,14 +89,14 @@ Extend the existing BL-65 Android app (`com.animalcounter`, Kotlin + Jetpack Com
 - [x] **Task 15: DELETE** `android/app/src/main/java/com/animalcounter/ui/placeholder/PlaceholderScreen.kt` — after Task 2 removes its only references, delete the now-dead placeholder (it was only used by the two replaced tabs). Verify no remaining imports before deleting.
 
 ### J. Tests
-- [ ] **Task 16: CREATE** `android/app/src/test/java/com/animalcounter/net/JetsonClientParsingTest.kt` — unit tests (JUnit4, already on classpath via `kotlinx.coroutines`/android test? if not, add `testImplementation(libs.junit4)` + `testImplementation(libs.kotlinx.coroutines.test)` to `app/build.gradle.kts` `dependencies{}`) that feed mock JSON fixtures (mirroring the BL-68 shapes from `tests/companion_history_reader.py` + the `/api/count` brief shape) into a pure parse function and assert every field:
+- [x] **Task 16: CREATE** `android/app/src/test/java/com/animalcounter/net/JetsonClientParsingTest.kt` — unit tests (JUnit4, already on classpath via `kotlinx.coroutines`/android test? if not, add `testImplementation(libs.junit4)` + `testImplementation(libs.kotlinx.coroutines.test)` to `app/build.gradle.kts` `dependencies{}`) that feed mock JSON fixtures (mirroring the BL-68 shapes from `tests/companion_history_reader.py` + the `/api/count` brief shape) into a pure parse function and assert every field:
   - `getCount` parse: count, status, auto_mode, timestamp, session_id.
   - `getHistory` parse: pagination wrapper + a summary with `end_reason="clean"` + a running session (`end_reason=null`, `status="running"`).
   - `getSession` parse: ended session with full `end.counters`/`end.video`/`end.system`, AND a running session with `end=null` (assert counters fall back to last heartbeat).
   - `getSummary` parse: `{days, daily[]}` with multiple day buckets.
   - `getStartups` parse: list with `boot_at`, `image_tag`, `git_commit`, `mode`, `config_notable`.
   Extract the JSON→data-class parse logic into package-private functions (e.g. `JetsonClient.parseLiveCount(json): LiveCount`) so tests can call them directly without HTTP. Add `testImplementation` deps only if missing (check `libs.versions.toml`/`build.gradle.kts` first).
-- [ ] **Task 17: VERIFY** `cd android && ./gradlew assembleDebug` builds the APK and the new test task compiles (`./gradlew testDebugUnitTest` if test deps are wired; otherwise at least `assembleDebug` must succeed). No Jetson/video business validation — UI-only feature.
+- [x] **Task 17: VERIFY** `cd android && ./gradlew assembleDebug` builds the APK and the new test task compiles (`./gradlew testDebugUnitTest` if test deps are wired; otherwise at least `assembleDebug` must succeed). No Jetson/video business validation — UI-only feature.
 
 ## Validation
 - `cd android && ./gradlew assembleDebug` builds the APK with no errors.

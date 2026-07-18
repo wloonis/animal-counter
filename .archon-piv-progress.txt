@@ -77,3 +77,5 @@ Task 12: CREATE StartupsScreen.kt (LargeTopAppBar + Refresh + PullToRefreshBox +
 Task 2: EDIT AnimalCounterApp.kt — 5-tab NavigationBar + session/{sessionId} detail route — 0cac7d9
 Task 14: i18n(fr) add dashboard/startups/live-status FR strings — 913f241
 Task 15: DELETE dead PlaceholderScreen after 5-tab conversion — 8c73160
+Task 16: CREATE JetsonClientParsingTest.kt (21 unit tests, 5 endpoints incl. running-session end=null fallback) — 153b6a5
+Task 17: VERIFY assembleDebug BUILD SUCCESSFUL + testDebugUnitTest 21 tests pass (0 failures) — 153b6a5
