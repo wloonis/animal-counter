@@ -56,3 +56,4 @@ Task 4: ADD read-only instrumentation to counting.py (_emit_event + accumulators
 Task 5: ADD tests/test_counting_invariance.py — a4167d7
 Task 6: ADD app/src/core/history.py HistoryWriter + HistoryThread — e98002e
 Task 7: WIRE history recorder in main.py (serve mode) — 5b771c4
+Task 8: EXPOSE history_writer on SharedState — 678b9b1
