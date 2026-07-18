@@ -32,7 +32,12 @@ RUN pip download trackers==2.5.0 --no-binary :all: --no-deps -d /tmp/tks --index
 RUN mkdir -p /usr/local/lib/python3.10/dist-packages/cv2/qt/fonts \
     && ln -snf /usr/share/fonts/truetype/dejavu /usr/local/lib/python3.10/dist-packages/cv2/qt/fonts
     
+# Build-info baking (BL-68): write /app/.build-info.json from build args so the
+# image carries its git_commit + image_tag. Defaults keep local builds working.
+ARG IMAGE_TAG=local
+ARG GIT_COMMIT=unknown
 WORKDIR /app
+RUN printf '{"git_commit":"%s","image_tag":"%s"}\n' "$GIT_COMMIT" "$IMAGE_TAG" > /app/.build-info.json
 
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh

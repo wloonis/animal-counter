@@ -83,7 +83,67 @@ class Counting:
         self.recent_crossings = []          # [{frame, tid, direction}]
         self.first_seen = {}                # {track_id: frame of first appearance}
         self.suppress_count = set()     # track_ids whose next crossed LEFT is suppressed
+
+        # ------------------------------------------------------------------
+        # BL-68 read-only instrumentation. These accumulators and the
+        # _emit_event hook are ADDITIVE ONLY: no decision branch below reads
+        # them, so they cannot alter counter_to_right. main.py wires a
+        # recorder that subscribes to _emit_event; by default it is a no-op
+        # and the subscribers list is empty, so behaviour is byte-identical
+        # to the un-instrumented version. The Jetson STANDARD validation
+        # (tolerance 0) is the gate that proves this.
+        # ------------------------------------------------------------------
+        self._event_subscribers = []
+        # Directional raw crossing counters (additive; not read by any guard).
+        self.count_left_to_right = 0
+        self.count_right_to_left = 0
+        # Guard-intervention tally (counts each guard firing).
+        self.guard_interventions = {
+            "lost_buffer_expired": 0,
+            "mirror_guard": 0,
+            "resurrection": 0,
+            "reid_rebind": 0,
+        }
+        self.id_switch_recoveries = 0
+        self.unique_track_ids = set()
+        self.max_concurrent_tracks = 0
+        # Detection stats (running aggregates, bounded memory for 24/7 mode).
+        self._det_stats = {
+            "frames": 0,        # frames with detections
+            "det_sum": 0,       # sum of detection counts per frame
+            "det_min": None,    # min detections in a frame
+            "det_max": 0,       # max detections in a frame
+            "conf_sum": 0.0,    # sum of detection confidences
+            "conf_count": 0,    # number of confidence samples
+        }
     
+    def _emit_event(self, event_type, detail=None):
+        """Notify all subscribers of an instrumentation event (read-only).
+
+        No-op when there are no subscribers (default). Never returns a value
+        and never raises into the caller's path: a faulty subscriber cannot
+        affect the count. This is the single hook the BL-68 history recorder
+        subscribes to; it is purely additive to the existing control flow.
+        """
+        for sub in self._event_subscribers:
+            try:
+                sub(event_type, detail)
+            except Exception:  # pragma: no cover - instrumentation must never break counting
+                logger.debug("instrumentation subscriber raised", exc_info=True)
+
+    def _record_det_stats(self, n_det, scores):
+        """Update running detection aggregates (additive, no return)."""
+        s = self._det_stats
+        s["frames"] += 1
+        s["det_sum"] += n_det
+        if s["det_min"] is None or n_det < s["det_min"]:
+            s["det_min"] = n_det
+        if n_det > s["det_max"]:
+            s["det_max"] = n_det
+        if scores is not None and len(scores) > 0:
+            s["conf_sum"] += float(np.sum(scores))
+            s["conf_count"] += int(len(scores))
+
     def count(self, image_raw, result_boxes, result_trackid, result_classid, result_scores=None, counting_class=0, counter_to_right=0):
         """
         Count objects crossing a vertical line.
@@ -116,6 +176,11 @@ class Counting:
         current_ids = set()
         if len(result_boxes) > 0:
             current_ids = {int(tid) for tid in result_trackid}
+        # BL-68 read-only instrumentation: track cardinality stats (additive).
+        if len(current_ids) > self.max_concurrent_tracks:
+            self.max_concurrent_tracks = len(current_ids)
+        for _tid in current_ids:
+            self.unique_track_ids.add(_tid)
 
         newly_lost = self.prev_visible_ids - current_ids
         for tid in newly_lost:
@@ -137,6 +202,11 @@ class Counting:
                 f"[COUNT] track lost: ID={tid} side={side} "
                 f"pos=({cx:.0f},{cy:.0f})"
             )
+            self._emit_event("track_lost", {
+                "track_id": int(tid), "side": side,
+                "cx": float(cx), "cy": float(cy),
+                "frame": self.frame_counter,
+            })
         self.prev_visible_ids = current_ids
 
         # Expire stale lost tracks
@@ -145,6 +215,10 @@ class Counting:
             if self.frame_counter - d["frame"] > self.lost_buffer_frames
         ]:
             del self.lost_tracks[lost_id]
+            self.guard_interventions["lost_buffer_expired"] += 1
+            self._emit_event("lost_buffer_expired", {
+                "track_id": int(lost_id), "frame": self.frame_counter,
+            })
 
         self.frame_counter += 1
 
@@ -162,6 +236,8 @@ class Counting:
             # Add scores to current_status if provided
             if result_scores is not None:
                 current_status = np.column_stack((current_status, result_scores))
+            # BL-68 read-only instrumentation: detection aggregates (additive).
+            self._record_det_stats(len(result_boxes), result_scores)
 
             for element in current_status:
                 track_id = element[2]
@@ -208,6 +284,12 @@ class Counting:
                             self.area_out_list.append(track_id)
                         if track_id in self.lost_tracks:
                             del self.lost_tracks[track_id]
+                        self.guard_interventions["resurrection"] += 1
+                        self._emit_event("resurrection", {
+                            "track_id": int(track_id), "age": int(_age),
+                            "jump": float(_jump), "cx": float(element[0]),
+                            "cy": float(element[1]), "count": int(counter_to_right),
+                        })
                         continue
 
                     # ----------------------------------------------------------
@@ -247,6 +329,12 @@ class Counting:
                                 f"crossed LEFT during its absence -> suppress (+0) "
                                 f"count={counter_to_right}"
                             )
+                            self.guard_interventions["reid_rebind"] += 1
+                            self._emit_event("reid_suppress", {
+                                "direction": "LEFT", "track_id": int(track_id),
+                                "suppressed_by": int(_supp_tid), "age": int(_age),
+                                "jump": float(_jump), "count": int(counter_to_right),
+                            })
                             self.area_in_list.remove(track_id)
                             if track_id not in self.area_out_list:
                                 self.area_out_list.append(track_id)
@@ -289,6 +377,12 @@ class Counting:
                                 f"RIGHT during its absence -> suppress (+0) "
                                 f"count={counter_to_right}"
                             )
+                            self.guard_interventions["reid_rebind"] += 1
+                            self._emit_event("reid_suppress", {
+                                "direction": "RIGHT", "track_id": int(track_id),
+                                "suppressed_by": int(_supp_tid), "age": int(_age),
+                                "jump": float(_jump), "count": int(counter_to_right),
+                            })
                             self.area_out_list.remove(track_id)
                             if track_id not in self.area_in_list:
                                 self.area_in_list.append(track_id)
@@ -299,6 +393,11 @@ class Counting:
                     if self.detections[track_id][2] >= x_high and track_id in self.area_out_list:
                         counter_to_right -= 1
                         logger.info(f"[TRACK] ID={track_id} crossed RIGHT // Count {counter_to_right}")
+                        self.count_right_to_left += 1
+                        self._emit_event("crossed", {
+                            "direction": "RIGHT", "track_id": int(track_id),
+                            "count": int(counter_to_right),
+                        })
                         self.recent_crossings.append({"frame": self.frame_counter, "tid": track_id, "direction": "RIGHT"})
                         if track_id not in self.area_in_list:
                             self.area_out_list.remove(track_id)
@@ -313,9 +412,19 @@ class Counting:
                                 f"LEFT suppressed (already counted) "
                                 f"count={counter_to_right}"
                             )
+                            self.guard_interventions["mirror_guard"] += 1
+                            self._emit_event("mirror_suppress", {
+                                "track_id": int(track_id),
+                                "count": int(counter_to_right),
+                            })
                         else:
                             counter_to_right += 1
                             logger.info(f"[TRACK] ID={track_id} crossed LEFT // Count {counter_to_right}")
+                            self.count_left_to_right += 1
+                            self._emit_event("crossed", {
+                                "direction": "LEFT", "track_id": int(track_id),
+                                "count": int(counter_to_right),
+                            })
                             self.recent_crossings.append({"frame": self.frame_counter, "tid": track_id, "direction": "LEFT"})
                         if track_id not in self.area_out_list:
                             self.area_in_list.remove(track_id)
@@ -366,6 +475,12 @@ class Counting:
                                         f"ID={track_id} fused with lost ID={lost_id} "
                                         f"(+1) count={counter_to_right}"
                                     )
+                                    self.id_switch_recoveries += 1
+                                    self._emit_event("id_switch_recovery", {
+                                        "direction": "LEFT", "track_id": int(track_id),
+                                        "fused_with": int(lost_id),
+                                        "count": int(counter_to_right),
+                                    })
                                 else:
                                     # crossed RIGHT (-1): pig came back left->right
                                     counter_to_right -= 1
@@ -377,6 +492,12 @@ class Counting:
                                         f"ID={track_id} fused with lost ID={lost_id} "
                                         f"(-1) count={counter_to_right}"
                                     )
+                                    self.id_switch_recoveries += 1
+                                    self._emit_event("id_switch_recovery", {
+                                        "direction": "RIGHT", "track_id": int(track_id),
+                                        "fused_with": int(lost_id),
+                                        "count": int(counter_to_right),
+                                    })
                                 # Record this guard-triggered crossing so the
                                 # mirrored REID-SUPPRESS can detect a later re-ID of
                                 # the same pig reappearing on the same side.
@@ -428,6 +549,11 @@ class Counting:
                                             f"on right fused with lost ID={lost_id} "
                                             f"(suppress future +1)"
                                         )
+                                        self.guard_interventions["mirror_guard"] += 1
+                                        self._emit_event("mirror_guard_enforce", {
+                                            "track_id": int(track_id),
+                                            "fused_with": int(lost_id),
+                                        })
                                         del self.lost_tracks[lost_id]
                                     else:  # log mode: observe only, do not change state
                                         logger.info(
@@ -435,6 +561,10 @@ class Counting:
                                             f"on right, lost ID={lost_id} on left "
                                             f"(would suppress)"
                                         )
+                                        self._emit_event("mirror_candidate", {
+                                            "track_id": int(track_id),
+                                            "fused_with": int(lost_id),
+                                        })
                                     break
                         elif element[3] == counting_class and track_id not in self.area_out_list and element[0] <= x:
                             self.area_out_list.append(track_id)

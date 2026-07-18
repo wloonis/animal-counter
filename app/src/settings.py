@@ -212,4 +212,40 @@ class Settings:
         # Max vertical distance (px) between the new ID and the lost track.
         self.COUNTING_MIRROR_MAX_DIST_Y = int(os.getenv("COUNTING_MIRROR_MAX_DIST_Y", 60))
         ### Counting hysteresis + mirror guard - End
+
+        ### Counting history (BL-68) - Start
+        # Append-only JSONL counting-session history written read-only from the
+        # countingapp pod onto the hostPath /files, with an in-process history
+        # thread (heartbeat + compaction) resilient to power cuts, bounded to
+        # ~200 MB on the small SSD. History is serve-mode only (RESULT_JSON_PATH
+        # unset); validate/test mode never writes history.
+        # Path of the JSONL history file inside the pod. The pod mounts the
+        #   hostPath /files (host: /data/orin/files) read-write, so the writer
+        #   appends here; the companion host service reads the same file read-only
+        #   at /data/orin/files/counting-history.jsonl.
+        self.HISTORY_FILE = os.getenv("HISTORY_FILE", "/files/counting-history.jsonl")
+        # Retention window for the 2-level compaction: sessions younger than this
+        #   (in days) are kept raw (hot); older sessions (cold) are collapsed to a
+        #   single summary line + significant events, dropping heartbeats.
+        self.HISTORY_RETENTION_DAYS = int(os.getenv("HISTORY_RETENTION_DAYS", 30))
+        # Hard size cap on the live JSONL. Compaction + rotation keep the file
+        #   under this; 200 MB is the budget on the small SSD.
+        self.HISTORY_MAX_BYTES = int(os.getenv("HISTORY_MAX_BYTES", 200 * 1024 * 1024))
+        # Heartbeat interval (seconds) in the normal-disk case: the history thread
+        #   appends a heartbeat line (count + last video segment) and fsyncs it.
+        #   Adjusted up to 30s by the disk guard when free space drops below
+        #   HISTORY_DISK_WARN_GB; writes are suspended below HISTORY_DISK_CRIT_GB.
+        self.HISTORY_HEARTBEAT_S = int(os.getenv("HISTORY_HEARTBEAT_S", 5))
+        # Disk guard thresholds (GB free on the /files volume). WARN -> heartbeat
+        #   interval raised to 30s; CRIT -> writes suspended (counting continues) +
+        #   a disk_warning event is emitted.
+        self.HISTORY_DISK_WARN_GB = float(os.getenv("HISTORY_DISK_WARN_GB", 2))
+        self.HISTORY_DISK_CRIT_GB = float(os.getenv("HISTORY_DISK_CRIT_GB", 0.5))
+        # Rotation: when the live JSONL exceeds this size, the cold portion is
+        #   gzip-archived to counting-history.<ts>.jsonl.gz to keep the live file
+        #   small and cheap to scan.
+        self.HISTORY_ROTATE_BYTES = int(os.getenv("HISTORY_ROTATE_BYTES", 10 * 1024 * 1024))
+        # Maximum number of gz archives kept; the oldest is deleted beyond this.
+        self.HISTORY_ARCHIVE_MAX = int(os.getenv("HISTORY_ARCHIVE_MAX", 20))
+        ### Counting history (BL-68) - End
         
