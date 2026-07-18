@@ -72,3 +72,4 @@ Task 8: CREATE SessionDetailScreen (A–G group ElevatedCards, end_reason pill, 
 Task 9: CREATE DashboardViewModel (7/30-day period selector, summary aggregation) — 42415d6
 Task 13: ADD EN strings (dashboard/startups/live-status) — aa81ba3
 Task 10: CREATE DashboardScreen.kt (Canvas bar chart + segmented period selector) — 7284dde
+Task 11: CREATE StartupsViewModel (newest-first boot_at sort, reachability probe) — 233fa7e
