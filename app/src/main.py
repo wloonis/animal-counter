@@ -40,6 +40,9 @@ from trackers.utils.iou import IoU, GIoU, DIoU, CIoU, BIoU
 # OCSORTTracker(iou=...). trackers>=2.5.0 expects an IoU instance, not a string.
 _IOU_METRICS = {"iou": IoU, "giou": GIoU, "diou": DIoU, "ciou": CIoU, "biou": BIoU}
 from supervision import Detections
+# BL-68: append-only JSONL counting-session history (serve mode only).
+# Stdlib-only writer + dedicated heartbeat/compaction thread.
+from core.history import HistoryWriter, HistoryThread
 
 
 # Load settings
@@ -65,6 +68,26 @@ def stop():
     logger.info("Stopping threads...")
 
     shared_state.stop_event.set()
+
+    # BL-68: finalize the history session (serve mode) before joining
+    # threads, so the session_end line is fsync'd to /files even if a
+    # later join times out or the process is killed during poweroff.
+    # Idempotent (end_session guards on _stopped). Best-effort: never
+    # raises into the shutdown path. The SIGTERM handler calls stop(),
+    # so this also covers SIGTERM.
+    hw = getattr(shared_state, "history_writer", None)
+    if hw is not None:
+        try:
+            hw.end_session("clean")
+        except Exception as e:
+            logger.warning(f"history: end_session failed: {e!r}")
+    ht = getattr(shared_state, "history_thread", None)
+    if ht is not None and ht.is_alive():
+        try:
+            ht.stop_event.set()
+            ht.join(timeout=2)
+        except Exception as e:
+            logger.warning(f"history: thread join failed: {e!r}")
 
     # Finalize the mp4 before joining display_thread: on a K3s SIGTERM the
     # 5s join may time out and the thread can be killed mid-write, leaving
@@ -581,7 +604,36 @@ def start(input_source, video_path):
                 input_type=input_source
             )
             shared_state.display_thread = DisplayThread(frame_queue=shared_state.frame_queue, sort_tracker=byte_tracker, tracking=tracking, counting=counting, rendering=rendering, stop_event=shared_state.stop_event, input_type=input_source)
-            
+
+            # BL-68: wire the history recorder (serve mode only — when
+            # RESULT_JSON_PATH is unset, consistent with the existing
+            # write_result_json branch). History is best-effort and must
+            # never break counting: every step is wrapped in try/except.
+            if not os.getenv("RESULT_JSON_PATH", "") and getattr(shared_state, "history_writer", None) is None:
+                try:
+                    hw = HistoryWriter(
+                        path=settings.HISTORY_FILE,
+                        settings=settings,
+                        shared_state=shared_state,
+                        counting=counting,
+                        mode="serve",
+                    )
+                    shared_state.history_writer = hw
+                    # Read-only subscriber: counting._emit_event → JSONL event line.
+                    # Purely additive to the existing control flow.
+                    counting._event_subscribers.append(hw.emit_event)
+                    # Power-loss recovery + session_start + startup line.
+                    hw.start_session(start_reason="boot")
+                    # Dedicated thread: heartbeat loop + 1x/day compaction
+                    # (serialized in one thread, never per-frame I/O).
+                    shared_state.history_thread = HistoryThread(
+                        writer=hw, stop_event=shared_state.stop_event
+                    )
+                    shared_state.history_thread.start()
+                    logger.info(f"history: recorder started → {settings.HISTORY_FILE}")
+                except Exception as e:
+                    logger.warning(f"history: failed to start recorder: {e!r}")
+
             shared_state.infer_thread.start()
             shared_state.display_thread.start()
     except Exception as e:
