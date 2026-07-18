@@ -52,4 +52,21 @@
     <!-- BL-69 — shared error/empty messages -->
     <string name="error_out_of_range">Out of range</string>
     <string name="error_network">Network error</string>
+    <string name="error_load">Couldn\'t load</string>
+
+    <!-- BL-69 — history screen -->
+    <string name="tab_history">History</string>
+    <string name="empty_history">No sessions yet</string>
+    <string name="filter_status_all">All</string>
+    <string name="filter_status_running">Running</string>
+    <string name="filter_status_clean">Clean</string>
+    <string name="filter_status_power_loss">Power loss</string>
+    <string name="filter_status_unknown">Unknown</string>
+    <string name="filter_date_label">Date</string>
+    <string name="filter_date_none">All dates</string>
+    <string name="filter_clear">Clear</string>
+    <string name="history_net_label">Net</string>
+    <string name="history_events_label">Events</string>
+    <string name="history_duration_label">Duration</string>
+    <string name="history_loading_more">Loading more…</string>
 </resources>

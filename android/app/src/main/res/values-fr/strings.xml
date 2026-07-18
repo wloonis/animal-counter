@@ -52,4 +52,21 @@
     <!-- BL-69 — shared error/empty messages -->
     <string name="error_out_of_range">Hors de portée</string>
     <string name="error_network">Erreur réseau</string>
+    <string name="error_load">Échec du chargement</string>
+
+    <!-- BL-69 — history screen -->
+    <string name="tab_history">Historique</string>
+    <string name="empty_history">Aucune session</string>
+    <string name="filter_status_all">Toutes</string>
+    <string name="filter_status_running">En cours</string>
+    <string name="filter_status_clean">Propre</string>
+    <string name="filter_status_power_loss">Coupure secteur</string>
+    <string name="filter_status_unknown">Inconnu</string>
+    <string name="filter_date_label">Date</string>
+    <string name="filter_date_none">Toutes les dates</string>
+    <string name="filter_clear">Effacer</string>
+    <string name="history_net_label">Net</string>
+    <string name="history_events_label">Événements</string>
+    <string name="history_duration_label">Durée</string>
+    <string name="history_loading_more">Chargement…</string>
 </resources>
