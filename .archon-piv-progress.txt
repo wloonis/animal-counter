@@ -60,3 +60,6 @@ Task 8: EXPOSE history_writer on SharedState — 678b9b1
 Task 9: EDIT configure_companion.yml — read-only JSONL history API + HistoryIndex (version 2) — efd3cda
 Task 10: EXPOSE HISTORY_FILE_HOST env in companion systemd unit — 95be54a
 Task 11: Rsync guard for history file in validate_on_jetson.sh
+
+=== BL-69 Android app — history/count tabs ===
+Task 1: ADD 5 JetsonClient methods + net/Models.kt — dfca630
