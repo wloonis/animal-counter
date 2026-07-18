@@ -64,6 +64,10 @@
     companion_script: /usr/local/bin/jetson-companion
     companion_service: jetson-companion.service
     companion_port: 8090
+    # Host-side path to the counting-history JSONL written by the countingapp
+    # pod via the /files hostPath (BL-68). Exposed to the companion script
+    # as the HISTORY_FILE_HOST env var (mirroring COMPANION_PORT).
+    companion_history_file_host: /data/orin/files/counting-history.jsonl
 
   handlers:
     # -------------------------------------------------------------------
@@ -678,6 +682,7 @@
           Restart=on-failure
           RestartSec=3
           Environment=COMPANION_PORT={{ companion_port }}
+          Environment=HISTORY_FILE_HOST={{ companion_history_file_host }}
 
           [Install]
           WantedBy=multi-user.target
