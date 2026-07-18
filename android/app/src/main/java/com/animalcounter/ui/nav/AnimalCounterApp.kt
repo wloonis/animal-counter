@@ -3,8 +3,10 @@ package com.animalcounter.ui.nav
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.BarChart
+import androidx.compose.material.icons.filled.History
+import androidx.compose.material.icons.filled.PowerSettingsNew
 import androidx.compose.material.icons.filled.Schedule
-import androidx.compose.material.icons.filled.VideoLibrary
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material3.Icon
 import androidx.compose.material3.NavigationBar
@@ -17,18 +19,27 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.navigation.NavController
 import androidx.navigation.NavGraph.Companion.findStartDestination
+import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import androidx.navigation.navArgument
 import com.animalcounter.R
-import com.animalcounter.ui.placeholder.PlaceholderScreen
+import com.animalcounter.ui.dashboard.DashboardScreen
+import com.animalcounter.ui.history.HistoryScreen
+import com.animalcounter.ui.livecount.LiveCountScreen
+import com.animalcounter.ui.sessiondetail.SessionDetailScreen
+import com.animalcounter.ui.startups.StartupsScreen
 import com.animalcounter.ui.timesync.TimeSyncScreen
 
 private object Destinations {
     const val TIME_SYNC = "time-sync"
     const val LIVE_COUNT = "live-count"
-    const val VIDEOS = "videos"
+    const val HISTORY = "history"
+    const val DASHBOARD = "dashboard"
+    const val STARTUPS = "startups"
+    const val SESSION_DETAIL = "session/{sessionId}"
 }
 
 @Composable
@@ -54,10 +65,22 @@ fun AnimalCounterApp() {
                     label = { Text(stringResource(R.string.tab_live_count)) },
                 )
                 NavigationBarItem(
-                    selected = currentRoute == Destinations.VIDEOS,
-                    onClick = { navController.navigateTo(Destinations.VIDEOS) },
-                    icon = { Icon(Icons.Filled.VideoLibrary, contentDescription = null) },
-                    label = { Text(stringResource(R.string.tab_videos)) },
+                    selected = currentRoute == Destinations.HISTORY,
+                    onClick = { navController.navigateTo(Destinations.HISTORY) },
+                    icon = { Icon(Icons.Filled.History, contentDescription = null) },
+                    label = { Text(stringResource(R.string.tab_history)) },
+                )
+                NavigationBarItem(
+                    selected = currentRoute == Destinations.DASHBOARD,
+                    onClick = { navController.navigateTo(Destinations.DASHBOARD) },
+                    icon = { Icon(Icons.Filled.BarChart, contentDescription = null) },
+                    label = { Text(stringResource(R.string.tab_dashboard)) },
+                )
+                NavigationBarItem(
+                    selected = currentRoute == Destinations.STARTUPS,
+                    onClick = { navController.navigateTo(Destinations.STARTUPS) },
+                    icon = { Icon(Icons.Filled.PowerSettingsNew, contentDescription = null) },
+                    label = { Text(stringResource(R.string.tab_startups)) },
                 )
             }
         },
@@ -70,11 +93,23 @@ fun AnimalCounterApp() {
                 .padding(innerPadding),
         ) {
             composable(Destinations.TIME_SYNC) { TimeSyncScreen() }
-            composable(Destinations.LIVE_COUNT) {
-                PlaceholderScreen(stringResource(R.string.tab_live_count))
-            }
-            composable(Destinations.VIDEOS) {
-                PlaceholderScreen(stringResource(R.string.tab_videos))
+            composable(Destinations.LIVE_COUNT) { LiveCountScreen() }
+            composable(Destinations.HISTORY) { HistoryScreen(navController) }
+            composable(Destinations.DASHBOARD) { DashboardScreen() }
+            composable(Destinations.STARTUPS) { StartupsScreen() }
+            composable(
+                route = Destinations.SESSION_DETAIL,
+                arguments = listOf(
+                    navArgument("sessionId") {
+                        type = NavType.StringType
+                        nullable = false
+                    },
+                ),
+            ) { backStackEntry ->
+                SessionDetailScreen(
+                    sessionId = backStackEntry.arguments?.getString("sessionId"),
+                    onBack = { navController.popBackStack() },
+                )
             }
         }
     }
