@@ -97,6 +97,20 @@ SSH_OPTS="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
 SSH_CMD="sshpass -p $JETSON_PASSWORD ssh $SSH_OPTS $JETSON_USER@$JETSON_IP"
 SCP_CMD="sshpass -p $JETSON_PASSWORD scp $SSH_OPTS"
 
+# Resume the countingapp DaemonSet after validation. The pause/resume mechanism
+# is a `validate-paused` nodeSelector patch (DaemonSets are NOT scaled by
+# `kubectl scale --replicas` — that is a no-op that returns rc 0, which would
+# short-circuit a `scale || patch remove` and leave the DaemonSet paused).
+resume_countingapp() {
+  if [ -n "${APP_NAME:-}" ] && [ -n "${APP_NAMESPACE:-}" ] && [ -n "${SSH_CMD:-}" ]; then
+    $SSH_CMD "kubectl patch daemonset $APP_NAME -n $APP_NAMESPACE --type=json -p='[{\"op\":\"remove\",\"path\":\"/spec/template/spec/nodeSelector/validate-paused\"}]'" 2>/dev/null || true
+  fi
+}
+# Always resume on exit — covers interrupted/aborted runs (Ctrl-C, SSH drop)
+# that never reach the explicit resume block, so the countingapp never stays
+# paused in camera mode after a validation.
+trap resume_countingapp EXIT
+
 # ─── 2. Build video list ─────────────────────────────────────────────────────
 if [ "$MODE" = "full" ]; then
   # Full mode: validate ONLY the videos declared in the manifest
@@ -157,8 +171,7 @@ DEP_PODS=$($SSH_CMD "kubectl get pods -l app=$APP_NAME -n $APP_NAMESPACE -o json
 if [ -n "$DEP_PODS" ]; then
   echo "⏸️  Stopping countingapp-dep (DaemonSet) to free GPU resources..."
   DEP_WAS_RUNNING=true
-  $SSH_CMD "kubectl scale daemonset $APP_NAME -n $APP_NAMESPACE --replicas=0 2>/dev/null || \
-    kubectl patch daemonset $APP_NAME -n $APP_NAMESPACE -p '{\"spec\":{\"template\":{\"spec\":{\"nodeSelector\":{\"validate-paused\":\"true\"}}}}}'" 2>/dev/null || true
+  $SSH_CMD "kubectl patch daemonset $APP_NAME -n $APP_NAMESPACE -p '{\"spec\":{\"template\":{\"spec\":{\"nodeSelector\":{\"validate-paused\":\"true\"}}}}}'" 2>/dev/null || true
   $SSH_CMD "kubectl wait --for=delete pod -l app=$APP_NAME -n $APP_NAMESPACE --timeout=30s" 2>/dev/null || true
 fi
 
@@ -379,8 +392,7 @@ done
 if [ "$DEP_WAS_RUNNING" = "true" ]; then
   echo ""
   echo "▶️  Restarting countingapp-dep (DaemonSet)..."
-  $SSH_CMD "kubectl scale daemonset $APP_NAME -n $APP_NAMESPACE --replicas=1 2>/dev/null || \
-    kubectl patch daemonset $APP_NAME -n $APP_NAMESPACE --type=json -p='[{\"op\":\"remove\",\"path\":\"/spec/template/spec/nodeSelector/validate-paused\"}]'" 2>/dev/null || true
+  resume_countingapp
 fi
 
 # ─── 8. Aggregate results into final report ──────────────────────────────────
