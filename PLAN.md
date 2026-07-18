@@ -34,7 +34,7 @@ Add an append-only JSONL counting-session history (sessions, heartbeats, events,
 
 ### Phase 1 — Settings + build-info plumbing
 - [x] Task 1: ADD `app/src/settings.py` — new `HISTORY_*` settings with env + documented defaults: `HISTORY_RETENTION_DAYS` (30), `HISTORY_MAX_BYTES` (200*1024*1024), `HISTORY_HEARTBEAT_S` (5), `HISTORY_DISK_WARN_GB` (2), `HISTORY_DISK_CRIT_GB` (0.5), plus `HISTORY_FILE` default (`/files/counting-history.jsonl`), `HISTORY_ROTATE_BYTES` (10*1024*1024), `HISTORY_ARCHIVE_MAX` (e.g. 20). Mirror the existing env-overridable pattern (`os.getenv(...)` with inline-commented rationale).
-- [ ] Task 2: EDIT `app/Dockerfile` — add `ARG IMAGE_TAG=local` and `ARG GIT_COMMIT=unknown`, then a `RUN` that writes `/app/.build-info.json` `{"git_commit":"$GIT_COMMIT","image_tag":"$IMAGE_TAG"}`. Keep it before `WORKDIR /app` so it lands at `/app/.build-info.json` (or write to the app dir post-`WORKDIR`). No new runtime deps.
+- [x] Task 2: EDIT `app/Dockerfile` — add `ARG IMAGE_TAG=local` and `ARG GIT_COMMIT=unknown`, then a `RUN` that writes `/app/.build-info.json` `{"git_commit":"$GIT_COMMIT","image_tag":"$IMAGE_TAG"}`. Keep it before `WORKDIR /app` so it lands at `/app/.build-info.json` (or write to the app dir post-`WORKDIR`). No new runtime deps.
 - [ ] Task 3: EDIT `ansible/playbooks/app/build_countingapp.yml` — pass `--build-arg IMAGE_TAG={{ image_tag }}` and `--build-arg GIT_COMMIT=$(git rev-parse HEAD)` (capture the SHA via a `shell`/`command` fact, or inline `$(...)` in the `docker buildx build` line). Keep the existing `--no-cache`-optional comment block intact.
 
 ### Phase 2 — Read-only instrumentation in counting.py
