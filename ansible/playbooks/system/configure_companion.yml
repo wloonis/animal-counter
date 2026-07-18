@@ -15,7 +15,7 @@
 #   1. Installs /usr/local/bin/jetson-companion — a stdlib-only Python HTTP
 #      server (http.server, json, subprocess, datetime, os, sys — NO external
 #      deps, NO venv/pip). It exposes:
-#        GET  /api/identify        -> {"service":"jetson-companion","version":"3"}
+#        GET  /api/identify        -> {"service":"jetson-companion","version":"4"}
 #        GET  /api/count           -> live count/status/auto_mode (newest heartbeat)
 #        POST /api/time            -> {"time":"<ISO8601>","tz":"Europe/Paris"}
 #                                   -> timedatectl set-ntp false
@@ -103,7 +103,7 @@
           # (or 1970) until this service sets it.
           #
           # Endpoints:
-          #   GET  /api/identify        -> {"service":"jetson-companion","version":"3"}
+          #   GET  /api/identify        -> {"service":"jetson-companion","version":"4"}
           #   GET  /api/count           -> live count/status/auto_mode (newest heartbeat)
           #   POST /api/time            -> timedatectl set-time/set-timezone
           #   GET  /api/history         -> paginated session summaries (newest first)
@@ -134,7 +134,7 @@
           from urllib.parse import urlparse, parse_qs
 
           SERVICE_NAME = "jetson-companion"
-          SERVICE_VERSION = "3"
+          SERVICE_VERSION = "4"
           HOST = "0.0.0.0"
           DEFAULT_PORT = 8090
           # Path on the Jetson HOST to the counting-history JSONL written by the
@@ -362,6 +362,8 @@
                       "last_event_ts": last_event_ts,
                       "image_tag": (cfg or {}).get("image_tag")
                                     if isinstance(cfg, dict) else None,
+                      "last_segment": (last_hb.get("last_segment")
+                                        or (end.get("video") or {}).get("last_segment")),
                   }
 
               def session_summaries(self, limit=50, offset=0):
