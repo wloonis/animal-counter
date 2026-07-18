@@ -48,6 +48,10 @@
     <!-- BL-69 — live count screen -->
     <string name="live_count_label">Comptage</string>
     <string name="live_auto_mode">Mode auto</string>
+    <string name="live_direct">En direct</string>
+    <string name="live_idle">En pause</string>
+    <string name="live_offline">Hors ligne</string>
+    <string name="offline_cache_banner">Hors ligne - cache du %1$s</string>
 
     <!-- BL-69 — shared error/empty messages -->
     <string name="error_out_of_range">Hors de portée</string>
@@ -144,6 +148,7 @@
     <string name="tab_dashboard">Tableau de bord</string>
     <string name="dashboard_title">Tableau de bord</string>
     <string name="dashboard_period_7">7 jours</string>
+    <string name="dashboard_period_1">1 jour</string>
     <string name="dashboard_period_30">30 jours</string>
     <string name="dashboard_total_counted">Total compté</string>
     <string name="dashboard_total_sessions">Sessions</string>

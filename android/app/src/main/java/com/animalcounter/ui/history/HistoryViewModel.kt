@@ -6,17 +6,20 @@ import android.net.ConnectivityManager
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.animalcounter.data.DEFAULT_JETSON_IP
+import com.animalcounter.data.OfflineCache
 import com.animalcounter.data.SettingsRepository
 import com.animalcounter.net.ApiResult
 import com.animalcounter.net.HistoryPage
 import com.animalcounter.net.JetsonClient
 import com.animalcounter.net.SessionSummary
 import com.animalcounter.net.activeWifiNetwork
+import com.animalcounter.net.parseHistory
 import com.animalcounter.ui.timesync.ProbeState
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import java.time.Instant
 import java.time.LocalDate
 import java.time.OffsetDateTime
 import java.time.format.DateTimeFormatter
@@ -24,6 +27,7 @@ import java.time.format.DateTimeParseException
 
 /** Page size for `/api/history` (matches the brief's `limit=50`). */
 private const val HISTORY_LIMIT = 50
+private const val CACHE_KEY = "history"
 
 /**
  * UI state for the Historique tab.
@@ -48,6 +52,8 @@ sealed interface HistoryUiState {
         val total: Int,
         val hasMore: Boolean,
         val loadingMore: Boolean,
+        val offline: Boolean = false,
+        val cachedAt: Instant? = null,
     ) : HistoryUiState
     /** A page was fetched but contained zero sessions (no filter active). */
     data object Empty : HistoryUiState
@@ -122,6 +128,13 @@ class HistoryViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Accumulated raw (unfiltered) sessions — the light in-memory cache. */
     private val cache = ArrayList<SessionSummary>()
+
+    /** Offline-cache flags — true when the current Loaded state is served from
+     * the on-device cache (no Jetson connection). Reset to false on every
+     * successful online fetch; set by [loadCachedHistory]. [publishFiltered]
+     * reads them so a filter change keeps the offline banner. */
+    private var offlineMode = false
+    private var lastCachedAt: Instant? = null
 
     /** Next offset to fetch (== cache.size while loading the first page). */
     private var offset = 0
@@ -224,14 +237,15 @@ class HistoryViewModel(app: Application) : AndroidViewModel(app) {
         try {
             val cm = cm()
             val wifi = if (cm != null) activeWifiNetwork(cm) else null
-            when (val result = JetsonClient.getHistory(
+            when (val result = JetsonClient.fetchRaw(
                 ip = _ip.value,
-                limit = HISTORY_LIMIT,
-                offset = offset,
+                path = "/api/history?limit=$HISTORY_LIMIT&offset=$offset",
                 network = wifi,
             )) {
                 is ApiResult.Success -> {
-                    val page: HistoryPage = result.data
+                    val page: HistoryPage = parseHistory(result.data)
+                    // Cache only the first (non-append) page for offline consult.
+                    if (!append) OfflineCache.save(getApplication(), CACHE_KEY, result.data)
                     if (append) {
                         cache.addAll(page.sessions)
                     } else {
@@ -240,6 +254,8 @@ class HistoryViewModel(app: Application) : AndroidViewModel(app) {
                     }
                     total = page.total.coerceAtLeast(cache.size)
                     offset = cache.size
+                    offlineMode = false
+                    lastCachedAt = null
                     publishFiltered(hasMore = offset < total, loadingMore = false)
                     // A successful fetch implies the Jetson is reachable.
                     if (_probeState.value != ProbeState.Probing) {
@@ -250,14 +266,14 @@ class HistoryViewModel(app: Application) : AndroidViewModel(app) {
                     _state.value = if (previous is HistoryUiState.Loaded) {
                         previous.copy(loadingMore = false)
                     } else {
-                        HistoryUiState.Error("HTTP ${result.code}")
+                        loadCachedHistory() ?: HistoryUiState.Error("HTTP ${result.code}")
                     }
                 }
                 is ApiResult.NetworkError -> {
                     _state.value = if (previous is HistoryUiState.Loaded) {
                         previous.copy(loadingMore = false)
                     } else {
-                        HistoryUiState.OutOfRange
+                        loadCachedHistory() ?: HistoryUiState.OutOfRange
                     }
                 }
             }
@@ -265,9 +281,30 @@ class HistoryViewModel(app: Application) : AndroidViewModel(app) {
             _state.value = if (previous is HistoryUiState.Loaded) {
                 previous.copy(loadingMore = false)
             } else {
-                HistoryUiState.OutOfRange
+                loadCachedHistory() ?: HistoryUiState.OutOfRange
             }
         }
+    }
+
+    /**
+     * Offline fallback — serve the last cached first page of `/api/history`
+     * so the history tab stays consultable with no Jetson connection. Fills
+     * [cache]/[total]/[offset], sets [offlineMode]/[lastCachedAt], then
+     * publishes via [publishFiltered]. Returns the resulting [HistoryUiState]
+     * (Loaded or Empty), or null when there is no cache (caller falls back to
+     * Error/OutOfRange).
+     */
+    private fun loadCachedHistory(): HistoryUiState? {
+        val cached = OfflineCache.load(getApplication(), CACHE_KEY) ?: return null
+        val page = runCatching { parseHistory(cached.json) }.getOrNull() ?: return null
+        cache.clear()
+        cache.addAll(page.sessions)
+        total = page.total.coerceAtLeast(cache.size)
+        offset = cache.size
+        offlineMode = true
+        lastCachedAt = cached.savedAt
+        publishFiltered(hasMore = false, loadingMore = false)
+        return _state.value
     }
 
     /**
@@ -295,6 +332,12 @@ class HistoryViewModel(app: Application) : AndroidViewModel(app) {
         val date = _filterDate.value
         val status = _filterStatus.value
         val rows = cache.filter { matchesFilters(it, date, status) }
+            // Running ("en cours") sessions first — they are the most
+            // important visually — then newest start_at.
+            .sortedWith(
+                compareByDescending<SessionSummary> { it.status == "running" }
+                    .thenByDescending { it.startAt ?: "" }
+            )
         _state.value = when {
             cache.isEmpty() && date == null && status == HistoryStatusFilter.ALL ->
                 HistoryUiState.Empty
@@ -303,6 +346,8 @@ class HistoryViewModel(app: Application) : AndroidViewModel(app) {
                 total = if (date == null && status == HistoryStatusFilter.ALL) total else rows.size,
                 hasMore = hasMore && date == null && status == HistoryStatusFilter.ALL,
                 loadingMore = loadingMore,
+                offline = offlineMode,
+                cachedAt = lastCachedAt,
             )
         }
     }

@@ -6,6 +6,7 @@ import android.net.ConnectivityManager
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.animalcounter.data.DEFAULT_JETSON_IP
+import com.animalcounter.data.OfflineCache
 import com.animalcounter.data.SettingsRepository
 import com.animalcounter.data.SyncEvent
 import com.animalcounter.net.ApiResult
@@ -13,20 +14,23 @@ import com.animalcounter.net.DailyBucket
 import com.animalcounter.net.JetsonClient
 import com.animalcounter.net.Summary
 import com.animalcounter.net.activeWifiNetwork
+import com.animalcounter.net.parseSummary
 import com.animalcounter.ui.timesync.ProbeState
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import java.time.Instant
 
-/** Supported dashboard period windows (days). The brief pins 7 / 30. */
+/** Supported dashboard period windows (days). Default = 1 (today). */
 enum class DashboardPeriod(val days: Int) {
+    DAYS_1(1),
     DAYS_7(7),
     DAYS_30(30);
 
     companion object {
         fun fromDays(days: Int): DashboardPeriod =
-            entries.firstOrNull { it.days == days } ?: DAYS_7
+            entries.firstOrNull { it.days == days } ?: DAYS_1
     }
 }
 
@@ -58,6 +62,8 @@ sealed interface DashboardUiState {
         val totalSessions: Int,
         val totalGuards: Int,
         val avgPerDay: Double,
+        val offline: Boolean = false,
+        val cachedAt: Instant? = null,
     ) : DashboardUiState
     /** A summary was fetched but contained zero daily buckets. */
     data object Empty : DashboardUiState
@@ -98,7 +104,7 @@ class DashboardViewModel(app: Application) : AndroidViewModel(app) {
     val probeState: StateFlow<ProbeState> = _probeState.asStateFlow()
 
     /** Active 7/30-day window (drives the segmented button + the fetch). */
-    private val _period = MutableStateFlow(DashboardPeriod.DAYS_7)
+    private val _period = MutableStateFlow(DashboardPeriod.DAYS_1)
     val period: StateFlow<DashboardPeriod> = _period.asStateFlow()
 
     /** Whether the initial DataStore IP has been loaded (guards the first fetch). */
@@ -179,13 +185,14 @@ class DashboardViewModel(app: Application) : AndroidViewModel(app) {
             try {
                 val cm = cm()
                 val wifi = if (cm != null) activeWifiNetwork(cm) else null
-                when (val result = JetsonClient.getSummary(
+                when (val result = JetsonClient.fetchRaw(
                     ip = _ip.value,
-                    days = period.days,
+                    path = "/api/history/summary?days=${period.days}",
                     network = wifi,
                 )) {
                     is ApiResult.Success -> {
-                        val summary: Summary = result.data
+                        OfflineCache.save(getApplication(), cacheKey(period.days), result.data)
+                        val summary: Summary = parseSummary(result.data)
                         if (summary.daily.isEmpty()) {
                             _state.value = DashboardUiState.Empty
                         } else {
@@ -197,18 +204,20 @@ class DashboardViewModel(app: Application) : AndroidViewModel(app) {
                         }
                     }
                     is ApiResult.HttpError -> {
-                        _state.value = DashboardUiState.Error("HTTP ${result.code}")
+                        _state.value =
+                            if (previous is DashboardUiState.Loaded) previous
+                            else loadCachedDashboard(period) ?: DashboardUiState.Error("HTTP ${result.code}")
                     }
                     is ApiResult.NetworkError -> {
                         _state.value =
                             if (previous is DashboardUiState.Loaded) previous
-                            else DashboardUiState.OutOfRange
+                            else loadCachedDashboard(period) ?: DashboardUiState.OutOfRange
                     }
                 }
             } catch (t: Throwable) {
                 _state.value =
                     if (previous is DashboardUiState.Loaded) previous
-                    else DashboardUiState.OutOfRange
+                    else loadCachedDashboard(period) ?: DashboardUiState.OutOfRange
             }
         }
     }
@@ -222,7 +231,12 @@ class DashboardViewModel(app: Application) : AndroidViewModel(app) {
      * - [totalGuards]: sum of `guard_events` across days.
      * - [avgPerDay]: [totalCounted] / number of days in the window.
      */
-    private fun aggregate(period: DashboardPeriod, summary: Summary): DashboardUiState.Loaded {
+    private fun aggregate(
+        period: DashboardPeriod,
+        summary: Summary,
+        offline: Boolean = false,
+        cachedAt: Instant? = null,
+    ): DashboardUiState.Loaded {
         val daily = summary.daily
         val totalCounted = daily.sumOf { it.netCount }
         val totalSessions = daily.sumOf { it.sessions }
@@ -236,7 +250,22 @@ class DashboardViewModel(app: Application) : AndroidViewModel(app) {
             totalSessions = totalSessions,
             totalGuards = totalGuards,
             avgPerDay = avgPerDay,
+            offline = offline,
+            cachedAt = cachedAt,
         )
+    }
+
+    /** Cache key per period (7 vs 30 days cached separately). */
+    private fun cacheKey(days: Int) = "dashboard_$days"
+
+    /** Offline fallback — serve the last cached `/api/history/summary` for the
+     * active period so the dashboard stays consultable with no Jetson link.
+     * Returns null when there is no cache (caller falls back to Error/OutOfRange). */
+    private fun loadCachedDashboard(period: DashboardPeriod): DashboardUiState.Loaded? {
+        val cached = OfflineCache.load(getApplication(), cacheKey(period.days)) ?: return null
+        val summary = runCatching { parseSummary(cached.json) }.getOrNull() ?: return null
+        if (summary.daily.isEmpty()) return null
+        return aggregate(period, summary, offline = true, cachedAt = cached.savedAt)
     }
 
     /** Resolve the active WiFi network (null when not on the Jetson HotSpot). */

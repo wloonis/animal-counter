@@ -56,6 +56,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.animalcounter.R
 import com.animalcounter.net.DailyBucket
+import com.animalcounter.ui.common.OfflineBanner
 import com.animalcounter.ui.timesync.ProbeState
 import java.util.Locale
 
@@ -128,7 +129,10 @@ fun DashboardScreen() {
                     is DashboardUiState.Loading -> {
                         LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
                     }
-                    is DashboardUiState.Loaded -> DashboardBody(s)
+                    is DashboardUiState.Loaded -> {
+                    if (s.offline) OfflineBanner(cachedAt = s.cachedAt)
+                    DashboardBody(s)
+                }
                     is DashboardUiState.Empty -> EmptyCard()
                     is DashboardUiState.OutOfRange -> OutOfRangeCard()
                     is DashboardUiState.Error -> ErrorCard(message = s.message)
@@ -157,6 +161,7 @@ private fun PeriodSelector(selected: DashboardPeriod, onSelect: (DashboardPeriod
                 label = {
                     Text(
                         when (option) {
+                            DashboardPeriod.DAYS_1 -> stringResource(R.string.dashboard_period_1)
                             DashboardPeriod.DAYS_7 -> stringResource(R.string.dashboard_period_7)
                             DashboardPeriod.DAYS_30 -> stringResource(R.string.dashboard_period_30)
                         }

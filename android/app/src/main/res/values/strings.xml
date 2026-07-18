@@ -48,6 +48,10 @@
     <!-- BL-69 — live count screen -->
     <string name="live_count_label">Count</string>
     <string name="live_auto_mode">Auto mode</string>
+    <string name="live_direct">Live</string>
+    <string name="live_idle">Idle</string>
+    <string name="live_offline">Offline</string>
+    <string name="offline_cache_banner">Offline - cached from %1$s</string>
 
     <!-- BL-69 — shared error/empty messages -->
     <string name="error_out_of_range">Out of range</string>
@@ -144,6 +148,7 @@
     <string name="tab_dashboard">Dashboard</string>
     <string name="dashboard_title">Dashboard</string>
     <string name="dashboard_period_7">7 days</string>
+    <string name="dashboard_period_1">1 day</string>
     <string name="dashboard_period_30">30 days</string>
     <string name="dashboard_total_counted">Total counted</string>
     <string name="dashboard_total_sessions">Sessions</string>

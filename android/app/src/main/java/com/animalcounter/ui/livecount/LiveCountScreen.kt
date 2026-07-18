@@ -163,7 +163,7 @@ private fun LiveCountBody(count: LiveCount) {
                 color = MaterialTheme.colorScheme.primary,
                 textAlign = TextAlign.Center,
             )
-            StatusPill(status = count.status)
+            LivePill(timestamp = count.timestamp)
             AssistChip(
                 onClick = {},
                 enabled = false,
@@ -189,15 +189,15 @@ private fun LiveCountBody(count: LiveCount) {
 }
 
 /**
- * Status pill = small tonal `Chip` with a leading colored dot. Color logic
- * (per the plan, branching on `status` for the live count endpoint):
- *  - `running` → blue (primary)
- *  - `ended`   → green (primary/tertiary)
- *  - other     → gray (outline)
+ * Live freshness pill — derives the live state from the **heartbeat
+ * timestamp** (not the `status` field, which is an int from SharedState
+ * and is absent on older images). "En direct" if the last heartbeat is
+ * recent (< 15s, ~3x the 5s heartbeat interval), "En pause" if stale,
+ * "Hors ligne" if no timestamp. Works on old + new images alike.
  */
 @Composable
-private fun StatusPill(status: String) {
-    val (dotColor, label) = statusVisual(status)
+private fun LivePill(timestamp: String?) {
+    val (dotColor, label) = liveVisual(timestamp)
     Surface(
         color = MaterialTheme.colorScheme.surfaceVariant,
         contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -221,13 +221,25 @@ private fun StatusPill(status: String) {
     }
 }
 
+private fun parseInstant(ts: String): java.time.Instant? =
+    runCatching { java.time.Instant.parse(ts) }
+        .getOrElse {
+            runCatching { java.time.OffsetDateTime.parse(ts).toInstant() }.getOrNull()
+        }
+
 @Composable
-private fun statusVisual(status: String): Pair<Color, String> = when (status.lowercase()) {
-    "running" -> MaterialTheme.colorScheme.primary to stringResource(R.string.status_running)
-    "ended" -> MaterialTheme.colorScheme.tertiary to stringResource(R.string.status_ended)
-    "clean" -> MaterialTheme.colorScheme.tertiary to stringResource(R.string.status_clean)
-    "power-loss" -> MaterialTheme.colorScheme.error to stringResource(R.string.status_power_loss)
-    else -> MaterialTheme.colorScheme.outline to stringResource(R.string.status_unknown)
+private fun liveVisual(timestamp: String?): Pair<Color, String> {
+    if (timestamp == null) {
+        return MaterialTheme.colorScheme.outline to stringResource(R.string.live_offline)
+    }
+    val ageMs = parseInstant(timestamp)
+        ?.let { java.time.Duration.between(it, java.time.Instant.now()).toMillis() }
+        ?: return MaterialTheme.colorScheme.outline to stringResource(R.string.live_offline)
+    return if (ageMs < 15_000) {
+        MaterialTheme.colorScheme.primary to stringResource(R.string.live_direct)
+    } else {
+        MaterialTheme.colorScheme.outline to stringResource(R.string.live_idle)
+    }
 }
 
 /** Reachability banner — reuses the Time sync banner styling keyed on ProbeState. */

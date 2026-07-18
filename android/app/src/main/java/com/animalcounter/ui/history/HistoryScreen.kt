@@ -72,6 +72,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
 import com.animalcounter.R
 import com.animalcounter.net.SessionSummary
+import com.animalcounter.ui.common.OfflineBanner
 import com.animalcounter.ui.timesync.ProbeState
 import kotlinx.coroutines.flow.distinctUntilChanged
 import java.time.Instant
@@ -185,6 +186,7 @@ fun HistoryScreen(navController: NavController) {
                         LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
                     }
                     is HistoryUiState.Loaded -> {
+                        if (s.offline) item { OfflineBanner(cachedAt = s.cachedAt) }
                         if (s.rows.isEmpty()) {
                             item { EmptyCard() }
                         } else {
@@ -338,24 +340,24 @@ private fun SessionRowCard(session: SessionSummary, onClick: () -> Unit) {
         onClick = onClick,
     ) {
         Column(modifier = Modifier.fillMaxWidth().padding(14.dp)) {
-            // Top line: video filename (leading icon) + status pill (trailing).
+            // Hero line: net count (big number) + direction arrow + status
+            // pill (secondary, trailing). The count is the primary info.
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
             ) {
-                Icon(
-                    imageVector = Icons.Filled.VideoFile,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.size(20.dp),
-                )
+                val net = session.netCount ?: 0
+                val arrow = if (net >= 0) Icons.Filled.ArrowUpward else Icons.Filled.ArrowDownward
+                val arrowTint = if (net >= 0)
+                    MaterialTheme.colorScheme.primary
+                else MaterialTheme.colorScheme.tertiary
+                Icon(arrow, contentDescription = null, tint = arrowTint, modifier = Modifier.size(28.dp))
                 Text(
-                    text = session.imageTag ?: session.sessionId?.take(8) ?: "—",
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.Medium,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
+                    text = net.toString(),
+                    style = MaterialTheme.typography.displaySmall,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface,
                     modifier = Modifier.weight(1f),
                 )
                 StatusPill(status = session.status, endReason = session.endReason)
@@ -363,45 +365,50 @@ private fun SessionRowCard(session: SessionSummary, onClick: () -> Unit) {
 
             Spacer(Modifier.height(8.dp))
 
-            // Start date/time (locale) + duration.
-            val startStr = formatStart(session.startAt)
-            Text(
-                text = startStr,
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            val dur = durationBetween(session.startAt, session.endAt)
-            if (dur != null) {
+            // Video filename / session id (secondary).
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.VideoFile,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(16.dp),
+                )
                 Text(
-                    text = stringResource(R.string.history_duration_label) + ": " + dur,
+                    text = session.videoPath?.substringAfterLast('/') ?: session.sessionId?.take(8) ?: "—",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
             }
 
-            Spacer(Modifier.height(10.dp))
+            // Start date/time (locale).
+            Text(
+                text = formatStart(session.startAt),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
 
-            // Net count + direction arrow + events + video-complete trailing icon.
+            // Duration + events + video-complete trailing icon (secondary line).
             Row(
-                modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                val net = session.netCount ?: 0
-                val arrow = if (net >= 0) Icons.Filled.ArrowUpward else Icons.Filled.ArrowDownward
-                val arrowTint = if (net >= 0)
-                    MaterialTheme.colorScheme.primary
-                else MaterialTheme.colorScheme.tertiary
-                Icon(arrow, contentDescription = null, tint = arrowTint, modifier = Modifier.size(18.dp))
-                Text(
-                    text = stringResource(R.string.history_net_label) + ": " + net,
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.SemiBold,
-                    modifier = Modifier.weight(1f),
-                )
+                val dur = durationBetween(session.startAt, session.endAt)
+                    ?: if (session.status == "running") durationSinceNow(session.startAt) else null
+                if (dur != null) {
+                    Text(
+                        text = stringResource(R.string.history_duration_label) + ": " + dur,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
                 Text(
                     text = stringResource(R.string.history_events_label) + ": " + session.events,
-                    style = MaterialTheme.typography.labelMedium,
+                    style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 if (session.status == "ended") {
@@ -409,7 +416,7 @@ private fun SessionRowCard(session: SessionSummary, onClick: () -> Unit) {
                         imageVector = Icons.Filled.CheckCircle,
                         contentDescription = null,
                         tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(18.dp),
+                        modifier = Modifier.size(14.dp),
                     )
                 }
             }
@@ -595,6 +602,22 @@ private fun durationBetween(startIso: String?, endIso: String?): String? {
         val start = parseInstant(startIso) ?: return null
         val end = parseInstant(endIso) ?: return null
         val secs = ChronoUnit.SECONDS.between(start, end)
+        if (secs < 0) return null
+        val h = secs / 3600
+        val m = (secs % 3600) / 60
+        val s = secs % 60
+        if (h > 0) String.format(Locale.ROOT, "%dh %02dm", h, m)
+        else if (m > 0) String.format(Locale.ROOT, "%dm %02ds", m, s)
+        else String.format(Locale.ROOT, "%ds", s)
+    }.getOrNull()
+}
+
+/** Whole-second elapsed since `start_at` to now (for running sessions). */
+private fun durationSinceNow(startIso: String?): String? {
+    if (startIso.isNullOrBlank()) return null
+    return runCatching {
+        val start = parseInstant(startIso) ?: return null
+        val secs = ChronoUnit.SECONDS.between(start, Instant.now())
         if (secs < 0) return null
         val h = secs / 3600
         val m = (secs % 3600) / 60

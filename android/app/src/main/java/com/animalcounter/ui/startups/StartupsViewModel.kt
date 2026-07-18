@@ -6,23 +6,27 @@ import android.net.ConnectivityManager
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.animalcounter.data.DEFAULT_JETSON_IP
+import com.animalcounter.data.OfflineCache
 import com.animalcounter.data.SettingsRepository
 import com.animalcounter.data.SyncEvent
 import com.animalcounter.net.ApiResult
 import com.animalcounter.net.JetsonClient
 import com.animalcounter.net.Startup
 import com.animalcounter.net.activeWifiNetwork
+import com.animalcounter.net.parseStartups
 import com.animalcounter.ui.timesync.ProbeState
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import java.time.Instant
 import java.time.OffsetDateTime
 import java.time.format.DateTimeFormatter
 import java.time.format.DateTimeParseException
 
 /** Page size for `/api/startups` (matches the brief's `limit=50`). */
 private const val STARTUPS_LIMIT = 50
+private const val CACHE_KEY = "startups"
 
 /**
  * UI state for the Démarrages tab.
@@ -42,7 +46,11 @@ sealed interface StartupsUiState {
     /** Initial load in progress (no rows yet). */
     data object Loading : StartupsUiState
     /** Startups loaded, sorted newest-first by `boot_at`. */
-    data class Loaded(val startups: List<Startup>) : StartupsUiState
+    data class Loaded(
+        val startups: List<Startup>,
+        val offline: Boolean = false,
+        val cachedAt: Instant? = null,
+    ) : StartupsUiState
     /** A list was fetched but contained zero startups. */
     data object Empty : StartupsUiState
     /** Jetson out of reach (probe + fetch both failed). */
@@ -107,13 +115,14 @@ class StartupsViewModel(app: Application) : AndroidViewModel(app) {
             try {
                 val cm = cm()
                 val wifi = if (cm != null) activeWifiNetwork(cm) else null
-                when (val result = JetsonClient.getStartups(
+                when (val result = JetsonClient.fetchRaw(
                     ip = _ip.value,
-                    limit = STARTUPS_LIMIT,
+                    path = "/api/startups?limit=$STARTUPS_LIMIT",
                     network = wifi,
                 )) {
                     is ApiResult.Success -> {
-                        val sorted = sortByBootAtDesc(result.data.startups)
+                        OfflineCache.save(getApplication(), CACHE_KEY, result.data)
+                        val sorted = sortByBootAtDesc(parseStartups(result.data).startups)
                         _state.value = if (sorted.isEmpty()) {
                             StartupsUiState.Empty
                         } else {
@@ -127,21 +136,32 @@ class StartupsViewModel(app: Application) : AndroidViewModel(app) {
                     is ApiResult.HttpError -> {
                         _state.value =
                             if (previous is StartupsUiState.Loaded) previous
-                            else StartupsUiState.Error("HTTP ${result.code}")
+                            else loadCachedStartups() ?: StartupsUiState.Error("HTTP ${result.code}")
                     }
                     is ApiResult.NetworkError -> {
                         _state.value =
                             if (previous is StartupsUiState.Loaded) previous
-                            else StartupsUiState.OutOfRange
+                            else loadCachedStartups() ?: StartupsUiState.OutOfRange
                     }
                 }
             } catch (t: Throwable) {
                 _state.value =
                     if (previous is StartupsUiState.Loaded) previous
-                    else StartupsUiState.OutOfRange
+                    else loadCachedStartups() ?: StartupsUiState.OutOfRange
             }
         }
         if (_probeState.value != ProbeState.Probing) probe()
+    }
+
+    /** Offline fallback — serve the last cached `/api/startups` response
+     * so the user can consult the startups history with no Jetson connection.
+     * Returns null when there is no cache (caller falls back to Error/OutOfRange). */
+    private fun loadCachedStartups(): StartupsUiState.Loaded? {
+        val cached = OfflineCache.load(getApplication(), CACHE_KEY) ?: return null
+        val sorted = runCatching { sortByBootAtDesc(parseStartups(cached.json).startups) }
+            .getOrNull() ?: return null
+        return if (sorted.isEmpty()) null
+        else StartupsUiState.Loaded(sorted, offline = true, cachedAt = cached.savedAt)
     }
 
     /**

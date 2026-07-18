@@ -53,6 +53,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.animalcounter.R
 import com.animalcounter.net.Startup
+import com.animalcounter.ui.common.OfflineBanner
 import com.animalcounter.ui.timesync.ProbeState
 import org.json.JSONObject
 import java.time.Instant
@@ -130,6 +131,7 @@ fun StartupsScreen() {
                         LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
                     }
                     is StartupsUiState.Loaded -> {
+                        if (s.offline) item { OfflineBanner(cachedAt = s.cachedAt) }
                         if (s.startups.isEmpty()) {
                             item { EmptyCard() }
                         } else {

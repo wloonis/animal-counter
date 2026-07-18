@@ -53,10 +53,10 @@ fun AnimalCounterApp() {
         bottomBar = {
             NavigationBar {
                 NavigationBarItem(
-                    selected = currentRoute == Destinations.TIME_SYNC,
-                    onClick = { navController.navigateTo(Destinations.TIME_SYNC) },
-                    icon = { Icon(Icons.Filled.Schedule, contentDescription = null) },
-                    label = { Text(stringResource(R.string.tab_time_sync)) },
+                    selected = currentRoute == Destinations.DASHBOARD,
+                    onClick = { navController.navigateTo(Destinations.DASHBOARD) },
+                    icon = { Icon(Icons.Filled.BarChart, contentDescription = null) },
+                    label = { Text(stringResource(R.string.tab_dashboard)) },
                 )
                 NavigationBarItem(
                     selected = currentRoute == Destinations.LIVE_COUNT,
@@ -71,23 +71,23 @@ fun AnimalCounterApp() {
                     label = { Text(stringResource(R.string.tab_history)) },
                 )
                 NavigationBarItem(
-                    selected = currentRoute == Destinations.DASHBOARD,
-                    onClick = { navController.navigateTo(Destinations.DASHBOARD) },
-                    icon = { Icon(Icons.Filled.BarChart, contentDescription = null) },
-                    label = { Text(stringResource(R.string.tab_dashboard)) },
-                )
-                NavigationBarItem(
                     selected = currentRoute == Destinations.STARTUPS,
                     onClick = { navController.navigateTo(Destinations.STARTUPS) },
                     icon = { Icon(Icons.Filled.PowerSettingsNew, contentDescription = null) },
                     label = { Text(stringResource(R.string.tab_startups)) },
+                )
+                NavigationBarItem(
+                    selected = currentRoute == Destinations.TIME_SYNC,
+                    onClick = { navController.navigateTo(Destinations.TIME_SYNC) },
+                    icon = { Icon(Icons.Filled.Schedule, contentDescription = null) },
+                    label = { Text(stringResource(R.string.tab_time_sync)) },
                 )
             }
         },
     ) { innerPadding ->
         NavHost(
             navController = navController,
-            startDestination = Destinations.TIME_SYNC,
+            startDestination = Destinations.DASHBOARD,
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding),

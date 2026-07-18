@@ -272,6 +272,17 @@ object JetsonClient {
     ): ApiResult<StartupList> =
         getJson(ip, "/api/startups?limit=$limit", network) { parseStartups(it) }
 
+    /** `GET <path>` → raw response body string (for offline caching of the
+     * history/dashboard/startups tabs). Same transport as the typed getters
+     * (WiFi-bound, 5s timeouts, never throws); returns [ApiResult.Success]
+     * with the body, or HttpError/NetworkError. The caller caches the body on
+     * success and parses it with the `internal` parsers in [Models.kt]. */
+    suspend fun fetchRaw(
+        ip: String,
+        path: String,
+        network: Network? = null,
+    ): ApiResult<String> = getJson(ip, path, network) { it }
+
     /**
      * Shared GET transport for the read-only history endpoints: binds to
      * [network] (the WiFi HotSpot) when non-null, applies the 5s timeouts,
