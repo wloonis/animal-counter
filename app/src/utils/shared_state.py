@@ -61,3 +61,8 @@ class SharedState:
         # BL-62: Arrêt button — flags for graceful shutdown + poweroff
         self.arret_requested = False
         self.poweroff_requested = False
+        # BL-68: counting-history recorder (serve mode only). Holds the
+        # HistoryWriter instance so stop() and the BL-62 poweroff path can reach
+        # it and emit a clean session_end. None in validate/test mode.
+        self.history_writer = None
+        self.history_session_id = None

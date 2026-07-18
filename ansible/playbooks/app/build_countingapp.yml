@@ -36,10 +36,21 @@
   failed_when: false
   tags: build2
 
+- name: Capture git commit SHA from the app checkout on Jetson
+  command: git rev-parse HEAD
+  args:
+    chdir: "{{ app_path }}"
+  register: git_commit_sha
+  changed_when: false
+  tags: build2
+
 - name: Build Docker image
   shell: |
     cd {{ app_path }} && 
-    docker buildx build -t {{ image_name }}:{{ image_tag }} .
+    docker buildx build \
+      --build-arg IMAGE_TAG={{ image_tag }} \
+      --build-arg GIT_COMMIT={{ git_commit_sha.stdout }} \
+      -t {{ image_name }}:{{ image_tag }} .
     docker image prune -f && docker builder prune -f
   # Skip if the image already exists (avoid a long rebuild on every
   # prepare_jetson.sh re-run). App code changes are rsync'd to the hostPath

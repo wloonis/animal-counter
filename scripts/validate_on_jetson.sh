@@ -160,6 +160,7 @@ echo "📦 Rsyncing app code to Jetson..."
 rsync -avz --delete --no-owner --no-group \
   --exclude='__pycache__' --exclude='*.pyc' \
   --exclude='model/' --exclude='.env' --exclude='video/' --exclude='img/old/' \
+  --exclude='counting-history*.jsonl*' \
   -e "sshpass -p $JETSON_PASSWORD ssh $SSH_OPTS" \
   app/ \
   $JETSON_USER@$JETSON_IP:$APP_PATH/ \
