@@ -60,3 +60,7 @@ Task 8: EXPOSE history_writer on SharedState — 678b9b1
 Task 9: EDIT configure_companion.yml — read-only JSONL history API + HistoryIndex (version 2) — efd3cda
 Task 10: EXPOSE HISTORY_FILE_HOST env in companion systemd unit — 95be54a
 Task 11: Rsync guard for history file in validate_on_jetson.sh
+Task 12: ADD docs/12_counting_history.md — d9750d2
+Task 13: ADD tests/test_history_writer.py (16 tests, stdlib only) — fixed 2 history.py bugs (end_session _append blocked by _stopped; disk_warning emit blocked by _writes_suspended)
+Task 13: ADD tests/test_history_writer.py — 0377cc6
+Task 14: ADD tests/test_companion_history_api.py (23 tests, stdlib mirror reader) — 38f4039

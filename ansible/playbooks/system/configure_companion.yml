@@ -15,7 +15,8 @@
 #   1. Installs /usr/local/bin/jetson-companion — a stdlib-only Python HTTP
 #      server (http.server, json, subprocess, datetime, os, sys — NO external
 #      deps, NO venv/pip). It exposes:
-#        GET  /api/identify        -> {"service":"jetson-companion","version":"2"}
+#        GET  /api/identify        -> {"service":"jetson-companion","version":"3"}
+#        GET  /api/count           -> live count/status/auto_mode (newest heartbeat)
 #        POST /api/time            -> {"time":"<ISO8601>","tz":"Europe/Paris"}
 #                                   -> timedatectl set-ntp false
 #                                   -> timedatectl set-time  "<time>"
@@ -24,6 +25,7 @@
 #        GET  /api/history         -> paginated session summaries (newest first)
 #        GET  /api/history/summary -> daily aggregates (count/sessions/guards)
 #        GET  /api/sessions/<id>   -> full session detail (A–G)
+#        GET  /api/count           -> live count/status/auto_mode (newest heartbeat)
 #        GET  /api/startups        -> startup history lines
 #      The history endpoints read /data/orin/files/counting-history.jsonl
 #      (BL-68, written by the countingapp pod) via a lazy in-memory index
@@ -101,12 +103,14 @@
           # (or 1970) until this service sets it.
           #
           # Endpoints:
-          #   GET  /api/identify        -> {"service":"jetson-companion","version":"2"}
+          #   GET  /api/identify        -> {"service":"jetson-companion","version":"3"}
+          #   GET  /api/count           -> live count/status/auto_mode (newest heartbeat)
           #   POST /api/time            -> timedatectl set-time/set-timezone
           #   GET  /api/history         -> paginated session summaries (newest first)
           #        ?limit=50&offset=0
           #   GET  /api/history/summary -> daily aggregates ?days=7
           #   GET  /api/sessions/<id>   -> full session detail (A–G)
+          #   GET  /api/count           -> live count/status/auto_mode (newest heartbeat)
           #   GET  /api/startups        -> startup history lines ?limit=50
           #
           # The history endpoints read the counting-history JSONL written by the
@@ -130,7 +134,7 @@
           from urllib.parse import urlparse, parse_qs
 
           SERVICE_NAME = "jetson-companion"
-          SERVICE_VERSION = "2"
+          SERVICE_VERSION = "3"
           HOST = "0.0.0.0"
           DEFAULT_PORT = 8090
           # Path on the Jetson HOST to the counting-history JSONL written by the
@@ -210,6 +214,7 @@
                   self._sessions = {}
                   self._session_order = []
                   self._startups = []
+                  self._latest_hb = None  # newest heartbeat across all sessions (/api/count)
 
               def _maybe_rebuild(self):
                   try:
@@ -232,6 +237,7 @@
                   sessions = {}
                   order = []
                   startups = []
+                  latest_hb = None
                   try:
                       f = open(self.path, "rb")
                   except FileNotFoundError:
@@ -285,6 +291,14 @@
                               sess["last_hb"] = obj
                               if obj.get("count") is not None:
                                   sess["count"] = obj.get("count")
+                              # Track the globally-newest heartbeat for /api/count
+                              # (ISO8601 UTC strings compare lexically).
+                              hb_ts = obj.get("ts") or ""
+                              if (
+                                  latest_hb is None
+                                  or hb_ts > (latest_hb.get("ts") or "")
+                              ):
+                                  latest_hb = obj
                           elif t == "event":
                               sess["events"].append(obj)
                           elif t == "summary":
@@ -310,11 +324,20 @@
                   self._sessions = sessions
                   self._session_order = order
                   self._startups = startups
+                  self._latest_hb = latest_hb
                   try:
                       self._size = os.path.getsize(self.path)
                       self._mtime = os.path.getmtime(self.path)
                   except OSError:
                       pass
+
+              def latest_count(self):
+                  """Newest heartbeat across all sessions, for /api/count.
+
+                  Returns the heartbeat dict (count/status/auto_mode/ts/
+                  ...) or None when no heartbeat has ever been written."""
+                  self._maybe_rebuild()
+                  return self._latest_hb
 
               def _summary_for(self, sid):
                   sess = self._sessions[sid]
@@ -521,6 +544,32 @@
                           "version": SERVICE_VERSION,
                       }
                       self._log("GET /api/identify -> 200")
+                      _send_json(self, 200, payload)
+                      return
+
+                  if path == "/api/count":
+                      # Live counting state (absorbed BL-66 scope). Reads the
+                      # newest heartbeat from the JSONL via the cached index —
+                      # no separate state file, single source of truth.
+                      idx = _get_index()
+                      hb = idx.latest_count()
+                      if hb is None:
+                          payload = {
+                              "count": 0,
+                              "status": None,
+                              "auto_mode": None,
+                              "timestamp": None,
+                              "session_id": None,
+                          }
+                      else:
+                          payload = {
+                              "count": hb.get("count", 0),
+                              "status": hb.get("status"),
+                              "auto_mode": hb.get("auto_mode"),
+                              "timestamp": hb.get("ts"),
+                              "session_id": hb.get("session_id"),
+                          }
+                      self._log("GET /api/count -> 200")
                       _send_json(self, 200, payload)
                       return
 

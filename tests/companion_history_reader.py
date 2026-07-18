@@ -79,6 +79,7 @@ class HistoryIndex:
         self._sessions = {}
         self._session_order = []
         self._startups = []
+        self._latest_hb = None  # newest heartbeat across all sessions (/api/count)
 
     def _maybe_rebuild(self):
         try:
@@ -101,6 +102,7 @@ class HistoryIndex:
         sessions = {}
         order = []
         startups = []
+        latest_hb = None
         try:
             f = open(self.path, "rb")
         except FileNotFoundError:
@@ -154,6 +156,14 @@ class HistoryIndex:
                     sess["last_hb"] = obj
                     if obj.get("count") is not None:
                         sess["count"] = obj.get("count")
+                    # Track globally-newest heartbeat for /api/count
+                    # (ISO8601 UTC strings compare lexically).
+                    hb_ts = obj.get("ts") or ""
+                    if (
+                        latest_hb is None
+                        or hb_ts > (latest_hb.get("ts") or "")
+                    ):
+                        latest_hb = obj
                 elif t == "event":
                     sess["events"].append(obj)
                 elif t == "summary":
@@ -178,11 +188,19 @@ class HistoryIndex:
         self._sessions = sessions
         self._session_order = order
         self._startups = startups
+        self._latest_hb = latest_hb
         try:
             self._size = os.path.getsize(self.path)
             self._mtime = os.path.getmtime(self.path)
         except OSError:
             pass
+
+    def latest_count(self):
+        """Newest heartbeat across all sessions, for /api/count.
+
+        Returns the heartbeat dict or None when no heartbeat exists."""
+        self._maybe_rebuild()
+        return self._latest_hb
 
     def _summary_for(self, sid):
         sess = self._sessions[sid]
