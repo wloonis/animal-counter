@@ -67,4 +67,4 @@ Task 3: CREATE LiveCountViewModel (lifecycle-aware polling) — 90c3969
 Task 5: CREATE HistoryViewModel (paginated + client-side date/status filtering) — 1b7b161
 Task 7: CREATE SessionDetailViewModel (SavedStateHandle session id) — 0bbc57e
 Task 4: feccc79
-Task 6: CREATE HistoryScreen.kt — 298b9b7
+Task 6: CREATE HistoryScreen.kt — 10fd1e1
