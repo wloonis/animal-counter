@@ -55,7 +55,7 @@ Add an append-only JSONL counting-session history (sessions, heartbeats, events,
 - [x] Task 8: EDIT `app/src/utils/shared_state.py` — add `self.history_writer = None` (and `self.history_session_id = None` if needed) so the recorder is reachable from `stop()` and the BL-62 poweroff path. No behavioral change to existing fields.
 
 ### Phase 4 — Companion read-only API (host)
-- [ ] Task 9: EDIT `ansible/playbooks/system/configure_companion.yml` — extend the inline `jetson-companion` script (`content: |` block) with a read-only JSONL reader module + the new endpoints. Add:
+- [x] Task 9: EDIT `ansible/playbooks/system/configure_companion.yml` — extend the inline `jetson-companion` script (`content: |` block) with a read-only JSONL reader module + the new endpoints. Add:
   - A lazy indexer: `HistoryIndex` class that scans `/data/orin/files/counting-history.jsonl` once, builds `{session_id: {offsets, summary, events, detail}}` + a list of `startup` lines, caches it, and invalidates on `os.path.getsize` change. Tolerate partial last lines.
   - `GET /api/history?limit=50&offset=0` → paginated session summaries (A + net count + last event ts), newest first.
   - `GET /api/sessions/<id>` → full session detail (A–G): aggregate the session's `session_start`, `heartbeat`s (last = end_at if no `session_end`), `event`s, and `session_end` into one object.
