@@ -86,7 +86,7 @@ Extend the existing BL-65 Android app (`com.animalcounter`, Kotlin + Jetpack Com
 - [x] **Task 14: EDIT** `android/app/src/main/res/values-fr/strings.xml` — mirror all new keys from Task 13 in French (`tab_history`="Historique", `tab_dashboard`="Tableau de bord", `tab_startups`="Démarrages", `status_running`="En cours", `status_clean`="Propre", `status_power_loss`="Coupure secteur", `status_unknown`="Inconnu", etc.). Keep all existing BL-65 FR keys intact.
 
 ### I. Cleanup
-- [ ] **Task 15: DELETE** `android/app/src/main/java/com/animalcounter/ui/placeholder/PlaceholderScreen.kt` — after Task 2 removes its only references, delete the now-dead placeholder (it was only used by the two replaced tabs). Verify no remaining imports before deleting.
+- [x] **Task 15: DELETE** `android/app/src/main/java/com/animalcounter/ui/placeholder/PlaceholderScreen.kt` — after Task 2 removes its only references, delete the now-dead placeholder (it was only used by the two replaced tabs). Verify no remaining imports before deleting.
 
 ### J. Tests
 - [ ] **Task 16: CREATE** `android/app/src/test/java/com/animalcounter/net/JetsonClientParsingTest.kt` — unit tests (JUnit4, already on classpath via `kotlinx.coroutines`/android test? if not, add `testImplementation(libs.junit4)` + `testImplementation(libs.kotlinx.coroutines.test)` to `app/build.gradle.kts` `dependencies{}`) that feed mock JSON fixtures (mirroring the BL-68 shapes from `tests/companion_history_reader.py` + the `/api/count` brief shape) into a pure parse function and assert every field:
