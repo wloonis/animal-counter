@@ -74,3 +74,4 @@ Task 13: ADD EN strings (dashboard/startups/live-status) — aa81ba3
 Task 10: CREATE DashboardScreen.kt (Canvas bar chart + segmented period selector) — 7284dde
 Task 11: CREATE StartupsViewModel (newest-first boot_at sort, reachability probe) — 233fa7e
 Task 12: CREATE StartupsScreen.kt (LargeTopAppBar + Refresh + PullToRefreshBox + Card rows) — c86aff2
+Task 2: EDIT AnimalCounterApp.kt — 5-tab NavigationBar + session/{sessionId} detail route — 0cac7d9
