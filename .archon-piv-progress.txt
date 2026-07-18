@@ -49,3 +49,4 @@ Task 14: CREATE JetsonClient.kt (HttpURLConnection GET /api/identify + POST /api
 Task 15: CREATE TimeSyncService.kt (foreground dataSync + NetworkCallback push) — 5e4200d
 Task 16: CREATE BootReceiver.kt (BOOT_COMPLETED → start TimeSyncService, no direct push) — 66ed584
 Task 21: CREATE TimeSyncScreen.kt (ViewModel-backed, IP field + debounced DataStore, HotSpot banner, auto-scroll log) — 4959d94
+Task 1: ADD HISTORY_* settings to app/src/settings.py — 7a22a7c
