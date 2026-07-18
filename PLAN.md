@@ -70,7 +70,7 @@ Add an append-only JSONL counting-session history (sessions, heartbeats, events,
 
 ### Phase 6 — Tests
 - [x] Task 13: ADD `tests/test_history_writer.py` — unit tests for `HistoryWriter` (stdlib only): append+fsync, partial-line tolerance on reopen, recovery writes a synthetic `session_end` for an unterminated last session (power-loss vs `unknown` staleness), compaction drops heartbeats for cold sessions and keeps a summary line, bounded size ≤ `HISTORY_MAX_BYTES` after compaction, rotation creates a gz archive and bounds the count, disk guard suspends writes below the crit threshold. Use a temp dir for the JSONL.
-- [ ] Task 14: ADD `tests/test_companion_history_api.py` — unit tests for the companion history reader/indexer extracted as importable functions (parse JSONL, build index, paginate, session detail, daily summary, startups). Run against a fixture JSONL with a few sessions + heartbeats + events + an unterminated session. (If the companion script is inline in the playbook and not importable, factor the reader into a small stdlib module shipped alongside or paste the relevant functions into the test; prefer keeping the reader logic testable.)
+- [x] Task 14: ADD `tests/test_companion_history_api.py` — unit tests for the companion history reader/indexer extracted as importable functions (parse JSONL, build index, paginate, session detail, daily summary, startups). Run against a fixture JSONL with a few sessions + heartbeats + events + an unterminated session. (If the companion script is inline in the playbook and not importable, factor the reader into a small stdlib module shipped alongside or paste the relevant functions into the test; prefer keeping the reader logic testable.)
 
 ## Validation
 - **Unit (Python, no Jetson):**
