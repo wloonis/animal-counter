@@ -64,3 +64,5 @@ Task 11: Rsync guard for history file in validate_on_jetson.sh
 === BL-69 Android app — history/count tabs ===
 Task 1: ADD 5 JetsonClient methods + net/Models.kt — dfca630
 Task 3: CREATE LiveCountViewModel (lifecycle-aware polling) — 90c3969
+Task 5: CREATE HistoryViewModel (paginated + client-side date/status filtering) — 1b7b161
+Task 7: CREATE SessionDetailViewModel (SavedStateHandle session id) — 0bbc57e
