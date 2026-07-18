@@ -37,4 +37,19 @@
     <!-- Sync event type labels -->
     <string name="type_probe">Probe</string>
     <string name="type_sync">Sync</string>
+
+    <!-- BL-69 — status labels (live count / history / detail) -->
+    <string name="status_running">Running</string>
+    <string name="status_ended">Ended</string>
+    <string name="status_clean">Clean</string>
+    <string name="status_power_loss">Power loss</string>
+    <string name="status_unknown">Unknown</string>
+
+    <!-- BL-69 — live count screen -->
+    <string name="live_count_label">Count</string>
+    <string name="live_auto_mode">Auto mode</string>
+
+    <!-- BL-69 — shared error/empty messages -->
+    <string name="error_out_of_range">Out of range</string>
+    <string name="error_network">Network error</string>
 </resources>
