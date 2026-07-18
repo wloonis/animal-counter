@@ -52,3 +52,4 @@ Task 21: CREATE TimeSyncScreen.kt (ViewModel-backed, IP field + debounced DataSt
 Task 1: ADD HISTORY_* settings to app/src/settings.py — 7a22a7c
 Task 2: BAKE build-info.json into Dockerfile — 7a1d3a1
 Task 3: EDIT build_countingapp.yml pass IMAGE_TAG+GIT_COMMIT build args — 039f115
+Task 4: ADD read-only instrumentation to counting.py (_emit_event + accumulators) — 276c6a1
