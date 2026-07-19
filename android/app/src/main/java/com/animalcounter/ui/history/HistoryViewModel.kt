@@ -345,7 +345,7 @@ class HistoryViewModel(app: Application) : AndroidViewModel(app) {
                     .thenByDescending { it.startAt ?: "" }
             )
         _state.value = when {
-            cache.isEmpty() && date == null && status == HistoryStatusFilter.ALL ->
+            rows.isEmpty() && date == null && status == HistoryStatusFilter.ALL ->
                 HistoryUiState.Empty
             else -> HistoryUiState.Loaded(
                 rows = rows,
@@ -374,6 +374,13 @@ class HistoryViewModel(app: Application) : AndroidViewModel(app) {
         date: LocalDate?,
         status: HistoryStatusFilter,
     ): Boolean {
+        // History shows only real countings: a session must have a recorded
+        // video (last_segment) or actual counting activity (count/events).
+        // Idle "En cours à 0" sessions (no video, nothing counted) live in
+        // the Sessions view reachable from the Dashboard, not here.
+        if (s.videoPath.isNullOrBlank() && (s.netCount ?: 0) == 0 && s.events == 0) {
+            return false
+        }
         if (date != null) {
             val rowDate = parseLocalDate(s.startAt)
             if (rowDate != date) return false
