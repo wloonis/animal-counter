@@ -92,6 +92,9 @@
     <string name="detail_status">Statut</string>
     <string name="detail_end_reason">Raison de fin</string>
     <string name="detail_session_id">ID session</string>
+    <string name="video_detail_title">Détail</string>
+    <string name="sessions_title">Sessions</string>
+    <string name="detail_heartbeats">Pulsations</string>
     <string name="detail_net">Comptage net</string>
     <string name="detail_count_ltr">Gauche → Droite</string>
     <string name="detail_count_rtl">Droite → Gauche</string>

@@ -200,7 +200,7 @@ private fun HeaderCard(d: SessionDetail) {
  *  last heartbeat count for the net value; directional/tracking fields
  *  render "N/A". */
 @Composable
-private fun CountingCard(d: SessionDetail) {
+internal fun CountingCard(d: SessionDetail) {
     val counters = d.end?.counters
     val net = d.netCount ?: d.heartbeats.lastOrNull()?.count
     GroupCard(
@@ -232,7 +232,7 @@ private fun CountingCard(d: SessionDetail) {
 
 /** B — Gardes (guard_interventions). */
 @Composable
-private fun GuardsCard(d: SessionDetail) {
+internal fun GuardsCard(d: SessionDetail) {
     val g = d.end?.counters?.guardInterventions
     GroupCard(
         icon = Icons.Filled.Shield,
@@ -348,7 +348,7 @@ private fun TimelineCard(d: SessionDetail) {
 
 /** One ElevatedCard group with an icon + title header + divider + body. */
 @Composable
-private fun GroupCard(
+internal fun GroupCard(
     icon: ImageVector,
     title: String,
     content: @Composable () -> Unit,
@@ -386,7 +386,7 @@ private fun GroupCard(
 
 /** Label/value row inside a group card. `value` renders "N/A" when null/blank. */
 @Composable
-private fun KeyValueRow(
+internal fun KeyValueRow(
     labelRes: Int,
     value: String?,
     unit: Int? = null,
@@ -417,7 +417,7 @@ private fun KeyValueRow(
 
 /** Label-only leading text (used before an inline pill). */
 @Composable
-private fun KeyValueLabel(labelRes: Int) {
+internal fun KeyValueLabel(labelRes: Int) {
     Text(
         text = stringResource(labelRes),
         style = MaterialTheme.typography.bodyMedium,
@@ -427,7 +427,7 @@ private fun KeyValueLabel(labelRes: Int) {
 
 /** Directional count row (left→right / right→left) with an arrow icon. */
 @Composable
-private fun DirectionalRow(labelRes: Int, value: Int?) {
+internal fun DirectionalRow(labelRes: Int, value: Int?) {
     Row(
         modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -575,7 +575,7 @@ private fun endReasonLabel(endReason: String?): String = when (endReason) {
 // ---------------------------------------------------------------------------
 
 @Composable
-private fun ReachabilityBanner(probeState: ProbeState) {
+internal fun ReachabilityBanner(probeState: ProbeState) {
     val container: Color
     val onContainer: Color
     val message: String
@@ -618,7 +618,7 @@ private fun ReachabilityBanner(probeState: ProbeState) {
 }
 
 @Composable
-private fun OutOfRangeCard() {
+internal fun OutOfRangeCard() {
     InfoCard(
         icon = Icons.Filled.WifiOff,
         title = stringResource(R.string.error_out_of_range),
@@ -627,7 +627,7 @@ private fun OutOfRangeCard() {
 }
 
 @Composable
-private fun ErrorCard(message: String) {
+internal fun ErrorCard(message: String) {
     InfoCard(
         icon = Icons.Outlined.ErrorOutline,
         title = stringResource(R.string.error_load),
@@ -767,10 +767,10 @@ private fun eventLabel(type: String?): String {
 // ---------------------------------------------------------------------------
 
 @Composable
-private fun na(): String = stringResource(R.string.na_label)
+internal fun na(): String = stringResource(R.string.na_label)
 
 /** Render an ISO-8601 timestamp as a short locale date-time. */
-private fun formatIso(iso: String?): String {
+internal fun formatIso(iso: String?): String {
     if (iso.isNullOrBlank()) return "—"
     return runCatching {
         val instant = parseInstant(iso) ?: return iso.take(19)
@@ -790,7 +790,7 @@ private fun parseInstant(iso: String): Instant? = runCatching {
 }.getOrNull()
 
 /** Whole-second duration between two ISO timestamps, null when either absent. */
-private fun durationBetween(startIso: String?, endIso: String?): String? {
+internal fun durationBetween(startIso: String?, endIso: String?): String? {
     if (startIso.isNullOrBlank() || endIso.isNullOrBlank()) return null
     return runCatching {
         val start = parseInstant(startIso) ?: return null

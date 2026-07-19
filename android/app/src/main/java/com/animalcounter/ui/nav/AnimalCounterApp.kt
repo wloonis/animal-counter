@@ -30,6 +30,8 @@ import com.animalcounter.ui.dashboard.DashboardScreen
 import com.animalcounter.ui.history.HistoryScreen
 import com.animalcounter.ui.livecount.LiveCountScreen
 import com.animalcounter.ui.sessiondetail.SessionDetailScreen
+import com.animalcounter.ui.sessiondetail.VideoDetailScreen
+import com.animalcounter.ui.sessions.SessionsScreen
 import com.animalcounter.ui.startups.StartupsScreen
 import com.animalcounter.ui.timesync.TimeSyncScreen
 
@@ -40,6 +42,8 @@ private object Destinations {
     const val DASHBOARD = "dashboard"
     const val STARTUPS = "startups"
     const val SESSION_DETAIL = "session/{sessionId}"
+    const val VIDEO_DETAIL = "video/{sessionId}"
+    const val SESSIONS = "sessions?days={days}"
 }
 
 @Composable
@@ -95,8 +99,34 @@ fun AnimalCounterApp() {
             composable(Destinations.TIME_SYNC) { TimeSyncScreen() }
             composable(Destinations.LIVE_COUNT) { LiveCountScreen() }
             composable(Destinations.HISTORY) { HistoryScreen(navController) }
-            composable(Destinations.DASHBOARD) { DashboardScreen() }
+            composable(Destinations.DASHBOARD) {
+                DashboardScreen(onSessionsClick = { days ->
+                    navController.navigate("sessions?days=$days")
+                })
+            }
             composable(Destinations.STARTUPS) { StartupsScreen() }
+            composable(
+                route = Destinations.VIDEO_DETAIL,
+                arguments = listOf(
+                    navArgument("sessionId") {
+                        type = NavType.StringType
+                        nullable = false
+                    },
+                ),
+            ) {
+                VideoDetailScreen(onBack = { navController.popBackStack() })
+            }
+            composable(
+                route = Destinations.SESSIONS,
+                arguments = listOf(
+                    navArgument("days") {
+                        type = NavType.StringType
+                        defaultValue = "1"
+                    },
+                ),
+            ) {
+                SessionsScreen(navController, onBack = { navController.popBackStack() })
+            }
             composable(
                 route = Destinations.SESSION_DETAIL,
                 arguments = listOf(

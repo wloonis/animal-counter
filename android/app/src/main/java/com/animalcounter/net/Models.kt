@@ -85,6 +85,7 @@ data class SessionSummary(
     val lastEventTs: String?,
     val imageTag: String?,
     val videoPath: String?,          // last_segment: the video filename (BL-69 video-info)
+    val videoDuration: Double?,     // video.duration seconds (BL-69); null for old sessions
 )
 
 /** `/api/history` → `{sessions[], limit, offset, total}`. */
@@ -311,6 +312,7 @@ internal fun parseSessionSummary(o: JSONObject): SessionSummary = SessionSummary
     lastEventTs = o.optStringOrNull("last_event_ts"),
     imageTag = o.optStringOrNull("image_tag"),
     videoPath = o.optStringOrNull("last_segment"),
+    videoDuration = o.optDoubleOrNull("video_duration"),
 )
 
 /** Parse `GET /api/history` body into [HistoryPage]. */

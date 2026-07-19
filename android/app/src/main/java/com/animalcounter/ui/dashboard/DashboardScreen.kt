@@ -78,7 +78,7 @@ import java.util.Locale
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun DashboardScreen() {
+fun DashboardScreen(onSessionsClick: (days: Int) -> Unit = {}) {
     val vm: DashboardViewModel = viewModel()
     val state by vm.state.collectAsState()
     val probeState by vm.probeState.collectAsState()
@@ -131,7 +131,7 @@ fun DashboardScreen() {
                     }
                     is DashboardUiState.Loaded -> {
                     if (s.offline) OfflineBanner(cachedAt = s.cachedAt)
-                    DashboardBody(s)
+                    DashboardBody(s, onSessionsClick)
                 }
                     is DashboardUiState.Empty -> EmptyCard()
                     is DashboardUiState.OutOfRange -> OutOfRangeCard()
@@ -180,9 +180,9 @@ private fun PeriodSelector(selected: DashboardPeriod, onSelect: (DashboardPeriod
 // ---------------------------------------------------------------------------
 
 @Composable
-private fun DashboardBody(loaded: DashboardUiState.Loaded) {
+private fun DashboardBody(loaded: DashboardUiState.Loaded, onSessionsClick: (days: Int) -> Unit) {
     // Summary cards in a 2-column row.
-    SummaryCardsRow(loaded = loaded)
+    SummaryCardsRow(loaded = loaded, onSessionsClick = onSessionsClick)
 
     Spacer(Modifier.height(4.dp))
 
@@ -216,7 +216,7 @@ private fun DashboardBody(loaded: DashboardUiState.Loaded) {
 // ---------------------------------------------------------------------------
 
 @Composable
-private fun SummaryCardsRow(loaded: DashboardUiState.Loaded) {
+private fun SummaryCardsRow(loaded: DashboardUiState.Loaded, onSessionsClick: (days: Int) -> Unit) {
     // Two rows of 2 cards each (no FlowRow needed — exactly 4 cards).
     Row(
         modifier = Modifier.fillMaxWidth(),
@@ -231,6 +231,7 @@ private fun SummaryCardsRow(loaded: DashboardUiState.Loaded) {
             modifier = Modifier.weight(1f),
             value = loaded.totalSessions.toString(),
             label = stringResource(R.string.dashboard_total_sessions),
+            onClick = { onSessionsClick(loaded.period.days) },
         )
     }
     Spacer(Modifier.height(12.dp))
@@ -252,11 +253,8 @@ private fun SummaryCardsRow(loaded: DashboardUiState.Loaded) {
 }
 
 @Composable
-private fun SummaryCard(modifier: Modifier = Modifier, value: String, label: String) {
-    Card(
-        modifier = modifier,
-        shape = MaterialTheme.shapes.medium,
-    ) {
+private fun SummaryCard(modifier: Modifier = Modifier, value: String, label: String, onClick: (() -> Unit)? = null) {
+    val content: @Composable () -> Unit = {
         Column(
             modifier = Modifier.fillMaxWidth().padding(16.dp),
             horizontalAlignment = Alignment.Start,
@@ -274,6 +272,11 @@ private fun SummaryCard(modifier: Modifier = Modifier, value: String, label: Str
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
+    }
+    if (onClick != null) {
+        Card(modifier = modifier, shape = MaterialTheme.shapes.medium, onClick = onClick) { content() }
+    } else {
+        Card(modifier = modifier, shape = MaterialTheme.shapes.medium) { content() }
     }
 }
 

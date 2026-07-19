@@ -99,7 +99,7 @@ import java.util.Locale
  * `PullToRefreshBox` for manual refresh; `LinearProgressIndicator` for
  * loading; empty/error states in `OutlinedCard`s; reachability banner.
  *
- * Tapping a row navigates to `session/{sessionId}` (the Détail screen).
+ * Tapping a row navigates to `video/{sessionId}` (the Détail vidéo screen).
  * Infinite-scroll: when the last visible item is near the end of the
  * loaded list and more pages are available, [HistoryViewModel.loadNextPage]
  * is invoked.
@@ -194,7 +194,7 @@ fun HistoryScreen(navController: NavController) {
                                 SessionRowCard(
                                     session = row,
                                     onClick = {
-                                        row.sessionId?.let { navController.navigate("session/$it") }
+                                        row.sessionId?.let { navController.navigate("video/$it") }
                                     },
                                 )
                             }
@@ -377,7 +377,7 @@ private fun SessionRowCard(session: SessionSummary, onClick: () -> Unit) {
                     modifier = Modifier.size(16.dp),
                 )
                 Text(
-                    text = session.videoPath?.substringAfterLast('/') ?: session.sessionId?.take(8) ?: "—",
+                    text = displayFilename(session.videoPath, session.status) ?: session.sessionId?.take(8) ?: "—",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
@@ -397,7 +397,8 @@ private fun SessionRowCard(session: SessionSummary, onClick: () -> Unit) {
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                val dur = durationBetween(session.startAt, session.endAt)
+                val dur = formatSeconds(session.videoDuration)
+                    ?: durationBetween(session.startAt, session.endAt)
                     ?: if (session.status == "running") durationSinceNow(session.startAt) else null
                 if (dur != null) {
                     Text(
@@ -610,6 +611,30 @@ private fun durationBetween(startIso: String?, endIso: String?): String? {
         else if (m > 0) String.format(Locale.ROOT, "%dm %02ds", m, s)
         else String.format(Locale.ROOT, "%ds", s)
     }.getOrNull()
+}
+
+/** Display the video filename for a history row: basename of [videoPath],
+ * with the `tmp-` prefix stripped once the session has ended (the cron
+ * compresses `tmp-counting-<ts>.mp4` -> `counting-<ts>.mp4`). Running
+ * sessions keep the `tmp-` prefix (the recording is still in progress). */
+private fun displayFilename(videoPath: String?, status: String): String? {
+    if (videoPath == null) return null
+    val base = videoPath.substringAfterLast('/')
+    return if (status != "running" && base.startsWith("tmp-")) base.removePrefix("tmp-") else base
+}
+
+/** Format a duration in seconds as `H:MM:SS` / `MM:SS` / `SSs`, null when null. */
+private fun formatSeconds(seconds: Double?): String? {
+    if (seconds == null || seconds < 0 || seconds.isNaN()) return null
+    val total = seconds.toLong()
+    val h = total / 3600
+    val m = (total % 3600) / 60
+    val s = total % 60
+    return when {
+        h > 0 -> String.format(Locale.ROOT, "%d:%02d:%02d", h, m, s)
+        m > 0 -> String.format(Locale.ROOT, "%d:%02d", m, s)
+        else -> String.format(Locale.ROOT, "%ds", s)
+    }
 }
 
 /** Whole-second elapsed since `start_at` to now (for running sessions). */
