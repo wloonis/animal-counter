@@ -192,6 +192,12 @@ class HistoryViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /** Set the date filter (null clears it) and re-apply the filter client-side. */
+    /** Re-fetch first page + re-probe (auto-refresh polling + pull-to-refresh). */
+    fun refresh() {
+        loadFirstPage()
+        probe()
+    }
+
     fun setFilterDate(date: LocalDate?) {
         _filterDate.value = date
         reapplyFilter()

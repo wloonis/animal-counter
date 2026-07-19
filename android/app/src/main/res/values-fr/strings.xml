@@ -4,7 +4,7 @@
     <string name="app_name">Animal Counter</string>
 
     <!-- Bottom-nav tabs -->
-    <string name="tab_time_sync">Synchronisation</string>
+    <string name="tab_time_sync">Synchro</string>
     <string name="tab_live_count">Comptage en direct</string>
     <string name="tab_videos">Vidéos</string>
 
@@ -60,7 +60,8 @@
 
     <!-- BL-69 — history screen -->
     <string name="tab_history">Historique</string>
-    <string name="empty_history">Aucune session</string>
+    <string name="history_title">Historique comptage</string>
+    <string name="empty_history">Aucun comptage</string>
     <string name="filter_status_all">Toutes</string>
     <string name="filter_status_running">En cours</string>
     <string name="filter_status_clean">Propre</string>
@@ -160,7 +161,7 @@
     <string name="empty_dashboard">Aucune donnée pour cette période</string>
 
     <!-- BL-69 — startups screen -->
-    <string name="tab_startups">Démarrages</string>
+    <string name="tab_startups">Démarrage</string>
     <string name="empty_startups">Aucun démarrage enregistré</string>
     <string name="startup_boot_at">Démarré à</string>
     <string name="startup_image_tag">Tag image</string>

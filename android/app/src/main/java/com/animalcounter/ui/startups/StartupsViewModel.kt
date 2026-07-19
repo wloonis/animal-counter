@@ -156,6 +156,12 @@ class StartupsViewModel(app: Application) : AndroidViewModel(app) {
     /** Offline fallback — serve the last cached `/api/startups` response
      * so the user can consult the startups history with no Jetson connection.
      * Returns null when there is no cache (caller falls back to Error/OutOfRange). */
+    /** Re-fetch + re-probe (auto-refresh polling + pull-to-refresh). */
+    fun refresh() {
+        load()
+        probe()
+    }
+
     private fun loadCachedStartups(): StartupsUiState.Loaded? {
         val cached = OfflineCache.load(getApplication(), CACHE_KEY) ?: return null
         val sorted = runCatching { sortByBootAtDesc(parseStartups(cached.json).startups) }

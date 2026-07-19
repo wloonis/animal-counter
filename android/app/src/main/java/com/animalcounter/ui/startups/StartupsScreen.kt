@@ -38,6 +38,7 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
@@ -52,6 +53,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.animalcounter.R
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import com.animalcounter.net.Startup
 import com.animalcounter.ui.common.OfflineBanner
 import com.animalcounter.ui.timesync.ProbeState
@@ -88,6 +91,15 @@ fun StartupsScreen() {
     val vm: StartupsViewModel = viewModel()
     val state by vm.state.collectAsState()
     val probeState by vm.probeState.collectAsState()
+
+    // Auto-refresh: fetch on tab enter + poll every 20s while foregrounded.
+    LaunchedEffect(Unit) {
+        vm.refresh()
+        while (isActive) {
+            delay(20_000)
+            vm.refresh()
+        }
+    }
 
     val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
     val pullState = rememberPullToRefreshState()

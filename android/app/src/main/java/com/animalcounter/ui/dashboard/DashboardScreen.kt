@@ -30,10 +30,12 @@ import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
@@ -58,6 +60,8 @@ import com.animalcounter.R
 import com.animalcounter.net.DailyBucket
 import com.animalcounter.ui.common.OfflineBanner
 import com.animalcounter.ui.timesync.ProbeState
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import java.util.Locale
 
 /**
@@ -84,20 +88,25 @@ fun DashboardScreen(onSessionsClick: (days: Int) -> Unit = {}) {
     val probeState by vm.probeState.collectAsState()
     val period by vm.period.collectAsState()
 
+    // Auto-refresh: fetch on tab enter + poll every 20s while foregrounded.
+    // The composable leaves composition on tab switch (NavHost composes only
+    // the current destination), so this restarts on return = tab-change refresh.
+    LaunchedEffect(Unit) {
+        vm.refresh()
+        while (isActive) {
+            delay(20_000)
+            vm.refresh()
+        }
+    }
+
     val pullState = rememberPullToRefreshState()
     val isRefreshing = state is DashboardUiState.Loading
 
     Scaffold(
         modifier = Modifier.fillMaxSize(),
         topBar = {
-            TopAppBar(
-                title = {
-                    Text(
-                        text = stringResource(R.string.dashboard_title),
-                        modifier = Modifier.fillMaxWidth(),
-                        textAlign = TextAlign.Center,
-                    )
-                },
+            CenterAlignedTopAppBar(
+                title = { Text(stringResource(R.string.dashboard_title)) },
             )
         },
     ) { innerPadding ->

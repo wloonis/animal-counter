@@ -75,6 +75,8 @@ import com.animalcounter.net.SessionSummary
 import com.animalcounter.ui.common.OfflineBanner
 import com.animalcounter.ui.timesync.ProbeState
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import java.time.Instant
 import java.time.LocalDate
 import java.time.OffsetDateTime
@@ -113,6 +115,17 @@ fun HistoryScreen(navController: NavController) {
     val filterDate by vm.filterDate.collectAsState()
     val filterStatus by vm.filterStatus.collectAsState()
 
+    // Auto-refresh: fetch first page on tab enter + poll every 20s while
+    // foregrounded. Restarted on tab return (NavHost composes only the
+    // current destination) = tab-change refresh.
+    LaunchedEffect(Unit) {
+        vm.refresh()
+        while (isActive) {
+            delay(20_000)
+            vm.refresh()
+        }
+    }
+
     val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
     val pullState = rememberPullToRefreshState()
     val listState = rememberLazyListState()
@@ -137,7 +150,7 @@ fun HistoryScreen(navController: NavController) {
         modifier = Modifier.fillMaxSize(),
         topBar = {
             LargeTopAppBar(
-                title = { Text(stringResource(R.string.tab_history)) },
+                title = { Text(stringResource(R.string.history_title)) },
                 actions = {
                     IconButton(onClick = vm::loadFirstPage) {
                         Icon(Icons.Filled.Refresh, contentDescription = stringResource(R.string.refresh))
