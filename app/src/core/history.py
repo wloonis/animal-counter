@@ -614,6 +614,7 @@ class HistoryWriter:
                     if dt is not None:
                         e = {
                             "last_segment": getattr(dt, "filename", None),
+                            "duration": getattr(dt, "record_duration", None),
                         }
                 except Exception:
                     e = {}

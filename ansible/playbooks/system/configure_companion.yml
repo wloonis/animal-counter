@@ -364,6 +364,7 @@
                                     if isinstance(cfg, dict) else None,
                       "last_segment": (last_hb.get("last_segment")
                                         or (end.get("video") or {}).get("last_segment")),
+                      "video_duration": (end.get("video") or {}).get("duration"),
                   }
 
               def session_summaries(self, limit=50, offset=0):
