@@ -22,8 +22,10 @@
 #                                   -> timedatectl set-time  "<time>"
 #                                   -> timedatectl set-timezone "<tz>"
 #                                   -> {"status":"ok","time":...,"tz":...}
-#        GET  /api/history         -> paginated session summaries (newest first)
-#        GET  /api/history/summary -> daily aggregates (count/sessions/guards)
+#        GET  /api/sessions        -> paginated session summaries (newest first)
+#        GET  /api/summary         -> daily aggregates (count/sessions/guards)
+#        GET  /api/videos          -> paginated video list (running recording first)
+#        GET  /api/video/<id>      -> Range-streamed compressed MP4 (206 partial)
 #        GET  /api/sessions/<id>   -> full session detail (A–G)
 #        GET  /api/count           -> live count/status/auto_mode (newest heartbeat)
 #        GET  /api/startups        -> startup history lines
@@ -106,9 +108,12 @@
           #   GET  /api/identify        -> {"service":"jetson-companion","version":"4"}
           #   GET  /api/count           -> live count/status/auto_mode (newest heartbeat)
           #   POST /api/time            -> timedatectl set-time/set-timezone
-          #   GET  /api/history         -> paginated session summaries (newest first)
+          #   GET  /api/sessions        -> paginated session summaries (newest first)
           #        ?limit=50&offset=0
-          #   GET  /api/history/summary -> daily aggregates ?days=7
+          #   GET  /api/summary         -> daily aggregates ?days=7
+          #   GET  /api/videos          -> paginated video list (running first)
+          #        ?limit=50&offset=0
+          #   GET  /api/video/<id>      -> Range-streamed compressed MP4 (206 partial)
           #   GET  /api/sessions/<id>   -> full session detail (A–G)
           #   GET  /api/count           -> live count/status/auto_mode (newest heartbeat)
           #   GET  /api/startups        -> startup history lines ?limit=50
@@ -204,7 +209,7 @@
               is skipped.
 
               Session ordering is by ``session_start.start_at`` descending
-              (newest first), which is what /api/history paginates over.
+              (newest first), which is what /api/sessions paginates over.
               """
 
               def __init__(self, path):
@@ -585,14 +590,14 @@
                       _send_json(self, 200, payload)
                       return
 
-                  if path == "/api/history":
+                  if path == "/api/sessions":
                       limit = _int_arg(qs, "limit", 50)
                       offset = _int_arg(qs, "offset", 0)
                       idx = _get_index()
                       summaries, total = idx.session_summaries(
                           limit=limit, offset=offset)
                       self._log(
-                          "GET /api/history -> 200 ({} of {})".format(
+                          "GET /api/sessions -> 200 ({} of {})".format(
                               len(summaries), total))
                       _send_json(self, 200, {
                           "sessions": summaries,
@@ -602,11 +607,11 @@
                       })
                       return
 
-                  if path == "/api/history/summary":
+                  if path == "/api/summary":
                       days = _int_arg(qs, "days", 7)
                       idx = _get_index()
                       daily = idx.daily_summary(days=days)
-                      self._log("GET /api/history/summary -> 200")
+                      self._log("GET /api/summary -> 200")
                       _send_json(self, 200, {"days": days, "daily": daily})
                       return
 
