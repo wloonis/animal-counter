@@ -337,9 +337,14 @@ class DisplayThread(threading.Thread):
             if history is not None:
                 video_id = f"counting-{ts_stem}"
                 session_id = getattr(history, "session_id", None)
+                # BL-71: store the FINAL compressed name (counting-...) in the
+                # JSONL, not the transient tocompress- prefix (the cron later
+                # rewrites tocompress- -> counting- on disk; the API/history
+                # must show the definitive name immediately).
+                final_filename = os.path.basename(output_path).replace("tocompress-", "", 1)
                 history.video(
                     video_id=video_id,
-                    filename=os.path.basename(output_path),
+                    filename=final_filename,
                     duration=self.record_duration,
                     count_delta=delta,
                     session_id=session_id,

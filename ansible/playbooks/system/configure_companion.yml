@@ -419,9 +419,10 @@
                       "last_event_ts": last_event_ts,
                       "image_tag": (cfg or {}).get("image_tag")
                                     if isinstance(cfg, dict) else None,
-                      "last_segment": (last_hb.get("last_segment")
-                                        or (end.get("video") or {}).get("last_segment")),
-                      "video_duration": (end.get("video") or {}).get("duration"),
+                      # BL-71: the video name + per-video duration now live on
+                      # the VIDEO entity (/api/videos), NOT the session. The
+                      # session keeps only global facts (count, perf/thermal,
+                      # config, status). last_segment + video_duration removed.
                   }
 
               def session_summaries(self, limit=50, offset=0):
@@ -442,18 +443,27 @@
                   last_hb = sess.get("last_hb") or {}
                   end_at = end.get("end_at") or last_hb.get("ts")
                   cfg = start.get("config") if isinstance(start, dict) else None
+                  # BL-71: per-video counting (events, guards, directional) now
+                  # lives on the VIDEO entity (/api/videos/<id>). The session
+                  # keeps only global facts: net_count, perf/thermal (from
+                  # heartbeats), config, status + the list of its videos. The
+                  # video name/duration are stripped from `end` (they belong to
+                  # the video).
+                  end_clean = dict(sess.get("end") or {})
+                  end_clean.pop("video", None)
+                  vids = [v for v in self._video_order
+                          if (self._videos[v].get("session_id") == sid)]
                   return {
                       "session_id": sid,
                       "start": start,
-                      "end": sess.get("end"),
+                      "end": end_clean or None,
                       "end_at": end_at,
                       "end_reason": end.get("end_reason"),
                       "status": "ended" if sess.get("end") else "running",
                       "net_count": sess.get("count"),
                       "config": cfg,
                       "heartbeats": sess.get("heartbeats") or [],
-                      "events": sess.get("events") or [],
-                      "significant_events": sess.get("significant_events"),
+                      "videos": vids,
                   }
 
               def daily_summary(self, days=7):
@@ -559,6 +569,147 @@
                       "session_id": hb.get("session_id"),
                       "ts": hb.get("ts"),
                       "status": "running",
+                  }
+
+              def video_detail(self, video_id):
+                  """Full video detail: the video line + per-video counting
+                  metadata (directional counts, guard interventions,
+                  track_lost, events timeline) + perf/thermal, all
+                  attributed by timespan [ts, ts+duration] from the
+                  session's events + heartbeats. Returns None if the
+                  video_id is unknown."""
+                  self._maybe_rebuild()
+                  obj = self._videos.get(video_id)
+                  if obj is None:
+                      return None
+                  sid = obj.get("session_id")
+                  sess = self._sessions.get(sid) if sid else None
+                  duration = obj.get("duration")
+                  start_ts = obj.get("ts")
+                  start_dt = None
+                  end_dt = None
+                  if start_ts:
+                      try:
+                          start_dt = _parse_iso(start_ts)
+                      except Exception:
+                          start_dt = None
+                  if start_dt is not None and duration is not None:
+                      try:
+                          end_dt = start_dt + datetime.timedelta(
+                              seconds=float(duration))
+                      except Exception:
+                          end_dt = None
+
+                  def _in_span(ts_str):
+                      if not ts_str or start_dt is None:
+                          return False
+                      if end_dt is None:
+                          return True
+                      try:
+                          t = _parse_iso(ts_str)
+                      except Exception:
+                          return False
+                      return start_dt <= t <= end_dt
+
+                  evs = []
+                  hbs = []
+                  if sess is not None:
+                      evs = [e for e in (sess.get("events") or [])
+                             if _in_span(e.get("ts"))]
+                      hbs = [h for h in (sess.get("heartbeats") or [])
+                             if _in_span(h.get("ts"))]
+                  # Directional counts from "crossed" events (direction LEFT
+                  # -> count_left_to_right, RIGHT -> count_right_to_left,
+                  # matching counting.py semantics).
+                  count_left = 0
+                  count_right = 0
+                  for e in evs:
+                      if e.get("event_type") == "crossed":
+                          d = (e.get("detail") or {}).get("direction")
+                          if d == "LEFT":
+                              count_left += 1
+                          elif d == "RIGHT":
+                              count_right += 1
+                  # Guard interventions by type + track_lost count.
+                  guard_types = ("reid_suppress", "mirror_suppress",
+                                 "mirror_guard_enforce", "mirror_candidate",
+                                 "resurrection", "id_switch_recovery",
+                                 "lost_buffer_expired")
+                  guard_interventions = {}
+                  track_lost = 0
+                  for e in evs:
+                      et = e.get("event_type", "")
+                      if et in guard_types:
+                          guard_interventions[et] = (
+                              guard_interventions.get(et, 0) + 1)
+                      elif et == "track_lost":
+                          track_lost += 1
+                  # Perf/thermal: aggregate thermal zones + system from the
+                  # heartbeats that fell inside the video's timespan.
+                  thermal_samples = []
+                  cpu_loads = []
+                  mem_used = []
+                  disk_free = []
+                  for h in hbs:
+                      th = h.get("thermal") or {}
+                      if isinstance(th, dict) and th:
+                          for v in th.values():
+                              try:
+                                  fv = float(v)
+                                  thermal_samples.append(
+                                      fv / 1000.0 if fv > 1000 else fv)
+                              except Exception:
+                                  pass
+                      sy = h.get("system") or {}
+                      if isinstance(sy, dict):
+                          cl = sy.get("cpu_load_avg")
+                          if isinstance(cl, list) and cl:
+                              try:
+                                  cpu_loads.append(float(cl[0]))
+                              except Exception:
+                                  pass
+                          mu = sy.get("mem_used")
+                          if mu is not None:
+                              try:
+                                  mem_used.append(float(mu))
+                              except Exception:
+                                  pass
+                          df = sy.get("disk_free")
+                          if df is not None:
+                              try:
+                                  disk_free.append(float(df))
+                              except Exception:
+                                  pass
+
+                  def _agg(vals, fn):
+                      return fn(vals) if vals else None
+                  perf = {
+                      "thermal_avg": _agg(thermal_samples,
+                                          lambda v: round(sum(v) / len(v), 1)),
+                      "thermal_peak": _agg(thermal_samples,
+                                           lambda v: round(max(v), 1)),
+                      "cpu_load_avg": _agg(cpu_loads,
+                                           lambda v: round(sum(v) / len(v), 2)),
+                      "mem_used_avg": _agg(mem_used,
+                                           lambda v: round(sum(v) / len(v), 2)),
+                      "disk_free_avg": _agg(disk_free,
+                                            lambda v: round(sum(v) / len(v), 2)),
+                      "heartbeat_count": len(hbs),
+                  }
+                  return {
+                      "video_id": video_id,
+                      "filename": obj.get("filename"),
+                      "duration": duration,
+                      "count_delta": obj.get("count_delta"),
+                      "session_id": sid,
+                      "ts": start_ts,
+                      "status": "ready",
+                      "count_left_to_right": count_left,
+                      "count_right_to_left": count_right,
+                      "guard_interventions": guard_interventions,
+                      "track_lost": track_lost,
+                      "events": evs,
+                      "perf": perf,
                   }
 
           # Parse the {YYYYMMDD-HHMMSS} timestamp stem out of a recording
@@ -888,6 +1039,26 @@
                           "offset": offset,
                           "total": total,
                       })
+                      return
+
+                  if path.startswith("/api/videos/"):
+                      # Per-video detail (metadata JSON): directional counts,
+                      # guard interventions, track_lost, events timeline,
+                      # perf/thermal — attributed by timespan. Distinct from
+                      # /api/video/<id> (singular, streams the MP4 bytes).
+                      vid = path[len("/api/videos/"):]
+                      if not vid:
+                          self._log("GET {} -> 404".format(path))
+                          _send_json(self, 404, {"error": "missing video id"})
+                          return
+                      idx = _get_index()
+                      detail = idx.video_detail(vid)
+                      if detail is None:
+                          self._log("GET /api/videos/{} -> 404".format(vid))
+                          _send_json(self, 404, {"error": "video not found"})
+                          return
+                      self._log("GET /api/videos/{} -> 200".format(vid))
+                      _send_json(self, 200, detail)
                       return
 
                   if path.startswith("/api/video/"):
