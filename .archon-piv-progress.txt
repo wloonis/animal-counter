@@ -92,3 +92,5 @@ Task 17: VERIFY assembleDebug BUILD SUCCESSFUL + testDebugUnitTest 21 tests pass
 Task 1: ADD video() writer + record_start_count to heartbeat — c353edc
 Task 2: EMIT video entry in _finalize_recording — bc4d62a
 Task 3: RENAME companion routes (clean break) — 4c8bb84
+Task 4: ADD /api/videos list endpoint — 4d30d38
+Task 5: ADD /api/video/<id> Range-streaming endpoint — c655241
