@@ -90,3 +90,4 @@ Task 15: DELETE dead PlaceholderScreen after 5-tab conversion — 8c73160
 Task 16: CREATE JetsonClientParsingTest.kt (21 unit tests, 5 endpoints incl. running-session end=null fallback) — 153b6a5
 Task 17: VERIFY assembleDebug BUILD SUCCESSFUL + testDebugUnitTest 21 tests pass (0 failures) — 153b6a5
 Task 1: ADD video() writer + record_start_count to heartbeat — c353edc
+Task 2: EMIT video entry in _finalize_recording — bc4d62a
