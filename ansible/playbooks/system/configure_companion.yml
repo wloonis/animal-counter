@@ -626,7 +626,10 @@
               Android player's resumable download).
               """
               # Resolve the on-disk file via glob.
-              pattern = os.path.join(FILES_DIR, "counting-" + vid + "-*.mp4")
+              # video_id already includes the 'counting-' prefix (it is
+              # 'counting-{ts}'), so glob '<vid>-*.mp4' directly — do NOT
+              # re-prepend 'counting-' or the pattern becomes 'counting-counting-…'.
+              pattern = os.path.join(FILES_DIR, vid + "-*.mp4")
               matches = glob.glob(pattern)
               if not matches:
                   handler._log("GET /api/video/{} -> 404".format(vid))
