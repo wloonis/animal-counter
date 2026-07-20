@@ -47,7 +47,7 @@ private object Destinations {
     const val DASHBOARD = "dashboard"
     const val STARTUPS = "startups"
     const val SESSION_DETAIL = "session/{sessionId}"
-    const val VIDEO_DETAIL = "video/{sessionId}"
+    const val VIDEO_DETAIL = "video/{videoId}?filename={filename}&countDelta={countDelta}&duration={duration}&status={status}&sessionId={sessionId}&ts={ts}"
     const val SESSIONS = "sessions?days={days}"
 }
 
@@ -124,9 +124,33 @@ fun AnimalCounterApp() {
             composable(
                 route = Destinations.VIDEO_DETAIL,
                 arguments = listOf(
-                    navArgument("sessionId") {
+                    navArgument("videoId") {
                         type = NavType.StringType
                         nullable = false
+                    },
+                    navArgument("filename") {
+                        type = NavType.StringType
+                        defaultValue = ""
+                    },
+                    navArgument("countDelta") {
+                        type = NavType.StringType
+                        defaultValue = ""
+                    },
+                    navArgument("duration") {
+                        type = NavType.StringType
+                        defaultValue = ""
+                    },
+                    navArgument("status") {
+                        type = NavType.StringType
+                        defaultValue = "unknown"
+                    },
+                    navArgument("sessionId") {
+                        type = NavType.StringType
+                        defaultValue = ""
+                    },
+                    navArgument("ts") {
+                        type = NavType.StringType
+                        defaultValue = ""
                     },
                 ),
             ) {
