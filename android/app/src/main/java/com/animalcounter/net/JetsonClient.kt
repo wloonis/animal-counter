@@ -254,6 +254,15 @@ object JetsonClient {
     ): ApiResult<VideoPage> =
         getJson(ip, "/api/videos?limit=$limit&offset=$offset", network) { parseVideos(it) }
 
+    /** `GET /api/videos/<id>` → [VideoDetail] (per-video counting metadata +
+     * perf/thermal attributed by timespan — BL-71). */
+    suspend fun getVideoDetail(
+        ip: String,
+        videoId: String,
+        network: Network? = null,
+    ): ApiResult<VideoDetail> =
+        getJson(ip, "/api/videos/" + URLEncoder.encode(videoId, "UTF-8"), network) { parseVideoDetail(it) }
+
     /** `GET /api/sessions/<id>` → [SessionDetail] (A–G groups, `end` may be null). */
     suspend fun getSession(
         ip: String,

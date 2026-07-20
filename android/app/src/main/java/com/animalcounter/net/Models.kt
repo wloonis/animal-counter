@@ -132,6 +132,34 @@ data class VideoPage(
     val total: Int,
 )
 
+/** `/api/videos/<id>` → full video detail with per-video counting metadata
+ * (directional counts, guard interventions, track_lost, events timeline) +
+ * perf/thermal attributed by timespan (BL-71). */
+data class VideoDetail(
+    val videoId: String?,
+    val filename: String?,
+    val duration: Double?,
+    val countDelta: Int?,
+    val sessionId: String?,
+    val ts: String?,
+    val status: String,
+    val countLeftToRight: Int,
+    val countRightToLeft: Int,
+    val guardInterventions: JSONObject,   // {event_type: count}
+    val trackLost: Int,
+    val events: List<CountingEvent>,
+    val perf: VideoPerf,
+)
+
+data class VideoPerf(
+    val thermalAvg: Double?,
+    val thermalPeak: Double?,
+    val cpuLoadAvg: Double?,
+    val memUsedAvg: Double?,
+    val diskFreeAvg: Double?,
+    val heartbeatCount: Int,
+)
+
 // ---------------------------------------------------------------------------
 // /api/sessions/<id>  →  SessionDetail (A–G groups)
 // ---------------------------------------------------------------------------
@@ -243,8 +271,10 @@ data class SessionDetail(
     val netCount: Int?,
     val config: ConfigSnapshot?, // reader-level: start.config
     val heartbeats: List<Heartbeat>,
-    val events: List<CountingEvent>,
-    val significantEvents: JSONObject?,
+    // BL-71: per-video counting (events, guards, directional) now lives on
+    // the VIDEO entity (/api/videos/<id>). The session keeps only global
+    // facts + the list of its video_ids.
+    val videos: List<String>,
 )
 
 // ---------------------------------------------------------------------------
@@ -388,6 +418,38 @@ internal fun parseVideos(json: String): VideoPage {
     )
 }
 
+/** Parse `GET /api/videos/<id>` body into [VideoDetail] (per-video counting
+ * metadata + perf/thermal attributed by timespan — BL-71). */
+internal fun parseVideoDetail(json: String): VideoDetail {
+    val o = JSONObject(json)
+    val evArr = o.optJSONArray("events") ?: JSONArray()
+    val events = (0 until evArr.length()).map { parseCountingEvent(evArr.getJSONObject(it)) }
+    val perfObj = o.optJSONObject("perf")
+    val perf = VideoPerf(
+        thermalAvg = perfObj?.optDoubleOrNull("thermal_avg"),
+        thermalPeak = perfObj?.optDoubleOrNull("thermal_peak"),
+        cpuLoadAvg = perfObj?.optDoubleOrNull("cpu_load_avg"),
+        memUsedAvg = perfObj?.optDoubleOrNull("mem_used_avg"),
+        diskFreeAvg = perfObj?.optDoubleOrNull("disk_free_avg"),
+        heartbeatCount = perfObj?.optInt("heartbeat_count", 0) ?: 0,
+    )
+    return VideoDetail(
+        videoId = o.optStringOrNull("video_id"),
+        filename = o.optStringOrNull("filename"),
+        duration = o.optDoubleOrNull("duration"),
+        countDelta = o.optIntOrNull("count_delta"),
+        sessionId = o.optStringOrNull("session_id"),
+        ts = o.optStringOrNull("ts"),
+        status = o.optStringOrNull("status") ?: "unknown",
+        countLeftToRight = o.optInt("count_left_to_right", 0),
+        countRightToLeft = o.optInt("count_right_to_left", 0),
+        guardInterventions = o.optJSONObject("guard_interventions") ?: JSONObject(),
+        trackLost = o.optInt("track_lost", 0),
+        events = events,
+        perf = perf,
+    )
+}
+
 internal fun parseGuardInterventions(o: JSONObject?): GuardInterventions = GuardInterventions(
     lostBufferExpired = o?.optIntOrNull("lost_buffer_expired") ?: 0,
     mirrorGuard = o?.optIntOrNull("mirror_guard") ?: 0,
@@ -487,7 +549,8 @@ internal fun parseSessionDetail(json: String): SessionDetail {
     val endObj = o.optJSONObject("end")
     val cfgObj = o.optJSONObject("config")
     val hbArr = o.optJSONArray("heartbeats") ?: JSONArray()
-    val evArr = o.optJSONArray("events") ?: JSONArray()
+    val vidArr = o.optJSONArray("videos") ?: JSONArray()
+    val videos = (0 until vidArr.length()).map { vidArr.getString(it) }
     return SessionDetail(
         sessionId = o.optStringOrNull("session_id") ?: "",
         start = startObj?.let { parseSessionStart(it) },
@@ -498,8 +561,7 @@ internal fun parseSessionDetail(json: String): SessionDetail {
         netCount = o.optIntOrNull("net_count"),
         config = cfgObj?.let { parseConfigSnapshot(it) },
         heartbeats = (0 until hbArr.length()).map { parseHeartbeat(hbArr.getJSONObject(it)) },
-        events = (0 until evArr.length()).map { parseCountingEvent(evArr.getJSONObject(it)) },
-        significantEvents = o.optJSONObject("significant_events"),
+        videos = videos,
     )
 }
 

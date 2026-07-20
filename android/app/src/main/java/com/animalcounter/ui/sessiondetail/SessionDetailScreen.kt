@@ -147,13 +147,10 @@ fun SessionDetailScreen(
                 is SessionDetailUiState.Loaded -> {
                     val d = s.detail
                     item { HeaderCard(d) }
-                    item { CountingCard(d) }
-                    item { GuardsCard(d) }
+                    item { VideosCard(d) }
                     item { PerfCard(d) }
                     item { ConfigCard(d) }
-                    item { VideoCard(d) }
                     item { SystemCard(d) }
-                    item { TimelineCard(d) }
                 }
                 is SessionDetailUiState.OutOfRange -> item { OutOfRangeCard() }
                 is SessionDetailUiState.Error -> item { ErrorCard(message = s.message) }
@@ -174,13 +171,11 @@ private fun HeaderCard(d: SessionDetail) {
     val startStr = formatIso(start?.startAt)
     val endStr = formatIso(d.endAt ?: end?.endAt)
     val dur = durationBetween(start?.startAt, d.endAt ?: end?.endAt)
-    val video = end?.video?.path ?: d.heartbeats.lastOrNull()?.lastSegment
     GroupCard(
         icon = Icons.Filled.PlayCircle,
         title = stringResource(R.string.group_header),
     ) {
         KeyValueRow(R.string.detail_session_id, d.sessionId.ifBlank { "—" })
-        KeyValueRow(R.string.detail_video, video ?: "—")
         KeyValueRow(R.string.detail_start, startStr)
         KeyValueRow(R.string.detail_end, endStr)
         if (dur != null) KeyValueRow(R.string.detail_duration, dur)
@@ -193,55 +188,6 @@ private fun HeaderCard(d: SessionDetail) {
             StatusPill(status = d.status, endReason = d.endReason ?: end?.endReason)
         }
         KeyValueRow(R.string.detail_end_reason, endReasonLabel(d.endReason ?: end?.endReason))
-    }
-}
-
-/** B — Comptage. For a running session (`end == null`) falls back to the
- *  last heartbeat count for the net value; directional/tracking fields
- *  render "N/A". */
-@Composable
-internal fun CountingCard(d: SessionDetail) {
-    val counters = d.end?.counters
-    val net = d.netCount ?: d.heartbeats.lastOrNull()?.count
-    GroupCard(
-        icon = Icons.Filled.Timeline,
-        title = stringResource(R.string.group_counting),
-    ) {
-        // Net — headline emphasis.
-        Text(
-            text = stringResource(R.string.detail_net),
-            style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        Text(
-            text = (net?.toString() ?: na()),
-            style = MaterialTheme.typography.headlineSmall,
-            fontWeight = FontWeight.SemiBold,
-            color = MaterialTheme.colorScheme.primary,
-        )
-        Spacer(Modifier.height(8.dp))
-        HorizontalDivider()
-        Spacer(Modifier.height(8.dp))
-        DirectionalRow(R.string.detail_count_ltr, counters?.countLeftToRight)
-        DirectionalRow(R.string.detail_count_rtl, counters?.countRightToLeft)
-        KeyValueRow(R.string.detail_unique_ids, counters?.uniqueTrackIds?.toString())
-        KeyValueRow(R.string.detail_id_switch, counters?.idSwitchRecoveries?.toString())
-        KeyValueRow(R.string.detail_max_concurrent, counters?.maxConcurrentTracks?.toString())
-    }
-}
-
-/** B — Gardes (guard_interventions). */
-@Composable
-internal fun GuardsCard(d: SessionDetail) {
-    val g = d.end?.counters?.guardInterventions
-    GroupCard(
-        icon = Icons.Filled.Shield,
-        title = stringResource(R.string.group_guards),
-    ) {
-        GuardRow(R.string.guard_lost_buffer, g?.lostBufferExpired ?: 0)
-        GuardRow(R.string.guard_mirror, g?.mirrorGuard ?: 0)
-        GuardRow(R.string.guard_resurrection, g?.resurrection ?: 0)
-        GuardRow(R.string.guard_reid, g?.reidRebind ?: 0)
     }
 }
 
@@ -281,27 +227,6 @@ private fun ConfigCard(d: SessionDetail) {
     }
 }
 
-/** E — Vidéo. */
-@Composable
-private fun VideoCard(d: SessionDetail) {
-    val v = d.end?.video
-    GroupCard(
-        icon = Icons.Filled.VideoFile,
-        title = stringResource(R.string.group_video),
-    ) {
-        if (v == null) {
-            KeyValueRow(R.string.video_path, stringResource(R.string.video_running_na))
-            return@GroupCard
-        }
-        KeyValueRow(R.string.video_path, v.path)
-        KeyValueRow(R.string.video_size, v.sizeBytes?.let { formatBytes(it) })
-        KeyValueRow(R.string.video_duration, v.duration?.let { formatSeconds(it) })
-        KeyValueRow(R.string.video_resolution, v.resolution)
-        KeyValueRow(R.string.video_codec, v.codec)
-        KeyValueRow(R.string.video_complete, v.complete?.let { if (it) "✓" else "—" })
-    }
-}
-
 /** F — Système. */
 @Composable
 private fun SystemCard(d: SessionDetail) {
@@ -319,15 +244,17 @@ private fun SystemCard(d: SessionDetail) {
     }
 }
 
-/** G — Timeline d'événements. */
+/** BL-71 — Vidéos de la session. Per-video counting (directional, guards,
+ *  REID, track_lost, events, perf) lives on the video detail
+ *  (/api/videos/<id>); the session lists its video_ids. */
 @Composable
-private fun TimelineCard(d: SessionDetail) {
-    val events = d.events
+private fun VideosCard(d: SessionDetail) {
+    val videos = d.videos
     GroupCard(
-        icon = Icons.Filled.Timeline,
-        title = stringResource(R.string.group_timeline),
+        icon = Icons.Filled.VideoFile,
+        title = stringResource(R.string.group_video),
     ) {
-        if (events.isEmpty()) {
+        if (videos.isEmpty()) {
             Text(
                 text = stringResource(R.string.timeline_empty),
                 style = MaterialTheme.typography.bodyMedium,
@@ -335,9 +262,8 @@ private fun TimelineCard(d: SessionDetail) {
             )
             return@GroupCard
         }
-        events.forEachIndexed { i, ev ->
-            if (i > 0) Spacer(Modifier.height(6.dp))
-            EventRow(ev)
+        videos.forEach { vid ->
+            KeyValueRow(R.string.video_path, vid)
         }
     }
 }
@@ -423,6 +349,28 @@ internal fun KeyValueLabel(labelRes: Int) {
         style = MaterialTheme.typography.bodyMedium,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
+}
+
+/** String-label overload (for dynamic labels like guard event_type keys
+ *  or non-resource strings — BL-71 per-video metadata). */
+@Composable
+internal fun KeyValueRow(label: String, value: String?) {
+    val display = value?.takeIf { it.isNotBlank() } ?: na()
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween,
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Text(
+            text = display,
+            style = MaterialTheme.typography.bodyMedium,
+        )
+    }
 }
 
 /** Directional count row (left→right / right→left) with an arrow icon. */

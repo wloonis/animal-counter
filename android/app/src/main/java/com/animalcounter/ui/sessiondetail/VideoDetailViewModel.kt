@@ -14,7 +14,9 @@ import androidx.lifecycle.viewModelScope
 import com.animalcounter.data.DEFAULT_JETSON_IP
 import com.animalcounter.data.SettingsRepository
 import com.animalcounter.net.JetsonClient
+import com.animalcounter.net.ApiResult
 import com.animalcounter.net.VideoRow
+import com.animalcounter.net.VideoDetail
 import com.animalcounter.net.VideoStreamResult
 import com.animalcounter.net.activeWifiNetwork
 import kotlinx.coroutines.Dispatchers
@@ -103,6 +105,35 @@ class VideoDetailViewModel(
 
     private val _downloadState = MutableStateFlow<DownloadState>(DownloadState.Idle)
     val downloadState: StateFlow<DownloadState> = _downloadState.asStateFlow()
+
+    /** Per-video counting metadata + perf/thermal (BL-71), fetched from
+     *  `/api/videos/<videoId>`. Null until the first fetch completes. */
+    private val _detail = MutableStateFlow<VideoDetail?>(null)
+    val detail: StateFlow<VideoDetail?> = _detail.asStateFlow()
+
+    /** Fetch the per-video metadata (directional, guards, track_lost, events,
+     *  perf/thermal) from `/api/videos/<videoId>`. No-op when there is no
+     *  videoId. Best-effort: a failure leaves the previous detail (or null). */
+    fun loadDetail() {
+        val videoId = _ui.value.row.videoId ?: return
+        val cm = cm()
+        val wifi = if (cm != null) activeWifiNetwork(cm) else null
+        viewModelScope.launch {
+            try {
+                when (val r = JetsonClient.getVideoDetail(
+                    ip = _ip.value, videoId = videoId, network = wifi,
+                )) {
+                    is ApiResult.Success -> _detail.value = r.data
+                    is ApiResult.HttpError, is ApiResult.NetworkError -> {
+                        // Leave the previous detail (or null); the screen
+                        // renders the nav-arg VideoRow facts regardless.
+                    }
+                }
+            } catch (t: Throwable) {
+                // best-effort
+            }
+        }
+    }
 
     init {
         // Seed the Jetson IP from DataStore (read-only here — edited on the

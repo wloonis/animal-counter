@@ -23,6 +23,7 @@ import androidx.compose.material.icons.filled.VideoFile
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ElevatedCard
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -49,6 +50,8 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.animalcounter.R
 import com.animalcounter.net.VideoRow
+import com.animalcounter.net.VideoDetail
+import com.animalcounter.net.VideoPerf
 import java.util.Locale
 
 /**
@@ -79,6 +82,7 @@ fun VideoDetailScreen(
     val vm: VideoDetailViewModel = viewModel()
     val ui by vm.ui.collectAsState()
     val downloadState by vm.downloadState.collectAsState()
+    val detail by vm.detail.collectAsState()
     val context = LocalContext.current
     val row = ui.row
 
@@ -86,6 +90,12 @@ fun VideoDetailScreen(
     // short-circuits the network round-trip when the clip is already saved.
     LaunchedEffect(row.filename) {
         vm.probe(context)
+    }
+
+    // Fetch the per-video metadata (directional, guards, track_lost, events,
+    // perf/thermal) from /api/videos/<videoId> (BL-71).
+    LaunchedEffect(row.videoId) {
+        vm.loadDetail()
     }
 
     Scaffold(
@@ -113,6 +123,7 @@ fun VideoDetailScreen(
         ) {
             item { VideoHeaderCard(row) }
             item { DownloadCard(row, downloadState, onDownload = { vm.downloadOrOpen(context) }) }
+            item { VideoMetadataCard(detail) }
         }
     }
 }
@@ -161,6 +172,78 @@ private fun VideoHeaderCard(row: VideoRow) {
         ) {
             KeyValueLabel(R.string.detail_status)
             VideoStatusPill(status = row.status)
+        }
+    }
+}
+
+/** BL-71 - Per-video counting metadata + perf/thermal (from /api/videos/<id>):
+ *  directional counts, guard interventions (REID/mirror/resurrection/...),
+ *  track_lost, events count, + perf/thermal (SoC temp, cpu). Rendered only
+ *  when the detail fetch succeeded; the header + download card always render
+ *  the essential facts from the nav-arg VideoRow. */
+@Composable
+private fun VideoMetadataCard(detail: VideoDetail?) {
+    if (detail == null) return
+    ElevatedCard(
+        modifier = Modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.medium,
+    ) {
+        Column(Modifier.padding(16.dp)) {
+            Text(
+                text = stringResource(R.string.group_counting),
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Spacer(Modifier.height(8.dp))
+            HorizontalDivider()
+            Spacer(Modifier.height(8.dp))
+            // Net (per-video delta) - headline emphasis.
+            Text(
+                text = stringResource(R.string.detail_net),
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Text(
+                text = detail.countDelta?.toString() ?: "-",
+                style = MaterialTheme.typography.headlineSmall,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.primary,
+            )
+            Spacer(Modifier.height(8.dp))
+            KeyValueRow(R.string.detail_count_ltr, detail.countLeftToRight.toString())
+            KeyValueRow(R.string.detail_count_rtl, detail.countRightToLeft.toString())
+            KeyValueRow(R.string.detail_id_switch, detail.trackLost.toString())
+            // Guard interventions (REID/mirror/resurrection/lost_buffer/...).
+            val g = detail.guardInterventions
+            if (g.length() > 0) {
+                Spacer(Modifier.height(8.dp))
+                HorizontalDivider()
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    text = stringResource(R.string.group_guards),
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Spacer(Modifier.height(6.dp))
+                for (k in g.keys()) {
+                    KeyValueRow(k, g.optInt(k).toString())
+                }
+            }
+            // Perf/thermal.
+            val p = detail.perf
+            Spacer(Modifier.height(8.dp))
+            HorizontalDivider()
+            Spacer(Modifier.height(8.dp))
+            Text(
+                text = stringResource(R.string.group_perf),
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Spacer(Modifier.height(6.dp))
+            KeyValueRow("SoC avg C", p.thermalAvg?.let { "%.1f".format(it) } ?: "-")
+            KeyValueRow("SoC peak C", p.thermalPeak?.let { "%.1f".format(it) } ?: "-")
+            KeyValueRow(R.string.sys_cpu_load, p.cpuLoadAvg?.let { "%.2f".format(it) } ?: "-")
+            KeyValueRow("Events", detail.events.size.toString())
         }
     }
 }
