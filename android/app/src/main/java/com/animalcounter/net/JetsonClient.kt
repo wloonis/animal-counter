@@ -8,6 +8,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.net.HttpURLConnection
+import java.io.InputStream
 import java.net.URLEncoder
 import java.net.URL
 
@@ -235,14 +236,23 @@ object JetsonClient {
     suspend fun getCount(ip: String, network: Network? = null): ApiResult<LiveCount> =
         getJson(ip, "/api/count", network) { parseLiveCount(it) }
 
-    /** `GET /api/sessions?limit=&offset=` → [SessionPage]. */
-    suspend fun getHistory(
+    /** `GET /api/sessions?limit=&offset=` → [SessionPage] (BL-72: renamed from `/api/history`). */
+    suspend fun getSessions(
         ip: String,
         limit: Int = 50,
         offset: Int = 0,
         network: Network? = null,
     ): ApiResult<SessionPage> =
-        getJson(ip, "/api/history?limit=$limit&offset=$offset", network) { parseSessions(it) }
+        getJson(ip, "/api/sessions?limit=$limit&offset=$offset", network) { parseSessions(it) }
+
+    /** `GET /api/videos?limit=&offset=` → [VideoPage] (BL-72: compressed clips + synthetic running row). */
+    suspend fun getVideos(
+        ip: String,
+        limit: Int = 50,
+        offset: Int = 0,
+        network: Network? = null,
+    ): ApiResult<VideoPage> =
+        getJson(ip, "/api/videos?limit=$limit&offset=$offset", network) { parseVideos(it) }
 
     /** `GET /api/sessions/<id>` → [SessionDetail] (A–G groups, `end` may be null). */
     suspend fun getSession(
@@ -256,13 +266,13 @@ object JetsonClient {
             network,
         ) { parseSessionDetail(it) }
 
-    /** `GET /api/history/summary?days=N` → [Summary] (daily buckets). */
+    /** `GET /api/summary?days=N` → [Summary] (daily buckets; BL-72: renamed from `/api/history/summary`). */
     suspend fun getSummary(
         ip: String,
         days: Int = 7,
         network: Network? = null,
     ): ApiResult<Summary> =
-        getJson(ip, "/api/history/summary?days=$days", network) { parseSummary(it) }
+        getJson(ip, "/api/summary?days=$days", network) { parseSummary(it) }
 
     /** `GET /api/startups?limit=` → [StartupList] (newest boot first). */
     suspend fun getStartups(
@@ -321,4 +331,86 @@ object JetsonClient {
             ApiResult.NetworkError(t.message ?: t.javaClass.simpleName)
         }
     }
+
+    // -----------------------------------------------------------------------
+    // BL-72 video download stream — Range-capable MP4
+    // -----------------------------------------------------------------------
+    //
+    // Unlike the JSON getters above, [openVideoStream] does NOT drain the
+    // body or call `conn.disconnect()` — it hands the live [InputStream] to
+    // the caller (the VideoDetailViewModel coroutine) so a multi-hundred-MB
+    // clip streams in chunks into a `MediaStore` sink without buffering the
+    // whole file in memory. The caller owns `conn.disconnect()` and the
+    // stream's lifecycle (close on completion / cancellation / error).
+
+    /**
+     * Open `GET /api/video/<videoId>` bound to the WiFi [Network], requesting
+     * `video/mp4`. The stream stays open for the caller to drain.
+     *
+     * - 200 / 206 → [VideoStreamResult.Success] with the response code, the
+     *   live [InputStream] (drain in chunks), and `Content-Length` (`-1` if
+     *   absent, e.g. a chunked 206).
+     * - 404 → [VideoStreamResult.HttpError] (the clip is not yet compressed
+     *   or has been cleaned up).
+     * - any other non-2xx → [VideoStreamResult.HttpError].
+     * - connect/read failure → [VideoStreamResult.NetworkError].
+     *
+     * The caller MUST [HttpURLConnection.disconnect] the connection bound to
+     * the returned stream when done (success or failure). On a non-success
+     * result the connection is already disconnected here.
+     */
+    suspend fun openVideoStream(
+        ip: String,
+        videoId: String,
+        network: Network? = null,
+    ): VideoStreamResult = withContext(Dispatchers.IO) {
+        val url = URL("http://${sanitizeIp(ip)}:$JETSON_PORT/api/video/" +
+            URLEncoder.encode(videoId, "UTF-8"))
+        try {
+            val conn = (openBound(url, network) as HttpURLConnection).apply {
+                requestMethod = "GET"
+                connectTimeout = CONNECT_TIMEOUT_MS
+                // A long clip can take minutes to drain; use 0 (infinite) so
+                // the read isn't killed mid-stream by the 5s probe timeout.
+                readTimeout = 0
+                instanceFollowRedirects = false
+                useCaches = false
+                setRequestProperty("Accept", "video/mp4")
+            }
+            try {
+                val code = conn.responseCode
+                if (code == 200 || code == 206) {
+                    val len = conn.contentLengthLong
+                    VideoStreamResult.Success(code, conn.inputStream, len, conn)
+                } else {
+                    conn.disconnect()
+                    VideoStreamResult.HttpError(code)
+                }
+            } catch (t: Throwable) {
+                conn.disconnect()
+                VideoStreamResult.NetworkError(t.message ?: t.javaClass.simpleName)
+            }
+        } catch (t: Throwable) {
+            VideoStreamResult.NetworkError(t.message ?: t.javaClass.simpleName)
+        }
+    }
+}
+
+/**
+ * Outcome of [JetsonClient.openVideoStream]. The stream is left open on
+ * [VideoStreamResult.Success] for the caller to drain into a `MediaStore`
+ * sink; the caller owns `connection.disconnect()` and closing the [stream].
+ */
+sealed interface VideoStreamResult {
+    /** 200/206 — the [stream] is live; drain it in chunks. [contentLength] is `-1` if absent. */
+    data class Success(
+        val code: Int,
+        val stream: InputStream,
+        val contentLength: Long,
+        val connection: HttpURLConnection,
+    ) : VideoStreamResult
+    /** Non-2xx (404 = clip not available / compression in progress / cleaned up). */
+    data class HttpError(val code: Int) : VideoStreamResult
+    /** Connect/read failure (timeout, no route, …). */
+    data class NetworkError(val message: String) : VideoStreamResult
 }
