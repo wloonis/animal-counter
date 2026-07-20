@@ -272,6 +272,11 @@ class DisplayThread(threading.Thread):
         # consumed in _finalize_recording to put the per-video count (not the
         # global cumulative counter) in the clip filename.
         self.record_start_count = None
+        # BL-71: recording START timestamp stem (YYYYMMDD-HHMMSS), captured
+        # once at recording start and reused at finalize so the tmp filename,
+        # the tocompress/counting output, and the video_id all share the same
+        # {ts} (the running row and the ended entry must match).
+        self.record_start_ts = None
         self.window_name = "Counter"
         self.x_offset = self.y_offset = 30
         self.stop_event = stop_event
@@ -301,7 +306,12 @@ class DisplayThread(threading.Thread):
             delta = shared_state.counter_to_right - self.record_start_count
         else:
             delta = 0
-        output_path = os.path.join(settings.OUTPUT_VIDEO_PATH, f"tocompress-counting-{time.strftime('%Y%m%d-%H%M%S')}-#{delta}.mp4")
+        # BL-71: reuse the START timestamp (captured at recording start) so the
+        # output filename + video_id match the tmp filename's {ts}. The running
+        # row derives its id from the tmp filename; the ended entry derives its
+        # id from here - they must match. The stop time is NOT used.
+        ts_stem = self.record_start_ts or time.strftime('%Y%m%d-%H%M%S')
+        output_path = os.path.join(settings.OUTPUT_VIDEO_PATH, f"tocompress-counting-{ts_stem}-#{delta}.mp4")
         try:
             os.rename(self.filename, output_path)
         except OSError as e:
@@ -314,6 +324,29 @@ class DisplayThread(threading.Thread):
         # BL-70: clear the per-recording snapshot so a stale zero-point can never
         # leak into the next recording (mirrors record_start_time lifecycle).
         self.record_start_count = None
+        self.record_start_ts = None
+        # BL-71: emit a per-video `video` JSONL line so the recorded video
+        # becomes a first-class entity in the counting-history. Best-effort: a
+        # history write failure must never break recording finalization.
+        try:
+            history = getattr(shared_state, "history_writer", None)
+            if history is not None:
+                video_id = f"counting-{ts_stem}"
+                session_id = getattr(history, "session_id", None)
+                # Store the FINAL compressed name (counting-...) in the JSONL,
+                # not the transient tocompress- prefix (the cron rewrites
+                # tocompress- -> counting- on disk; the API must show the
+                # definitive name immediately).
+                final_filename = os.path.basename(output_path).replace("tocompress-", "", 1)
+                history.video(
+                    video_id=video_id,
+                    filename=final_filename,
+                    duration=self.record_duration,
+                    count_delta=delta,
+                    session_id=session_id,
+                )
+        except Exception as e:
+            logger.warning(f"Failed to emit video history line: {e}")
         logger.info(f"------->Record Stop; Value Status: {shared_state.status}: Store:{output_path}")
 
     def mouse_click(self, event, x, y, flags, param):
@@ -504,9 +537,11 @@ class DisplayThread(threading.Thread):
                     ):
                     
                     shared_state.recording = True
-                    output_path = os.path.join(settings.OUTPUT_VIDEO_PATH, f"tmp-counting-{time.strftime('%Y%m%d-%H%M%S')}.mp4")
+                    start_ts = time.strftime('%Y%m%d-%H%M%S')
+                    output_path = os.path.join(settings.OUTPUT_VIDEO_PATH, f"tmp-counting-{start_ts}.mp4")
                     os.makedirs(settings.OUTPUT_VIDEO_PATH, exist_ok=True)
                     self.filename = output_path
+                    self.record_start_ts = start_ts
                     self.record_start_time = time.monotonic()
                     self.record_start_count = shared_state.counter_to_right
                     logger.info(f"Record started: {self.filename}")

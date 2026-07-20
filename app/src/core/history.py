@@ -535,6 +535,33 @@ class HistoryWriter:
         }
         self._append(line)
 
+    def video(self, video_id, filename, duration, count_delta, session_id=None):
+        """Append a ``video`` line (one per finalized recording). This
+        makes the recorded VIDEO a first-class entity in the JSONL,
+        alongside ``session_start``/``heartbeat``/``event``/``session_end``.
+
+        Best-effort: never raises. Called from ``_finalize_recording``
+        in main.py after the successful rename to
+        ``tocompress-counting-{ts}-#{delta}.mp4``.
+
+        ``session_id`` defaults to the writer's current session so the
+        companion can correlate a video to its session even when the
+        caller does not pass it explicitly.
+        """
+        if self._stopped or self.session_id is None:
+            return
+        sid = session_id if session_id is not None else self.session_id
+        line = {
+            "type": "video",
+            "video_id": video_id,
+            "filename": filename,
+            "duration": duration,
+            "count_delta": count_delta,
+            "session_id": sid,
+            "ts": _utcnow_iso(),
+        }
+        self._append(line)
+
     def heartbeat(self):
         """Append a ``heartbeat`` line (count + last video segment +
         system/thermal samples). Cheap; called only from HistoryThread,
