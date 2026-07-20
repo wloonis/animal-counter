@@ -133,6 +133,7 @@
           import datetime
           import json
           import os
+          import re
           import subprocess
           import sys
           from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -219,6 +220,8 @@
                   self._sessions = {}
                   self._session_order = []
                   self._startups = []
+                  self._videos = {}
+                  self._video_order = []
                   self._latest_hb = None  # newest heartbeat across all sessions (/api/count)
 
               def _maybe_rebuild(self):
@@ -231,6 +234,8 @@
                       self._sessions = {}
                       self._session_order = []
                       self._startups = []
+                      self._videos = {}
+                      self._video_order = []
                       return
                   except OSError:
                       return
@@ -242,6 +247,8 @@
                   sessions = {}
                   order = []
                   startups = []
+                  videos = {}
+                  video_order = []
                   latest_hb = None
                   try:
                       f = open(self.path, "rb")
@@ -249,6 +256,8 @@
                       self._sessions = {}
                       self._session_order = []
                       self._startups = []
+                      self._videos = {}
+                      self._video_order = []
                       self._size = -1
                       self._mtime = 0.0
                       return
@@ -267,6 +276,25 @@
                           t = obj.get("type")
                           if t == "startup":
                               startups.append(obj)
+                              continue
+                          if t == "video":
+                              # Per-recording video line (BL-71). Keyed by
+                              # video_id (the counting-{ts} stem); newest first
+                              # by the line's ts. Survives compaction (the
+                              # compactor re-emits video lines verbatim, like
+                              # startup lines).
+                              vid = obj.get("video_id")
+                              if not vid:
+                                  continue
+                              if vid not in videos:
+                                  videos[vid] = obj
+                                  video_order.append(vid)
+                              else:
+                                  # Keep the newest by ts on collision.
+                                  if (obj.get("ts") or "") > (
+                                      videos[vid].get("ts") or ""
+                                  ):
+                                      videos[vid] = obj
                               continue
                           sid = obj.get("session_id")
                           if not sid:
@@ -326,9 +354,17 @@
                   )
                   # Startups newest first (appended in chronological order).
                   startups.reverse()
+                  # Videos newest first by the line's ts (ISO8601 UTC sorts
+                  # lexically).
+                  video_order.sort(
+                      key=lambda v: (videos[v].get("ts") or ""),
+                      reverse=True,
+                  )
                   self._sessions = sessions
                   self._session_order = order
                   self._startups = startups
+                  self._videos = videos
+                  self._video_order = video_order
                   self._latest_hb = latest_hb
                   try:
                       self._size = os.path.getsize(self.path)
@@ -456,6 +492,82 @@
                   if limit <= 0:
                       return []
                   return list(self._startups[:limit])
+
+              def video_summaries(self, limit=50, offset=0):
+                  """Paginated list of finalized videos (newest first by the
+                  video line's ts), mirroring session_summaries. Each row is
+                  a ready (compressed) video fact. The running recording is
+                  NOT included here — it is prepended by the /api/videos
+                  route via _running_video_row()."""
+                  self._maybe_rebuild()
+                  out = []
+                  ids = self._video_order[offset:offset + limit]
+                  for vid in ids:
+                      obj = self._videos.get(vid) or {}
+                      out.append({
+                          "video_id": vid,
+                          "filename": obj.get("filename"),
+                          "duration": obj.get("duration"),
+                          "count_delta": obj.get("count_delta"),
+                          "session_id": obj.get("session_id"),
+                          "ts": obj.get("ts"),
+                          "status": "ready",
+                      })
+                  return out, len(self._video_order)
+
+              def _running_video_row(self):
+                  """Synthesize a first row for the currently-running
+                  recording, derived from the newest heartbeat. Returns a
+                  row dict or None when no recording is in progress / the
+                  heartbeat cannot be parsed.
+
+                  The video_id is the counting-{ts} stem parsed from the
+                  heartbeat's last_segment filename (tocompress-counting-
+                  {ts}-#N.mp4 / tmp-counting-{ts}.mp4 / counting-{ts}-#N.mp4).
+                  count_delta = hb.count - hb.record_start_count, only when
+                  record_start_count is present and non-None; otherwise the
+                  row is omitted (no phantom running row when idle)."""
+                  hb = self.latest_count()
+                  if not isinstance(hb, dict):
+                      return None
+                  rsc = hb.get("record_start_count")
+                  if rsc is None:
+                      return None
+                  count = hb.get("count")
+                  if count is None:
+                      return None
+                  last_segment = hb.get("last_segment")
+                  ts_stem = _parse_video_stem(last_segment)
+                  if not ts_stem:
+                      return None
+                  try:
+                      delta = int(count) - int(rsc)
+                  except (TypeError, ValueError):
+                      return None
+                  return {
+                      "video_id": "counting-" + ts_stem,
+                      "filename": "counting-{}.mp4".format(ts_stem),
+                      "duration": None,
+                      "count_delta": delta,
+                      "session_id": hb.get("session_id"),
+                      "ts": hb.get("ts"),
+                      "status": "running",
+                  }
+
+          # Parse the {YYYYMMDD-HHMMSS} timestamp stem out of a recording
+          # filename. Accepts tocompress-counting-{ts}-#N.mp4,
+          # tmp-counting-{ts}.mp4, and counting-{ts}-#N.mp4 (basename or full
+          # path). Returns the stem string or None when unparseable.
+          _VIDEO_STEM_RE = re.compile(r"counting-(\d{8}-\d{6})")
+
+
+          def _parse_video_stem(filename):
+              if not filename or not isinstance(filename, str):
+                  return None
+              m = _VIDEO_STEM_RE.search(filename)
+              if m:
+                  return m.group(1)
+              return None
 
           # Cache of valid IANA timezone names (populated lazily on first use).
           _VALID_TIMEZONES = None
@@ -613,6 +725,30 @@
                       daily = idx.daily_summary(days=days)
                       self._log("GET /api/summary -> 200")
                       _send_json(self, 200, {"days": days, "daily": daily})
+                      return
+
+                  if path == "/api/videos":
+                      limit = _int_arg(qs, "limit", 50)
+                      offset = _int_arg(qs, "offset", 0)
+                      idx = _get_index()
+                      rows, total = idx.video_summaries(
+                          limit=limit, offset=offset)
+                      running = idx._running_video_row()
+                      if running is not None:
+                          # The running recording is always index 0 and is
+                          # excluded from the pagination offset math — total
+                          # includes it, and offset=0 returns it first.
+                          rows = [running] + rows
+                          total += 1
+                      self._log(
+                          "GET /api/videos -> 200 ({} of {})".format(
+                              len(rows), total))
+                      _send_json(self, 200, {
+                          "videos": rows,
+                          "limit": limit,
+                          "offset": offset,
+                          "total": total,
+                      })
                       return
 
                   if path.startswith("/api/sessions/"):
