@@ -311,6 +311,9 @@ class DisplayThread(threading.Thread):
             shared_state.status = 0
         shared_state.recording = False
         shared_state.reset = False
+        # BL-70: clear the per-recording snapshot so a stale zero-point can never
+        # leak into the next recording (mirrors record_start_time lifecycle).
+        self.record_start_count = None
         logger.info(f"------->Record Stop; Value Status: {shared_state.status}: Store:{output_path}")
 
     def mouse_click(self, event, x, y, flags, param):
