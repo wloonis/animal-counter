@@ -494,6 +494,7 @@ class DisplayThread(threading.Thread):
                     os.makedirs(settings.OUTPUT_VIDEO_PATH, exist_ok=True)
                     self.filename = output_path
                     self.record_start_time = time.monotonic()
+                    self.record_start_count = shared_state.counter_to_right
                     logger.info(f"Record started: {self.filename}")
 
                     self.video_writer = cv2.VideoWriter(
