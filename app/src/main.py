@@ -69,12 +69,21 @@ def stop():
 
     shared_state.stop_event.set()
 
+    # Finalize the in-progress recording FIRST (before ending the history
+    # session) so the per-video `video` JSONL line is written while the
+    # HistoryWriter is still active (history.video() guards on _stopped).
+    # _finalize_recording releases the mp4 writer (flushing the moov atom)
+    # AND renames tmp-counting to tocompress-counting. Idempotent (no-op if
+    # the loop already finalized). Best-effort: never raises into the
+    # shutdown path. The SIGTERM handler calls stop(), so this covers SIGTERM.
+    if shared_state.display_thread is not None:
+        shared_state.display_thread._finalize_recording()
+
     # BL-68: finalize the history session (serve mode) before joining
     # threads, so the session_end line is fsync'd to /files even if a
     # later join times out or the process is killed during poweroff.
     # Idempotent (end_session guards on _stopped). Best-effort: never
-    # raises into the shutdown path. The SIGTERM handler calls stop(),
-    # so this also covers SIGTERM.
+    # raises into the shutdown path.
     hw = getattr(shared_state, "history_writer", None)
     if hw is not None:
         try:
@@ -88,16 +97,6 @@ def stop():
             ht.join(timeout=2)
         except Exception as e:
             logger.warning(f"history: thread join failed: {e!r}")
-
-    # Finalize the mp4 before joining display_thread: on a K3s SIGTERM the
-    # 5s join may time out and the thread can be killed mid-write, leaving
-    # the file without a moov atom (unreadable). _finalize_recording releases
-    # the writer (flushing the moov atom) AND renames tmp-counting to
-    # tocompress-counting, even if the join times out. The idempotent guard
-    # inside _finalize_recording makes this a no-op if the loop already
-    # finalized (writer is None).
-    if shared_state.display_thread is not None:
-        shared_state.display_thread._finalize_recording()
 
     if shared_state.infer_thread and shared_state.infer_thread.is_alive():
         shared_state.infer_thread.join(timeout=5)
