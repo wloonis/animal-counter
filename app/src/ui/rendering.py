@@ -220,7 +220,7 @@ class Rendering:
 
                     if shared_state.auto_mode:
                         shared_state.status = 3
-                        shared_state.delay_reinit = datetime.datetime.now()
+                        shared_state.delay_reinit = time.monotonic()
                     else:
                         shared_state.status = 0
 
@@ -229,13 +229,13 @@ class Rendering:
                     if shared_state.auto_mode:
                         shared_state.counter_to_right = 0
                         shared_state.reset = True
-                        shared_state.delay_reinit = datetime.datetime.now()
+                        shared_state.delay_reinit = time.monotonic()
 
                 elif name == "play":
 
                     if shared_state.status != 1:
                         shared_state.status = 1
-                        shared_state.delay_reinit = datetime.datetime.now()
+                        shared_state.delay_reinit = time.monotonic()
 
                 elif name == "pause":
 

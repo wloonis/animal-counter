@@ -373,7 +373,7 @@ class DisplayThread(threading.Thread):
             if self.video_writer is not None and self.video_writer.isOpened() and shared_state.recording and ((
                 shared_state.status == 0 or shared_state.learning_mode or shared_state.reset or
                 (shared_state.status in [1,3] and 
-                (datetime.datetime.now() - shared_state.delay_reinit).total_seconds() > shared_state.delay_last_class)
+                (time.monotonic() - shared_state.delay_reinit) > shared_state.delay_last_class)
             )):
                 self._finalize_recording()
                 if self.input_type == "FILE":
@@ -524,7 +524,7 @@ class DisplayThread(threading.Thread):
 
                 if continue_recording.any():
                 #if 0 in result_classid and result_scores > settings.PIG_CONFIDENCE_THRESHOLD_START_VIDEO :
-                    shared_state.delay_reinit = datetime.datetime.now()
+                    shared_state.delay_reinit = time.monotonic()
 
                 # COUNT FIX
                 shared_state.counter_to_right = self.counting.count(
