@@ -94,3 +94,6 @@ Task 1: RENAME + ADD data models (HistoryPage→SessionPage, parseHistory→pars
 Task 2: REWIRE JetsonClient endpoints (getSessions /api/sessions, getVideos /api/videos, getSummary /api/summary, openVideoStream+VideoStreamResult) — fb00845
 Task 3: REWIRE HistoryViewModel to /api/videos (VideoRow/parseVideos, All/Running/Ready, drop video-only hack, running-first) — d6eff7d
 Task 4: REWIRE HistoryScreen rows + chips + nav (VideoRow cards, videoDetailRoute nav args, filter_status_ready) — d6eff7d
+
+Task 5: ADD VideoDetailViewModel (download state) — 7db887f
+Task 6: REWIRE VideoDetailScreen (VideoDetailViewModel nav-args, header+download/open card, still-recording hint) — c286990
