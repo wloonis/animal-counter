@@ -272,6 +272,11 @@ class DisplayThread(threading.Thread):
         # consumed in _finalize_recording to put the per-video count (not the
         # global cumulative counter) in the clip filename.
         self.record_start_count = None
+        # BL-71: timestamp stem captured at recording START (not stop) so the
+        # tmp filename, the tocompress/counting output filename, and the
+        # video_id all share the SAME {ts} — the running row and the ended
+        # entry thus share one stable id.
+        self.record_start_ts = None
         self.window_name = "Counter"
         self.x_offset = self.y_offset = 30
         self.stop_event = stop_event
@@ -304,7 +309,11 @@ class DisplayThread(threading.Thread):
         # BL-71: capture the timestamp stem once so the on-disk filename and the
         # video_id stay in lockstep (the cron later rewrites tocompress- -> counting-
         # with the same {ts}; the #N delta suffix is metadata, not part of the id).
-        ts_stem = time.strftime('%Y%m%d-%H%M%S')
+        # BL-71: reuse the START timestamp (captured at recording start) so the
+        # output filename + video_id match the tmp filename's {ts}. The running
+        # row derives its id from the tmp filename; the ended entry derives its
+        # id from here — they must match. The stop time is NOT used.
+        ts_stem = self.record_start_ts or time.strftime('%Y%m%d-%H%M%S')
         output_path = os.path.join(settings.OUTPUT_VIDEO_PATH, f"tocompress-counting-{ts_stem}-#{delta}.mp4")
         try:
             os.rename(self.filename, output_path)
@@ -318,6 +327,7 @@ class DisplayThread(threading.Thread):
         # BL-70: clear the per-recording snapshot so a stale zero-point can never
         # leak into the next recording (mirrors record_start_time lifecycle).
         self.record_start_count = None
+        self.record_start_ts = None
         # BL-71: emit a per-video `video` JSONL line so the recorded video becomes
         # a first-class entity in the counting-history. Best-effort: a history
         # write failure must never break recording finalization (mirrors the
@@ -526,9 +536,11 @@ class DisplayThread(threading.Thread):
                     ):
                     
                     shared_state.recording = True
-                    output_path = os.path.join(settings.OUTPUT_VIDEO_PATH, f"tmp-counting-{time.strftime('%Y%m%d-%H%M%S')}.mp4")
+                    start_ts = time.strftime('%Y%m%d-%H%M%S')
+                    output_path = os.path.join(settings.OUTPUT_VIDEO_PATH, f"tmp-counting-{start_ts}.mp4")
                     os.makedirs(settings.OUTPUT_VIDEO_PATH, exist_ok=True)
                     self.filename = output_path
+                    self.record_start_ts = start_ts
                     self.record_start_time = time.monotonic()
                     self.record_start_count = shared_state.counter_to_right
                     logger.info(f"Record started: {self.filename}")
