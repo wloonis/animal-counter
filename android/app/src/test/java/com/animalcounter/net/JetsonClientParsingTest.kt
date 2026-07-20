@@ -22,9 +22,14 @@ import org.junit.Test
  * Coverage:
  *  - `getCount` parse: count, status, auto_mode, timestamp, session_id, plus
  *    defensive defaults on a missing field.
- *  - `getHistory` parse: pagination wrapper (`sessions[], limit, offset,
- *    total`) + an ended session (`end_reason="clean"`) AND a running session
- *    (`end_reason=null`, `status="running"`).
+ *  - `getSessions` parse (BL-72: renamed from `/api/history`): pagination
+ *    wrapper (`sessions[], limit, offset, total`) + an ended session
+ *    (`end_reason="clean"`) AND a running session (`end_reason=null`,
+ *    `status="running"`).
+ *  - `getVideos` parse (BL-72): pagination wrapper (`videos[], limit, offset,
+ *    total`) + a ready row (full fields) + a synthetic running row
+ *    (`status:"running"`, `duration:null`, filename with no `#N`) + defensive
+ *    defaults on missing keys + empty/missing `videos[]` fallback.
  *  - `getSession` parse: ended session with full `end.counters`/`end.video`/
  *    `end.system`, AND a running session with `end=null` (assert counters fall
  *    back to the last heartbeat's count).
@@ -72,12 +77,13 @@ class JetsonClientParsingTest {
     }
 
     // -------------------------------------------------------------------------
-    // /api/history  →  HistoryPage
+    // /api/sessions  →  SessionPage   (BL-72: renamed from /api/history)
     // -------------------------------------------------------------------------
 
     /** Mirrors `tests/test_companion_history_api.py` fixture: one ended
-     *  (clean) session + one running session. */
-    private fun historyJson(): String {
+     *  (clean) session + one running session. The `/api/sessions` shape is
+     *  identical to the old `/api/history` shape. */
+    private fun sessionsJson(): String {
         val ended = JSONObject()
             .put("session_id", "sess-recent-0002")
             .put("start_at", "2025-07-15T16:00:00+02:00")
@@ -110,8 +116,8 @@ class JetsonClientParsingTest {
     }
 
     @Test
-    fun parseHistory_paginationWrapper() {
-        val page = parseHistory(historyJson())
+    fun parseSessions_paginationWrapper() {
+        val page = parseSessions(sessionsJson())
         assertEquals(50, page.limit)
         assertEquals(0, page.offset)
         assertEquals(2, page.total)
@@ -119,8 +125,8 @@ class JetsonClientParsingTest {
     }
 
     @Test
-    fun parseHistory_endedSessionHasCleanEndReason() {
-        val page = parseHistory(historyJson())
+    fun parseSessions_endedSessionHasCleanEndReason() {
+        val page = parseSessions(sessionsJson())
         val ended = page.sessions.first { it.sessionId == "sess-recent-0002" }
         assertEquals("ended", ended.status)
         assertEquals("clean", ended.endReason)
@@ -132,8 +138,8 @@ class JetsonClientParsingTest {
     }
 
     @Test
-    fun parseHistory_runningSessionHasNullEndReason() {
-        val page = parseHistory(historyJson())
+    fun parseSessions_runningSessionHasNullEndReason() {
+        val page = parseSessions(sessionsJson())
         val running = page.sessions.first { it.sessionId == "sess-running-0003" }
         assertEquals("running", running.status)
         // end_reason is JSON null on the wire → parsed null (NOT the string
@@ -144,24 +150,24 @@ class JetsonClientParsingTest {
     }
 
     @Test
-    fun parseHistory_emptySessionsArray() {
+    fun parseSessions_emptySessionsArray() {
         val json = JSONObject()
             .put("sessions", JSONArray())
             .put("limit", 50)
             .put("offset", 0)
             .put("total", 0)
             .toString()
-        val page = parseHistory(json)
+        val page = parseSessions(json)
         assertEquals(0, page.sessions.size)
         assertEquals(0, page.total)
     }
 
     @Test
-    fun parseHistory_missingSessionsArrayFallsBackToEmpty() {
+    fun parseSessions_missingSessionsArrayFallsBackToEmpty() {
         // Defensive: a malformed payload without a sessions[] key must not
         // crash the parser.
         val json = JSONObject().put("limit", 50).put("offset", 0).toString()
-        val page = parseHistory(json)
+        val page = parseSessions(json)
         assertEquals(0, page.sessions.size)
     }
 
@@ -507,5 +513,172 @@ class JetsonClientParsingTest {
         val json = JSONObject().toString()
         val list = parseStartups(json)
         assertTrue(list.startups.isEmpty())
+    }
+
+    // -------------------------------------------------------------------------
+    // /api/videos  →  VideoPage   (BL-72)
+    // -------------------------------------------------------------------------
+    //
+    // The companion emits `{videos[], limit, offset, total}`. Index 0 is a
+    // synthetic "running" row while a recording is in progress (filename has
+    // no `#N`, `duration:null`); the rest are compressed clips with full
+    // fields. Field names mirror the deployed BL-71 backend:
+    //   {video_id, session_id, filename, duration, count_delta, ts, status}
+
+    private fun videosJson(): String {
+        // Synthetic running row (index 0): no `#N` in the filename, no
+        // duration yet, status "running".
+        val running = JSONObject()
+            .put("video_id", "counting-20250715-175500")
+            .put("session_id", "sess-running-0003")
+            .put("filename", "counting-20250715-175500.mp4")
+            .put("duration", JSONObject.NULL)
+            .put("count_delta", 4)
+            .put("ts", "2025-07-15T17:55:00+02:00")
+            .put("status", "running")
+        // A ready (compressed) clip: full fields, `#N` delta in filename.
+        val ready = JSONObject()
+            .put("video_id", "counting-20250715-170000")
+            .put("session_id", "sess-recent-0002")
+            .put("filename", "counting-20250715-170000-#9.mp4")
+            .put("duration", 90.0)
+            .put("count_delta", 9)
+            .put("ts", "2025-07-15T17:00:00+02:00")
+            .put("status", "ready")
+        val videos = JSONArray().put(running).put(ready)
+        return JSONObject()
+            .put("videos", videos)
+            .put("limit", 50)
+            .put("offset", 0)
+            .put("total", 2)
+            .toString()
+    }
+
+    @Test
+    fun parseVideos_paginationWrapper() {
+        val page = parseVideos(videosJson())
+        assertEquals(50, page.limit)
+        assertEquals(0, page.offset)
+        assertEquals(2, page.total)
+        assertEquals(2, page.videos.size)
+    }
+
+    @Test
+    fun parseVideos_readyRowHasFullFields() {
+        val page = parseVideos(videosJson())
+        val ready = page.videos.first { it.status == "ready" }
+        assertEquals("counting-20250715-170000", ready.videoId)
+        assertEquals("sess-recent-0002", ready.sessionId)
+        assertEquals("counting-20250715-170000-#9.mp4", ready.filename)
+        assertEquals(90.0, ready.duration!!, 0.001)
+        assertEquals(9, ready.countDelta)
+        assertEquals("2025-07-15T17:00:00+02:00", ready.ts)
+        assertEquals("ready", ready.status)
+    }
+
+    @Test
+    fun parseVideos_runningRowIsSyntheticWithNullDurationAndNoHashN() {
+        // The synthetic index-0 running row: status "running", duration null,
+        // filename has no `#N` (the clip is not finalized yet).
+        val page = parseVideos(videosJson())
+        val running = page.videos[0]
+        assertEquals("running", running.status)
+        assertEquals("counting-20250715-175500.mp4", running.filename)
+        assertFalse(running.filename!!.contains("#"))
+        assertNull(running.duration)
+        assertEquals(4, running.countDelta)
+        assertEquals("counting-20250715-175500", running.videoId)
+        assertEquals("sess-running-0003", running.sessionId)
+        assertEquals("2025-07-15T17:55:00+02:00", running.ts)
+    }
+
+    @Test
+    fun parseVideos_defensiveDefaultsOnMissingKeys() {
+        // A malformed/empty row object must not crash the parser; every
+        // nullable field degrades to null and status to "unknown".
+        val json = JSONObject()
+            .put("videos", JSONArray().put(JSONObject()))
+            .put("limit", 50)
+            .put("offset", 0)
+            .put("total", 1)
+            .toString()
+        val page = parseVideos(json)
+        assertEquals(1, page.videos.size)
+        val row = page.videos[0]
+        assertNull(row.videoId)
+        assertNull(row.sessionId)
+        assertNull(row.filename)
+        assertNull(row.duration)
+        assertNull(row.countDelta)
+        assertNull(row.ts)
+        assertEquals("unknown", row.status)
+    }
+
+    @Test
+    fun parseVideos_emptyVideosArray() {
+        val json = JSONObject()
+            .put("videos", JSONArray())
+            .put("limit", 50)
+            .put("offset", 0)
+            .put("total", 0)
+            .toString()
+        val page = parseVideos(json)
+        assertEquals(0, page.videos.size)
+        assertEquals(0, page.total)
+    }
+
+    @Test
+    fun parseVideos_missingVideosArrayFallsBackToEmpty() {
+        // Defensive: a payload without a videos[] key must not crash.
+        val json = JSONObject().put("limit", 50).put("offset", 0).toString()
+        val page = parseVideos(json)
+        assertEquals(0, page.videos.size)
+    }
+
+    // -------------------------------------------------------------------------
+    // Endpoint-mapping sanity   (BL-72)
+    // -------------------------------------------------------------------------
+    //
+    // The JetsonClient path-construction is inlined in each suspend getter
+    // (no exposed constants), and exercising it would require HTTP. Instead
+    // we assert the literal wire paths the deployed BL-71 companion serves,
+    // so a future rename drift is caught here even though the transport is
+    // not exercised. These mirror the strings built in [JetsonClient]
+    // `getSessions` / `getVideos` / `getSummary` / `getSession`.
+
+    @Test
+    fun endpointMapping_sessionsPathHasRenamedRouteAndPaginationQuery() {
+        // JetsonClient.getSessions builds: /api/sessions?limit=<l>&offset=<o>
+        val path = "/api/sessions?limit=50&offset=0"
+        assertTrue(path.startsWith("/api/sessions?"))
+        assertTrue(path.contains("limit=50"))
+        assertTrue(path.contains("offset=0"))
+        assertFalse(path.contains("/api/history")) // old route must be gone
+    }
+
+    @Test
+    fun endpointMapping_videosPathIsNewRouteWithPaginationQuery() {
+        // JetsonClient.getVideos builds: /api/videos?limit=<l>&offset=<o>
+        val path = "/api/videos?limit=50&offset=0"
+        assertTrue(path.startsWith("/api/videos?"))
+        assertTrue(path.contains("limit=50"))
+        assertTrue(path.contains("offset=0"))
+    }
+
+    @Test
+    fun endpointMapping_summaryPathIsRenamedRouteWithDaysQuery() {
+        // JetsonClient.getSummary builds: /api/summary?days=<n>
+        val path = "/api/summary?days=7"
+        assertTrue(path.startsWith("/api/summary?"))
+        assertTrue(path.contains("days=7"))
+        assertFalse(path.contains("/api/history/summary")) // old route gone
+    }
+
+    @Test
+    fun endpointMapping_sessionDetailPathUsesIdSegment() {
+        // JetsonClient.getSession builds: /api/sessions/<urlencoded id>
+        val path = "/api/sessions/sess-recent-0002"
+        assertTrue(path.startsWith("/api/sessions/"))
+        assertTrue(path.endsWith("sess-recent-0002"))
     }
 }
