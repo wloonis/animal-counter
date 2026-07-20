@@ -89,16 +89,9 @@ Task 14: i18n(fr) add dashboard/startups/live-status FR strings — 913f241
 Task 15: DELETE dead PlaceholderScreen after 5-tab conversion — 8c73160
 Task 16: CREATE JetsonClientParsingTest.kt (21 unit tests, 5 endpoints incl. running-session end=null fallback) — 153b6a5
 Task 17: VERIFY assembleDebug BUILD SUCCESSFUL + testDebugUnitTest 21 tests pass (0 failures) — 153b6a5
-
-Task 1: RENAME + ADD data models (HistoryPage→SessionPage, parseHistory→parseSessions, VideoRow/VideoPage/parseVideoRow/parseVideos) + mechanical caller updates — b80e677
-Task 2: REWIRE JetsonClient endpoints (getSessions /api/sessions, getVideos /api/videos, getSummary /api/summary, openVideoStream+VideoStreamResult) — fb00845
-Task 3: REWIRE HistoryViewModel to /api/videos (VideoRow/parseVideos, All/Running/Ready, drop video-only hack, running-first) — d6eff7d
-Task 4: REWIRE HistoryScreen rows + chips + nav (VideoRow cards, videoDetailRoute nav args, filter_status_ready) — d6eff7d
-
-Task 5: ADD VideoDetailViewModel (download state) — 7db887f
-Task 6: REWIRE VideoDetailScreen (VideoDetailViewModel nav-args, header+download/open card, still-recording hint) — c286990
-Task 7: REWIRE SessionsViewModel path (/api/sessions) — e2b8433
-Task 8: REWIRE DashboardViewModel path (/api/summary) — d32ca58
-Task 9: UPDATE nav route (video/{videoId} with VideoRow string args) — 5defbdd
-Task 10: MANIFEST + strings (verify no storage perm, BL-72 video strings EN+FR present) — 34fd189
-Task 11: UNIT TESTS (parseVideos/VideoRow + renamed parseSessions + endpoint-mapping sanity, 31 tests pass) — 3fc9c3a
+Task 1: ADD video() writer + record_start_count to heartbeat — c353edc
+Task 2: EMIT video entry in _finalize_recording — bc4d62a
+Task 3: RENAME companion routes (clean break) — 4c8bb84
+Task 4: ADD /api/videos list endpoint — 4d30d38
+Task 5: ADD /api/video/<id> Range-streaming endpoint — c655241
+Task 6: SYNC doc reference docs/12_counting_history.md — 3dd7d12

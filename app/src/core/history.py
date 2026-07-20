@@ -535,6 +535,33 @@ class HistoryWriter:
         }
         self._append(line)
 
+    def video(self, video_id, filename, duration, count_delta, session_id=None):
+        """Append a ``video`` line (one per finalized recording). This
+        makes the recorded VIDEO a first-class entity in the JSONL,
+        alongside ``session_start``/``heartbeat``/``event``/``session_end``.
+
+        Best-effort: never raises. Called from ``_finalize_recording``
+        in main.py after the successful rename to
+        ``tocompress-counting-{ts}-#{delta}.mp4``.
+
+        ``session_id`` defaults to the writer's current session so the
+        companion can correlate a video to its session even when the
+        caller does not pass it explicitly.
+        """
+        if self._stopped or self.session_id is None:
+            return
+        sid = session_id if session_id is not None else self.session_id
+        line = {
+            "type": "video",
+            "video_id": video_id,
+            "filename": filename,
+            "duration": duration,
+            "count_delta": count_delta,
+            "session_id": sid,
+            "ts": _utcnow_iso(),
+        }
+        self._append(line)
+
     def heartbeat(self):
         """Append a ``heartbeat`` line (count + last video segment +
         system/thermal samples). Cheap; called only from HistoryThread,
@@ -566,6 +593,19 @@ class HistoryWriter:
                 auto_mode = bool(getattr(self.shared_state, "auto_mode", True))
             except Exception:
                 auto_mode = None
+            # record_start_count: snapshot of the counter at recording start,
+            # sourced from the DisplayThread so the companion can compute the
+            # running recording's live count delta (count - record_start_count).
+            record_start_count = None
+            if self.shared_state is not None:
+                try:
+                    dt = getattr(self.shared_state, "display_thread", None)
+                    if dt is not None:
+                        rsc = getattr(dt, "record_start_count", None)
+                        if rsc is not None:
+                            record_start_count = int(rsc)
+                except Exception:
+                    record_start_count = None
         line = {
             "type": "heartbeat",
             "session_id": self.session_id,
@@ -574,6 +614,7 @@ class HistoryWriter:
             "status": status,
             "auto_mode": auto_mode,
             "last_segment": last_segment,
+            "record_start_count": record_start_count,
             "thermal": _sample_thermal(),
             "system": _sample_system(),
         }

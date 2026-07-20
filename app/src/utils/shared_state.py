@@ -5,6 +5,7 @@ This module provides a shared state object to replace global variables.
 """
 
 import os
+import time
 import datetime
 from queue import Queue
 from threading import Event
@@ -21,7 +22,10 @@ class SharedState:
         draw_tracking (bool): Whether to draw tracking.
         infer_thread (InferThread): Thread for inference.
         display_thread (DisplayThread): Thread for display and counting.
-        delay_reinit (datetime): Delay for reinitialization.
+        delay_reinit (float): monotonic timestamp of the last pig detection
+            or user interaction (auto/play/reset); used by the recording
+            idle-timeout check (immunized against wall-clock jumps on the
+            RTC-less Jetson).
     """
     
     def __init__(self):
@@ -40,7 +44,7 @@ class SharedState:
         self.draw_centroid_radius = 3
         self.infer_thread = None
         self.display_thread = None
-        self.delay_reinit = datetime.datetime.now()
+        self.delay_reinit = time.monotonic()
         # No-detection timeout (s): single source of truth for recording stop
         # (DisplayThread) and cronvideo compression trim. Env-configurable so the
         # app and the cron pod (Ansible var) can share one configured value.

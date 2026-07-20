@@ -1,57 +1,131 @@
-# Plan: BL-72 — Rewire Android app to the BL-71 companion API + video download
+# Plan: BL-71 — Video as a first-class entity + companion endpoint naming (sessions vs videos)
 
 ## Summary
-Rewire the Android app (BL-69, currently broken against the deployed Jetson because `/api/history` + `/api/history/summary` now 404) to the clarified BL-71 companion API: fetch the renamed `/api/sessions` + `/api/summary`, the new `/api/videos` list and `/api/video/<id>` Range-streamed MP4 endpoint, and add a download/open button to the video detail that saves into MediaStore (Movies/Films) and opens the clip on the phone.
+
+Make the recorded VIDEO a first-class entity in the counting-history JSONL by
+emitting a per-video `video` line at recording release (`_finalize_recording`),
+and clarify the Jetson companion's HTTP API: add `/api/videos` (paginated list,
+one row per video including the currently-running recording as a synthetic
+first row) and `/api/video/<id>` (Range-streamed compressed MP4), and cleanly
+rename `/api/history` → `/api/sessions` and `/api/history/summary` → `/api/summary`
+with **no** compatibility alias. Expose `record_start_count` in heartbeats so
+the companion can compute the running recording's live count delta. This is
+instrumentation + endpoints only — no counting/tracking/guard logic changes.
 
 ## In Scope
-- `net/Models.kt`: rename `HistoryPage`→`SessionPage` + `parseHistory`→`parseSessions`; add `VideoPage` + `VideoRow { video_id, session_id, filename, duration, count_delta, ts, status }` and `parseVideos`/`parseVideoRow`; keep `parseSummary` (path-only), `parseSessionDetail`, `parseStartups`, `parseLiveCount`.
-- `net/JetsonClient.kt`: `getHistory`→`getSessions` (`/api/sessions`); `getSummary`→`/api/summary`; add `getVideos` (`/api/videos?limit=&offset=`); add a video download call `GET /api/video/<id>` (Range-capable, WiFi-bound, surfaces 200/206/404 + the stream for the coroutine to drain into MediaStore). `fetchRaw` updated for renamed paths.
-- `HistoryViewModel`/`HistoryScreen`: fetch `/api/videos` → `VideoRow` list (running recording = synthetic first row). Show the final filename (`counting-{ts}-#N.mp4`) immediately even for the running row, per-video `count_delta`, `duration`, `status`. **Remove** the `matchesFilters` video-only hack. Keep date filter (on row `ts`) + status filter. Status chips replaced with **All / Running / Ready**. Tap → video detail passing the VideoRow fields via nav args.
-- `VideoDetailScreen` (+ a lightweight `VideoDetailViewModel`): show video facts from the passed VideoRow args (no re-fetch). Download/open button: probe `MediaStore.Video` by `DISPLAY_NAME==filename` → `ACTION_VIEW`; else download `GET /api/video/<video_id>` via coroutine + `HttpURLConnection` bound to the active WiFi `Network` → `MediaStore` insert (Movies/Films) → open; 404 → "video no longer available (compression in progress or cleaned up)". Progress bar during download. Running row → download disabled ("still recording").
-- `SessionsViewModel`: `/api/history`→`/api/sessions` (parse via renamed `parseSessions`/`SessionPage`); display unchanged.
-- `DashboardViewModel`: `/api/history/summary`→`/api/summary`.
-- `SessionDetailScreen`/`SessionDetailViewModel`: `/api/sessions/<id>` (unchanged). `StartupsScreen`/`StartupsViewModel`: `/api/startups` (unchanged).
-- Nav: `video/{sessionId}` route → `video/{videoId}` (+ passed fields); `session/{sessionId}` stays.
-- Unit tests: new `parseVideos`/`VideoRow` (ready + running synthetic row, pagination wrapper, defensive defaults) + endpoint-mapping sanity; update `parseHistory`→`parseSessions` test naming.
-- Build: `cd android && JAVA_HOME=~/jdk-17 ANDROID_HOME=~/Android/Sdk ./gradlew assembleDebug`.
+
+- `app/src/core/history.py`: new `video()` writer (append-only `video` JSONL line
+  type) + add `record_start_count` to the `heartbeat()` line.
+- `app/src/main.py`: emit the `video` entry in `_finalize_recording()` after the
+  successful rename to `tocompress-counting-{ts}-#{delta}.mp4`.
+- `ansible/playbooks/system/configure_companion.yml` (embedded stdlib HTTP server
+  + `HistoryIndex`):
+  - Rename route `/api/history` → `/api/sessions` and `/api/history/summary` →
+    `/api/summary` (clean break; old paths return 404 — no alias).
+  - New `/api/videos`: paginated list (`limit`/`offset`, newest first) built from
+    `video` JSONL lines, with the running recording as a synthetic first row.
+  - New `/api/video/<id>`: serve the compressed `counting-{id}-*.mp4` only, with
+    full HTTP Range / 206 partial streaming; 404 if absent.
+  - Update the endpoint-listing comment blocks (playbook header + script header).
 
 ## Out of Scope
-- No counting/tracking/guard logic; no backend changes (BL-71 already deployed).
-- No new HTTP dependency (stay stdlib `HttpURLConnection`); no `DownloadManager` (it can't bind to the no-internet Jetson WiFi).
-- No broad storage permission (Android 13+ scoped MediaStore access only).
-- No `/api/videos/<id>` detail endpoint (the list row carries everything).
-- No changes to the time-sync service / boot receiver / live-count / dashboard aggregation logic beyond the endpoint path rename.
+
+- No OC-SORT / counting / tracking / guard decision-logic changes (instrumentation only).
+- No `requirements.txt` change (no image rebuild) — companion stays stdlib-only.
+- Compression cron (`k3s/templates/cronvideo-dep.j2`) unchanged — it already
+  produces H.264/AAC `counting-*.mp4` readable on the phone.
+- No `config.json` mode flip (validation mode = STANDARD, reference video only).
+- No compatibility alias for old `/api/history` / `/api/history/summary` (clean
+  break — the Android app is the only consumer and is updated in lockstep).
+- No fallback to raw `tocompress-*` / `tmp-*` files in `/api/video/<id>`.
 
 ## Architecture Decisions
-- **VideoDetailScreen data source = Navigation Compose args** from the tapped History row — no re-fetch. The list row has all the facts (`video_id`, `filename`, `count_delta`, `duration`, `status`, `session_id`, `ts`); the download only needs `video_id`. Numeric fields (count_delta, duration) are passed as strings and parsed defensively in the detail screen (nav args are strings).
-- **Download = coroutine + `HttpURLConnection` bound to the active WiFi `Network`** (same `openBound`/`activeWifiNetwork` pattern as `JetsonClient`), streamed in chunks (e.g. 64 KiB) into a `MediaStore` `ContentResolver.openOutputStream` under `MediaStore.Video.Media.EXTERNAL_CONTENT_URI` (collection `MediaStore.VOLUME_EXTERNAL`, relative path `Movies/Films`). A `StateFlow<DownloadState>` (Idle/Probing/Downloading(progress)/Done(uri)/Error(msg)) drives the progress bar. `DownloadManager` is rejected because it uses the default network (mobile data with internet) and cannot bind to the no-internet Jetson hotspot WiFi.
-- **Gallery probe = `MediaStore.Video` query**, `DISPLAY_NAME == <filename>`, newest-first. On hit → `ACTION_VIEW` with the item's `contentUri` (+ `FLAG_GRANT_READ_URI_PERMISSION`). On miss → download. A hit short-circuits the network round-trip.
-- **History filters**: date filter compares the row's `ts` (parsed to a local date); status filter is a 3-way chip group All / Running / Ready (the old clean/power-loss/unknown chips branched on session `end_reason`, which `VideoRow` does not carry). The `matchesFilters` video-only hack (excluding rows with no video path / zero count) is removed — every `/api/videos` row is already a video.
-- **Running row presentation**: shown first (the companion emits it as index 0), filename `counting-{ts}.mp4` (no `#N`) displayed immediately, count_delta shown, status pill "Running". The download button is disabled with a "still recording" hint because `/api/video/<id>` returns 404 for a running id (no compressed file yet).
-- **Clean break**: old `/api/history` + `/api/history/summary` return 404 with no alias; this PR fixes the app in lockstep with the deployed companion.
-- **`VideoRow` fields** (confirmed from the deployed BL-71 backend): `{video_id, filename, duration, count_delta, session_id, ts, status}`; `video_id` = `counting-{YYYYMMDD-HHMMSS}` (no `#N`); running row is synthetic index 0 with `status:"running"`, `duration: null`.
+
+- **`video_id` = the timestamp stem `counting-{YYYYMMDD-HHMMSS}`** (e.g.
+  `counting-20250608-100000`), WITHOUT the `#N` delta suffix. Unique per
+  recording, human-readable, no UUID. `/api/video/<id>` resolves the file by
+  globbing `counting-{id}-*.mp4` in `/data/orin/files` — the same host directory
+  the JSONL lives in and the compression cron writes `counting-*.mp4` into (the
+  cron strips the `tocompress-` prefix), so no new mount is needed.
+  - Rationale: the on-disk filename is `tocompress-counting-{ts}-#{delta}.mp4`
+    at release, then the cron rewrites it to `counting-{ts}-#{delta}.mp4`. The
+    stable, compression-independent key is the `{ts}` stem; the `#N` is metadata
+    carried in the JSONL `video` line, not part of the id.
+- **Running recording id** = `counting-{ts}` with no `#N` (delta not finalized
+  until release); surfaced as the synthetic first row of `/api/videos` with
+  `status:"running"`. There is no compressed file to serve for it yet, so
+  `/api/video/<id>` on a running id returns 404 (no `tocompress`/`tmp` fallback).
+- **`/api/video/<id>`** serves compressed `counting-*.mp4` only; 404 if absent
+  (not yet compressed, or deleted by the budget guard). Range/206 streaming is
+  required so the Android player can seek/resume large files.
+- **`/api/videos`** mirrors `/api/sessions` (`limit`/`offset`, newest first); the
+  running recording is a synthetic first row in one unified list — NOT a separate
+  top-level `recording` field.
+- **Renames are clean breaks** — old `/api/history` and `/api/history/summary`
+  paths fall through to the existing 404 handler; no alias is added.
+- **`video` entry emit point** = `_finalize_recording` after the successful
+  `os.rename` (best-effort, never raises; history is best-effort per the existing
+  `_append` contract). It is NOT emitted on the rename-failure early return.
+- **`video` JSONL line is a new first-class type** alongside `session_start`,
+  `heartbeat`, `event`, `session_end`, `summary`. The companion's `HistoryIndex`
+  gains a parallel `video`-line index (rebuilt on file-size change, same
+  invalidation strategy as the session index). Compaction (`summary` lines) does
+  not need to fold `video` lines for BL-71 — videos are per-recording facts that
+  remain valid after a session is compacted; the compactor re-emits `video` lines
+  verbatim (like it already does for `startup` lines).
+
+## Reuse
+
+- `app/src/core/history.py:321` `_append(self, obj)` — the single atomic
+  append+fsync writer; `video()` will call it exactly like `emit_event` does.
+- `app/src/core/history.py:538` `heartbeat()` — already reads
+  `shared_state.counter_to_right`, `shared_state.display_thread.filename`,
+  `status`, `auto_mode`; adding `record_start_count` follows the same
+  `getattr(self.shared_state.display_thread, "record_start_count", None)` pattern.
+- `app/src/main.py:300-304` — `delta` and `output_path` are already computed in
+  `_finalize_recording`; the `video` entry reuses both (no recompute). The
+  timestamp stem is already in `output_path` (`tocompress-counting-{ts}-#{delta}.mp4`).
+- `ansible/.../configure_companion.yml:197` `HistoryIndex` — `_build()` scans the
+  JSONL once and keeps `_sessions`/`_session_order`/`_latest_hb`; a `video` index
+  (`_videos`/`_video_order`) is added the same way, keyed on `type == "video"`.
+- `ansible/.../configure_companion.yml:379` `session_summaries(limit, offset)` —
+  the pagination pattern (`ids = self._session_order[offset:offset+limit]`) is
+  reused verbatim for `video_summaries()`.
+- `ansible/.../configure_companion.yml:553+` route dispatch — the new routes are
+  additional `if path == ...` / `if path.startswith(...)` blocks mirroring the
+  existing `/api/history` and `/api/sessions/<id>` handlers.
+- Stdlib only: `http.server`, `os`, `glob`, `stat`, `re` — all already imported
+  by the companion script; Range parsing is stdlib string work (no new deps).
 
 ## Tasks
-- [x] **Task 1: RENAME + ADD data models** `android/app/src/main/java/com/animalcounter/net/Models.kt` — Rename `HistoryPage`→`SessionPage` and `parseHistory`→`parseSessions` (body/field set unchanged; the `/api/sessions` shape is identical to the old `/api/history`). Add `data class VideoRow(val videoId, sessionId, filename, duration: Double?, countDelta: Int?, ts, status)` and `data class VideoPage(val videos: List<VideoRow>, limit, offset, total)`. Add `internal fun parseVideoRow(o: JSONObject): VideoRow` (defensive `optX`-based, `status` defaults to `"unknown"`, `count_delta`/`duration` nullable) and `internal fun parseVideos(json: String): VideoPage` mirroring `parseSessions` (`videos[]`, `limit`, `offset`, `total`). Keep all existing parsers and the opt-helpers. Why: typed Kotlin mirrors of the new endpoint shapes, decoupled from HTTP for unit testing.
-- [x] **Task 2: REWIRE `JetsonClient` endpoints** `android/app/src/main/java/com/animalcounter/net/JetsonClient.kt` — Rename `getHistory`→`getSessions` pointing at `/api/sessions?limit=&offset=`; change `getSummary` to `/api/summary?days=`; add `suspend fun getVideos(ip, limit, offset, network): ApiResult<VideoPage>` via the existing `getJson` helper hitting `/api/videos?limit=&offset=`. Add `suspend fun openVideoStream(ip, videoId, network): VideoStreamResult` — opens `GET /api/video/<videoId>` bound to the WiFi `Network` (reuse `openBound`), sets `Accept: video/mp4`, reads the response code (200/206 → `Success(code, conn.inputStream, contentLength)`; 404 → `HttpError(404)`; other → `HttpError(code)`; throw → `NetworkError`), leaving the stream open for the caller to drain (caller owns `conn.disconnect()`). Update the `fetchRaw`-based callers (Sessions/Dashboard/Startups ViewModels use `fetchRaw` with the new paths in their own tasks). Keep all WiFi-binding + timeout + never-throw conventions. Why: transport layer matches the deployed BL-71 surface.
-- [x] **Task 3: REWIRE `HistoryViewModel` to `/api/videos`** `android/app/src/main/java/com/animalcounter/ui/history/HistoryViewModel.kt` — Replace the `SessionSummary` cache/`parseHistory` flow with `VideoRow`/`parseVideos` fetching `/api/videos?limit=&offset=` (via `fetchRaw` + `parseVideos`, preserving the offline-cache + pagination + probe pattern). Replace `HistoryStatusFilter` values with `ALL`, `RUNNING`, `READY`. Rewrite `matchesFilters`: drop the video-only hack (every row is a video); date filter parses the row's `ts` to a local date; status filter matches `READY`→`status=="ready"`, `RUNNING`→`status=="running"`. Keep running-first ordering. `HistoryUiState.Loaded.rows` becomes `List<VideoRow>`. Why: the History tab now lists videos, not sessions.
-- [x] **Task 4: REWIRE `HistoryScreen` rows + chips + nav** `android/app/src/main/java/com/animalcounter/ui/history/HistoryScreen.kt` — Render `VideoRow` cards: filename (`videoRow.filename`), `count_delta` (big number + direction arrow), `duration` (`videoRow.duration`), status pill (Running=primary, Ready=tertiary). Replace `StatusChipRow` options with All/Running/Ready (new string resources). On row tap, navigate to `video/{videoId}` passing the VideoRow fields as nav args (`videoId`, `filename`, `countDelta`, `duration`, `status`, `sessionId`, `ts`). Remove `displayFilename`'s `tmp-` logic (the filename comes from the API directly). Why: the UI reflects the new video-first model and feeds the detail screen without a re-fetch.
-- [x] **Task 5: ADD `VideoDetailViewModel` (download state)** `android/app/src/main/java/com/animalcounter/ui/sessiondetail/SessionDetailViewModel.kt` (or a new `VideoDetailViewModel.kt` alongside) — Add a lightweight ViewModel that reads the nav args (videoId, filename, countDelta, duration, status, ts) into a `VideoRow`-shaped `StateFlow<VideoDetailUi>` and exposes `downloadState: StateFlow<DownloadState>` (Idle/Probing/Downloading(percent)/Done(uri)/Error(message)) plus `downloadOrOpen(context)`. `downloadOrOpen`: (1) probe `MediaStore.Video` by `DISPLAY_NAME == filename` → on hit emit `Done(uri)` + `ACTION_VIEW`; (2) else call `JetsonClient.openVideoStream` bound to the active WiFi `Network`, stream into a `MediaStore` insert (relative path `Movies/Films`, mime `video/mp4`) updating percent from `Content-Length`, then `ACTION_VIEW` the new `uri`; (3) on 404 → `Error("video no longer available (compression in progress or cleaned up)")`; running row → the screen disables the button (no call). Use `Dispatchers.IO`. Why: the download is the core new feature; a dedicated ViewModel keeps it testable and off the UI thread.
-- [x] **Task 6: REWIRE `VideoDetailScreen`** `android/app/src/main/java/com/animalcounter/ui/sessiondetail/VideoDetailScreen.kt` — Drop the `SessionDetailViewModel`/`/api/sessions/<id>` usage; instead read the VideoRow facts from the `VideoDetailViewModel` (nav args). Render a `VideoHeaderCard` (filename, start/ts, duration, count_delta, status pill). Render a download/open button: label "Open" if already in gallery (probe on enter), else "Download"; show `LinearProgressIndicator` while `Downloading(percent)`; on `Done`/open fire `ACTION_VIEW`; on `Error` show the 404/unavailable message; for a `status=="running"` row disable the button with a "still recording" hint. Why: the detail screen becomes video-fact + download, not a session-diagnostics dump.
-- [x] **Task 7: REWIRE `SessionsViewModel` path** `android/app/src/main/java/com/animalcounter/ui/sessions/SessionsViewModel.kt` — Change the `fetchRaw` path from `/api/history?...` to `/api/sessions?...` and `parseHistory`→`parseSessions`/`SessionPage`. No logic/display change. Why: fix the broken session list against the renamed endpoint.
-- [x] **Task 8: REWIRE `DashboardViewModel` path** `android/app/src/main/java/com/animalcounter/ui/dashboard/DashboardViewModel.kt` — Change the `fetchRaw` path from `/api/history/summary?days=N` to `/api/summary?days=N` (`parseSummary` unchanged). No logic change. Why: fix the broken dashboard against the renamed endpoint.
-- [x] **Task 9: UPDATE nav route** `android/app/src/main/java/com/animalcounter/ui/nav/AnimalCounterApp.kt` — Change `VIDEO_DETAIL = "video/{sessionId}"` → `"video/{videoId}"` with string args for `videoId`, `filename`, `countDelta`, `duration`, `status`, `sessionId`, `ts` (all `NavType.StringType`). Wire the `VideoDetailScreen` composable to the new `VideoDetailViewModel` and `onBack`. Keep `SESSION_DETAIL = "session/{sessionId}"` unchanged. Why: pass the VideoRow to the detail screen without a re-fetch.
-- [x] **Task 10: MANIFEST + strings** `android/app/src/main/AndroidManifest.xml`, `android/app/src/main/res/values/strings.xml`, `android/app/src/main/res/values-fr/strings.xml` — No new broad storage permission (minSdk 33 scoped MediaStore needs none). Add string resources: video download/open/unavailable/`still_recording`, `filter_status_ready`, video detail labels (English fallback + French). Why: localized labels for the new UI.
-- [x] **Task 11: UNIT TESTS** `android/app/src/test/java/com/animalcounter/net/JetsonClientParsingTest.kt` — Add `parseVideos` fixtures: a ready row (`status:"ready"`, full fields) + a running synthetic row (`status:"running"`, `duration:null`, `filename` with no `#N`) + pagination wrapper (`videos[]`,`limit`,`offset`,`total`) + defensive defaults on missing keys + empty/missing `videos[]` fallback. Rename the existing `parseHistory` tests to `parseSessions`/`SessionPage` (assertions unchanged). Add an endpoint-mapping sanity test (a small table asserting `getSessions`→`/api/sessions`, `getVideos`→`/api/videos`, `getSummary`→`/api/summary`) if feasible without HTTP (else assert the path-construction constants). Why: lock the new wire shapes and the rename.
+
+- [x] **Task 1: ADD `video()` writer + `record_start_count` to heartbeat** `app/src/core/history.py` — Add a `video(self, video_id, filename, duration, count_delta, session_id=None)` method that builds a `{"type":"video","video_id":...,"filename":...,"duration":...,"count_delta":...,"session_id":...,"ts":_utcnow_iso()}` line and appends it via the existing `self._append(line)` (best-effort, guards on `self._stopped`/`self.session_id is None` like `emit_event`). In `heartbeat()`, add `"record_start_count": <int or None>` sourced from `getattr(self.shared_state.display_thread, "record_start_count", None)` alongside the existing `count`/`last_segment`/`status`/`auto_mode` reads, so the companion can compute `live_delta = heartbeat.count - heartbeat.record_start_count`.
+- [x] **Task 2: EMIT `video` entry in `_finalize_recording`** `app/src/main.py` — After the successful `os.rename(self.filename, output_path)` (and before/after the `shared_state.status`/`recording` reset), call the history writer's new `video()` with: `video_id` = the timestamp stem `counting-{time.strftime('%Y%m%d-%H%M%S')}` (strip the `tocompress-` prefix and the `-#{delta}` suffix from `output_path`), `filename` = `os.path.basename(output_path)`, `duration` = `self.record_duration`, `count_delta` = `delta`, `session_id` = the current session id from `shared_state.history.session_id` (best-effort via getattr; None if unavailable). Wrap in try/except so a history write failure never breaks recording finalization (mirrors the "history is best-effort" contract). Do NOT emit on the rename-failure `return` path. Derive the `time.strftime` stem from the SAME `time.strftime('%Y%m%d-%H%M%S')` call already used to build `output_path` (capture it into a local once, reuse for both the filename and the `video_id`), so the id and the on-disk filename stay in lockstep.
+- [x] **Task 3: RENAME companion routes (clean break)** `ansible/playbooks/system/configure_companion.yml` — In the embedded script's `do_GET` dispatch, change `if path == "/api/history":` → `if path == "/api/sessions":` and `if path == "/api/history/summary":` → `if path == "/api/summary":`. Leave the bodies (pagination/daily-aggregate logic) unchanged. Do NOT add any handler for the old paths — they fall through to the existing `GET {} -> 404` line. Update the two endpoint-listing comment blocks (the playbook top-of-file `# What it does:` block and the script-header `# Endpoints:` block) to list `/api/sessions`, `/api/summary`, and the two new routes from Tasks 4-5.
+- [x] **Task 4: ADD `/api/videos` list endpoint** `ansible/playbooks/system/configure_companion.yml` — Extend `HistoryIndex` with a `video` index: in `_build()`, collect `type == "video"` lines into `self._videos` (a dict keyed by `video_id`) and `self._video_order` (newest-first by the line's `ts`). Add a `video_summaries(self, limit=50, offset=0)` method mirroring `session_summaries` that returns `(rows, total)` where each row is `{"video_id","filename","duration","count_delta","session_id","ts","status":"ready"}`. Add a `_running_video_row()` helper that, from `self.latest_count()` (the newest heartbeat), synthesizes a first row when a recording is in progress: `status:"running"`, `video_id` = the `counting-{ts}` stem derived from the heartbeat's `last_segment` filename (parse the `tocompress-counting-{ts}-#N.mp4` / `tmp-counting-{ts}.mp4` stem; if `last_segment` is absent or unparseable, omit the running row), `count_delta` = `hb["count"] - hb["record_start_count"]` (only when `record_start_count` is present and non-None; else omit), `filename` = `counting-{ts}.mp4` (no `#N`), `session_id`/`ts` from the heartbeat. Add a new `if path == "/api/videos":` route that reads `limit`/`offset` via the existing `_int_arg`, calls `video_summaries`, prepends the running row (so it is index 0 and excluded from pagination offset math — i.e. `total` includes it, and `offset=0` returns it first), and returns `{"videos": rows, "limit":..., "offset":..., "total":...}`. Newest-first ordering: the running row is always first, then finalized videos newest-first.
+- [x] **Task 5: ADD `/api/video/<id>` Range-streaming endpoint** `ansible/playbooks/system/configure_companion.yml` — Add a new `if path.startswith("/api/video/"):` route (note: must be checked AFTER `/api/videos` so the plural isn't shadowed — actually `startswith` vs `==` are distinct, but place the `/api/videos` `==` check first for clarity). Extract `vid = path[len("/api/video/"):]`; reject empty/missing with 404. Resolve the file by `glob.glob(os.path.join(FILES_DIR, "counting-" + vid + "-*.mp4"))` (where `FILES_DIR` is the directory of `HISTORY_FILE_HOST`, i.e. `/data/orin/files`); if no match → 404 `{"error":"video not found"}`. If multiple matches (shouldn't happen, but defensively) pick the lexicographically first / newest by mtime. Implement HTTP Range support: read `self.headers.get("Range")`, `os.stat` the file for size, and respond with either 200 (full file, `Content-Length`, `Accept-Ranges: bytes`) when no Range header, or 206 (`Content-Range: bytes {start}-{end}/{size}`, `Content-Length: {end-start+1}`, `Accept-Ranges: bytes`) for a single `bytes=start-end` / `bytes=start-` range. Stream in chunks (e.g. 64 KiB) via `self.wfile.write` to avoid loading large files into memory. On malformed Range, respond 416 `Range Not Satisfiable` with `Content-Range: bytes */{size}`. Set `Content-Type: video/mp4`. Log the request (`GET /api/video/<id> -> 200/206/404/416`). Multi-range is NOT required (single-range resumable download suffices for the Android player).
+- [x] **Task 6: SYNC the doc reference** `docs/11_jetson_companion.md` — If the companion doc lists the endpoint table, update `/api/history`→`/api/sessions`, `/api/history/summary`→`/api/summary`, and add `/api/videos` + `/api/video/<id>` rows so the docs match the implementation. (This is a doc-only touch; if no such table exists, skip.) [Planner note: implementer should grep `docs/` for `/api/history` and update any stale references.]
 
 ## Validation
-- `cd android && JAVA_HOME=~/jdk-17 ANDROID_HOME=~/Android/Sdk ./gradlew assembleDebug` builds the APK (`android/app/build/outputs/apk/debug/app-debug.apk`).
-- `./gradlew test` — the updated `JetsonClientParsingTest` passes (VideoRow/parseVideos + renamed SessionPage tests), network-free.
-- Manual (no Jetson required to build): the app compiles and the History tab renders against the new `/api/videos` shape; the video detail shows facts and a download button. A live round-trip against the Jetson at `192.168.0.180:8090` (on the hotspot) verifies the download saves to Movies/Films and opens, and that a 404 surfaces the "no longer available" message.
+
+- **Syntax (per AGENTS.md, Python only — NEVER bun):**
+  - `python3 -m py_compile app/src/core/history.py app/src/main.py`
+  - The companion script is embedded in a YAML `copy.content` block; extract-check with `python3 - <<'PY'` pulling the block, or simply `python3 -m py_compile` the rendered script on the Jetson after `ansible-playbook` re-runs (idempotent — `changed` only on content change, then the notify handler restarts the service).
+- **Unit/local (no Jetson needed):**
+  - Append a fake `video` line + `heartbeat` (with `record_start_count`) to a scratch JSONL and point the companion's `HistoryIndex` at it; assert `video_summaries()` returns the row and `_running_video_row()` computes the delta. (Best-effort manual check; there is no formal Python test harness in this repo.)
+- **End-to-end on Jetson (STANDARD validation mode, reference video only):**
+  - `scripts/validate_on_jetson.sh` runs the reference video and parses `validation-report.json`. This change is instrumentation + endpoints, NOT counting logic, so the pig count must remain unchanged (no regression). `pass` → ship; `count_mismatch` → HITL pause (do NOT auto-correct).
+  - Manual companion checks over the hotspot after deploy:
+    - `curl http://<jetson>:8090/api/sessions?limit=5` → 200, `{sessions:[...],total}` (old `/api/history` → 404).
+    - `curl http://<jetson>:8090/api/summary?days=7` → 200 (old `/api/history/summary` → 404).
+    - `curl http://<jetson>:8090/api/videos?limit=10` → 200, running recording as first row (`status:"running"`) when a recording is active.
+    - `curl -H "Range: bytes=0-1023" http://<jetson>:8090/api/video/<id> -o /tmp/head.mp4` → 206, `Content-Range: bytes 0-1023/<size>`; full `curl ... -o file.mp4` → 200 playable on Android.
+    - `curl http://<jetson>:8090/api/video/nonexistent` → 404.
 
 ## Risks
-- **MediaStore duplicate filenames**: a re-download of the same `filename` could create a second row. Mitigation: probe by `DISPLAY_NAME` first (open existing); on insert set `IS_PENDING=1` then `0`, and if a same-name row already exists from a concurrent probe race, prefer opening the existing one.
-- **Large-file streaming memory**: draining a multi-hundred-MB MP4 into MediaStore must chunk (64 KiB) rather than buffer in memory. Mitigation: stream `conn.inputStream` → `ContentResolver.openOutputStream` in a buffered copy loop with percent from `Content-Length`.
-- **WiFi binding for the download**: like the other calls, the stream must bind to the active WiFi `Network` or it routes over mobile data and never reaches the Jetson. Mitigation: reuse `openBound(url, activeWifiNetwork(cm))`; `openVideoStream` takes the `network` param.
-- **Nav-arg string parsing**: `count_delta`/`duration` arrive as strings; parse defensively (null/blank → `null`) so a malformed arg never crashes the detail screen.
-- **Running-row 404 UX**: a user tapping download on the synthetic running row would hit a 404. Mitigation: the button is disabled for `status=="running"` with a "still recording" hint, so no 404 is surfaced for it.
+
+- **`video` line vs compaction** — The 1x/day compactor collapses ended sessions into `summary` lines. `video` lines are per-recording facts that must survive compaction. Mitigation: the compactor already re-emits `startup` lines verbatim; do the same for `video` lines (do not fold them into `summary`). If the implementer finds the compactor drops unknown line types, explicitly pass `video` lines through.
+- **video_id ↔ filename drift** — The `video_id` stem is captured at finalize from the same `time.strftime` call that builds the filename, so they cannot drift at write time. The cron later rewrites `tocompress-counting-{ts}-#N.mp4` → `counting-{ts}-#N.mp4` (same `{ts}`), so the glob `counting-{id}-*.mp4` still resolves post-compression. Risk: if two recordings finalize in the same wall-clock second, the stems collide. Mitigation: acceptable for this single-camera, ~2-min-recording use case; the glob would return both and the endpoint picks one (defensive). No counter change needed.
+- **Range parsing edge cases** — Malformed `Range` headers could crash the handler. Mitigation: parse defensively, respond 416 (not 500) on unparseable ranges, and wrap the whole file-serving path in try/except → 500 with a JSON error body so a bad request never kills the companion thread (matches the best-effort logging style of the other handlers).
+- **`/api/video/<id>` shadowing `/api/videos`** — The `startswith("/api/video/")` route must not swallow `/api/videos`. Mitigation: check the exact `== "/api/videos"` route FIRST, then `startswith("/api/video/")` (the trailing slash in the prefix means `/api/videos` — no trailing slash — never matches `startswith("/api/video/")` anyway, but ordering removes all doubt).
+- **Running-row synthesis when no recording is active** — `latest_count()` may return the last heartbeat of an ended session where `record_start_count` is stale/None. Mitigation: only synthesize the running row when `record_start_count` is present and non-None AND the heartbeat is "recent" (the existing `latest_count()` already prefers the running session); otherwise omit the row. This keeps a phantom running row from appearing when the app is idle.
