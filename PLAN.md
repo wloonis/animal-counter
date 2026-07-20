@@ -1,161 +1,131 @@
-# Plan: BL-70 — Per-video delta in the video filename (issue #74)
+# Plan: BL-71 — Video as a first-class entity + companion endpoint naming (sessions vs videos)
 
 ## Summary
-The video clip filename must carry the **per-video delta** (net pigs counted *during that recording*) instead of the global cumulative counter. The on-screen global counter (`counter_to_right`) and its reset logic are left completely untouched. Snapshot the global counter at recording start, compute `delta = final − start` at release, and put `delta` in the `#{...}` slot of the final filename.
+
+Make the recorded VIDEO a first-class entity in the counting-history JSONL by
+emitting a per-video `video` line at recording release (`_finalize_recording`),
+and clarify the Jetson companion's HTTP API: add `/api/videos` (paginated list,
+one row per video including the currently-running recording as a synthetic
+first row) and `/api/video/<id>` (Range-streamed compressed MP4), and cleanly
+rename `/api/history` → `/api/sessions` and `/api/history/summary` → `/api/summary`
+with **no** compatibility alias. Expose `record_start_count` in heartbeats so
+the companion can compute the running recording's live count delta. This is
+instrumentation + endpoints only — no counting/tracking/guard logic changes.
 
 ## In Scope
-- `DisplayThread` (app/src/main.py): capture `record_start_count` snapshot of `shared_state.counter_to_right` at recording start; compute delta in `_finalize_recording` and substitute it into the final filename.
-- New lightweight unit test asserting the renamed file uses the delta (positive, zero, negative cases).
-- Verify `k3s/templates/cronvideo-dep.j2` compatibility with the new filename (verify-only — no edit).
+
+- `app/src/core/history.py`: new `video()` writer (append-only `video` JSONL line
+  type) + add `record_start_count` to the `heartbeat()` line.
+- `app/src/main.py`: emit the `video` entry in `_finalize_recording()` after the
+  successful rename to `tocompress-counting-{ts}-#{delta}.mp4`.
+- `ansible/playbooks/system/configure_companion.yml` (embedded stdlib HTTP server
+  + `HistoryIndex`):
+  - Rename route `/api/history` → `/api/sessions` and `/api/history/summary` →
+    `/api/summary` (clean break; old paths return 404 — no alias).
+  - New `/api/videos`: paginated list (`limit`/`offset`, newest first) built from
+    `video` JSONL lines, with the running recording as a synthetic first row.
+  - New `/api/video/<id>`: serve the compressed `counting-{id}-*.mp4` only, with
+    full HTTP Range / 206 partial streaming; 404 if absent.
+  - Update the endpoint-listing comment blocks (playbook header + script header).
 
 ## Out of Scope
-- Any change to the global counter `counter_to_right` or its reset logic (boot reset / manual user reset unchanged).
-- Any code edit to `k3s/templates/cronvideo-dep.j2`.
-- Changes to `app/src/core/counting.py` or `app/src/core/history.py` (history `last_segment` flows the new filename automatically; heartbeat `count` stays global — no edit needed).
+
+- No OC-SORT / counting / tracking / guard decision-logic changes (instrumentation only).
+- No `requirements.txt` change (no image rebuild) — companion stays stdlib-only.
+- Compression cron (`k3s/templates/cronvideo-dep.j2`) unchanged — it already
+  produces H.264/AAC `counting-*.mp4` readable on the phone.
+- No `config.json` mode flip (validation mode = STANDARD, reference video only).
+- No compatibility alias for old `/api/history` / `/api/history/summary` (clean
+  break — the Android app is the only consumer and is updated in lockstep).
+- No fallback to raw `tocompress-*` / `tmp-*` files in `/api/video/<id>`.
 
 ## Architecture Decisions
-- **Per-video counter derived as a zero-point from the global counter** (issue #74 suggested approach — capture at start, compute delta at release). We capture `record_start_count = shared_state.counter_to_right` at recording start, which establishes a **zero-point** for this video; the per-video count is then `counter_to_right - record_start_count`, which is `0` at recording start and grows by exactly the line crossings during this recording. This is the natural "pigs counted during this recording" semantic.
 
-  **Why snapshot+delta rather than a separate independent sub-counter starting at 0?** The two are mathematically identical: the global `counter_to_right` changes *only* via line crossings, so `delta = end − start` is exactly the crossings during the recording — i.e. the same value an independent from-0 counter would hold. The snapshot approach is the **minimal, lowest-risk** change: it touches only `DisplayThread` (2 lines), reuses the existing recording-start snapshot block (which already captures `record_start_time`), and requires **no edit to `counting.py`** (out of scope) and **no per-frame loop modification**. A genuinely independent sub-counter would require either (a) refactoring `Counting.count()` to maintain/return a second counter — a `counting.py` change that is explicitly out of scope and risks the validated counting invariants, or (b) per-frame bookkeeping in the run-loop (track the per-frame global delta `new − old` and accumulate into `self.video_count`) — more code, more surface for off-by-one bugs at the recording-start frame, and no behavioral benefit. The reviewer's point that the triggering pig hasn't crossed the line yet at the first detected frame is exactly what makes the snapshot sound: `counter_to_right` at recording start does **not** include the triggering pig (it is only *detected*, not *crossed*), so the zero-point is correct.
-- **Raw delta, no clamping**: filename shows `#-1`, `#0` as-is, consistent with the bidirectional counting logic (LEFT crossings decrement the global counter, so the delta can go negative within a clip). No special-casing.
-- **Defensive guard for missing snapshot**: if `record_start_count is None` (shouldn't happen in normal flow, but the finalize path is called from multiple exit points including the safety-net at loop exit), fall back to `delta = 0` so the filename is always well-formed. Never read a stale snapshot across recordings — reset to `None` after finalize, mirroring `record_start_time`/`record_duration` lifecycle.
-- **J2 verify-only**: the `tocompress-*` / `count*` globs and `sed 's/^tocompress-//'` rename in `cronvideo-dep.j2` match on the literal `tocompress-`/`counting-` prefixes and are agnostic to the numeric value in `#{...}`. New filename `tocompress-counting-{ts}-#{delta}.mp4` → `counting-{ts}-#{delta}.mp4` still matches both globs, so no template edit is required.
-- **Global counter untouched**: the per-video count is computed *read-only* from `counter_to_right`; we never write to it, never reset it, and never alter its boot/manual-reset logic.
+- **`video_id` = the timestamp stem `counting-{YYYYMMDD-HHMMSS}`** (e.g.
+  `counting-20250608-100000`), WITHOUT the `#N` delta suffix. Unique per
+  recording, human-readable, no UUID. `/api/video/<id>` resolves the file by
+  globbing `counting-{id}-*.mp4` in `/data/orin/files` — the same host directory
+  the JSONL lives in and the compression cron writes `counting-*.mp4` into (the
+  cron strips the `tocompress-` prefix), so no new mount is needed.
+  - Rationale: the on-disk filename is `tocompress-counting-{ts}-#{delta}.mp4`
+    at release, then the cron rewrites it to `counting-{ts}-#{delta}.mp4`. The
+    stable, compression-independent key is the `{ts}` stem; the `#N` is metadata
+    carried in the JSONL `video` line, not part of the id.
+- **Running recording id** = `counting-{ts}` with no `#N` (delta not finalized
+  until release); surfaced as the synthetic first row of `/api/videos` with
+  `status:"running"`. There is no compressed file to serve for it yet, so
+  `/api/video/<id>` on a running id returns 404 (no `tocompress`/`tmp` fallback).
+- **`/api/video/<id>`** serves compressed `counting-*.mp4` only; 404 if absent
+  (not yet compressed, or deleted by the budget guard). Range/206 streaming is
+  required so the Android player can seek/resume large files.
+- **`/api/videos`** mirrors `/api/sessions` (`limit`/`offset`, newest first); the
+  running recording is a synthetic first row in one unified list — NOT a separate
+  top-level `recording` field.
+- **Renames are clean breaks** — old `/api/history` and `/api/history/summary`
+  paths fall through to the existing 404 handler; no alias is added.
+- **`video` entry emit point** = `_finalize_recording` after the successful
+  `os.rename` (best-effort, never raises; history is best-effort per the existing
+  `_append` contract). It is NOT emitted on the rename-failure early return.
+- **`video` JSONL line is a new first-class type** alongside `session_start`,
+  `heartbeat`, `event`, `session_end`, `summary`. The companion's `HistoryIndex`
+  gains a parallel `video`-line index (rebuilt on file-size change, same
+  invalidation strategy as the session index). Compaction (`summary` lines) does
+  not need to fold `video` lines for BL-71 — videos are per-recording facts that
+  remain valid after a session is compacted; the compactor re-emits `video` lines
+  verbatim (like it already does for `startup` lines).
 
-## Tasks
-- [x] Task 1: ADD `self.record_start_count = None` to `DisplayThread.__init__` in `app/src/main.py` (~line 270, alongside `self.record_start_time`/`self.record_duration`) — new instance attribute to hold the per-recording counter snapshot.
-- [x] Task 2: CAPTURE the snapshot in the recording-start block of `app/src/main.py` (~line 492, alongside `self.record_start_time = time.monotonic()`) — set `self.record_start_count = shared_state.counter_to_right` so it reflects the count *before* the triggering frame's `counting.count()` runs.
-- [x] Task 3: COMPUTE delta and use it in the final filename in `_finalize_recording` in `app/src/main.py` (~line 289) — replace `#{shared_state.counter_to_right}` with `#{delta}` where `delta = (shared_state.counter_to_right - self.record_start_count) if self.record_start_count is not None else 0`.
-- [x] Task 4: RESET `self.record_start_count = None` at the end of `_finalize_recording` in `app/src/main.py` (mirror the `record_start_time`/`record_duration` lifecycle so a stale snapshot never leaks into the next recording).
-- [x] Task 5: ADD a lightweight unit test (e.g. `tests/test_finalize_recording_filename.py`) asserting the renamed file uses the delta — mock `shared_state` (with `recording=True`, `counter_to_right`, `status`) + a dummy `video_writer` whose `isOpen()` is True, covering positive delta (start 5 → end 12 → `#7`), zero delta (start 5 → end 5 → `#0`), and negative delta (start 5 → end 4 → `#-1`). Assert the global `counter_to_right` is unchanged by finalize.
-- [x] Task 6: VERIFY `k3s/templates/cronvideo-dep.j2` compatibility (read-only inspection, no edit) — confirm `tocompress-counting-{ts}-#{delta}.mp4` matches the `for f in /videos/tocompress-*` glob, that `sed 's/^tocompress-//'` yields `counting-{ts}-#{delta}.mp4`, and that the pruned `counting-...` output still matches `ls -t count*`. Document the verification result in the PR description.
+## Reuse
 
-## Validation
-- `cd app && python -m pytest tests/test_finalize_recording_filename.py -q` — new test passes (positive/zero/negative delta cases + global counter unchanged).
-- `cd app && python -m pytest tests/test_counting_invariance.py tests/test_history_writer.py -q` — existing regression suite still green (no behavior change to counting or history).
-- Static grep check: `grep -n "counter_to_right" app/src/main.py` confirms the global counter is still only assigned at line ~511 (`shared_state.counter_to_right = self.counting.count(...)`) and never reset/altered by the new delta logic.
-- Manual on-device (Jetson): run a counting session, confirm (a) the on-screen global counter still accumulates across clips and resets only at boot/manual reset, and (b) each produced `tocompress-counting-*#N.mp4` carries `N` = pigs counted during that clip (delta), not the cumulative total.
-
-## Risks
-- **Stale snapshot leaking across recordings** — mitigated by resetting `record_start_count = None` after finalize (Task 4) and the existing `recording` guard at the top of `_finalize_recording`.
-- **Finalize called from an exit path that skipped recording-start** (e.g. safety-net finalize at loop exit) — mitigated by the `record_start_count is None → delta = 0` defensive guard (Task 3); filename stays well-formed.
-- **Companion/history assuming the filename holds the global count** — verified: `app/src/core/history.py` stores `last_segment` as an opaque string and `count` from the heartbeat (global), neither parses `#{...}`, so the change is transparent. No edit needed.
-- **J2 glob regression** — mitigated by Task 6 verify-only inspection; globs match on prefixes, not the numeric token.
-# Plan: BL-69 — Android app counting-history display + Live count tab
-
-## Summary
-Extend the existing BL-65 Android app (`com.animalcounter`, Kotlin + Jetpack Compose + Material 3) from 3 tabs (1 real TimeSync + 2 placeholders) to 5 real tabs — Synchre horloge (unchanged), Comptage live, Historique + Détail de session, Tableau de bord, Démarrages — all four new data tabs consuming the read-only BL-68 companion API on the Jetson (port 8090). No Jetson/companion changes; UI-only feature validated by `./gradlew assembleDebug` + JSON-parsing unit tests.
-
-## In Scope
-- Bottom-nav expanded to 5 tabs in `AnimalCounterApp.kt` (Time sync, Live count, History, Dashboard, Startups) with Material filled icons; TimeSync tab unchanged (no BL-65 regression).
-- 5 new `suspend fun` methods in `JetsonClient.kt` (`getCount`, `getHistory`, `getSession`, `getSummary`, `getStartups`) reusing the existing `openBound`/`activeWifiNetwork`/5s-timeout/`org.json` pattern; no new deps, no new permissions.
-- 5 new screens + ViewModels (one per tab) following the `TimeSyncViewModel` `StateFlow<UiState>` Loading/Loaded/Error/OutOfRange pattern; lifecycle-aware polling for Live count.
-- Session detail screen (reached from a History row tap) rendering the A–G groups in Material 3 cards inside a vertical ScrollView.
-- Reachability banner (reuse `/api/identify` probe → `ProbeState`) on all four data tabs.
-- FR/EN localization in `strings.xml` (values/ + values-fr/).
-- Unit tests parsing JSON for the 5 endpoints, using mock fixtures mirroring the BL-68 response shapes.
-
-## Out of Scope
-- Any change to the Jetson companion service or `countingapp` (BL-68 API is frozen, PR #72 on main).
-- Background time-push regression (BL-65 foreground service + BootReceiver untouched).
-- New permissions (INTERNET / ACCESS_NETWORK_STATE / RECEIVE_BOOT_COMPLETED / FOREGROUND_SERVICE already granted).
-- SSE/WebSocket streaming (polling is sufficient).
-- Jetson/video business validation (`./gradlew assembleDebug` only; this is IHM).
-
-## Architecture Decisions
-- **Design language — top-tier modern Material 3**: all five screens must look polished and current, not utilitarian. Use the Material 3 components already available in the project's Compose BOM (`androidx.compose.material3`): `LargeTopAppBar` with collapsing scroll behavior + `TopAppBarDefaults.enterAlwaysScrollBehavior` on list screens (History, Startups) and a centered `TopAppBar` on detail/dashboard; `Scaffold` with the existing `NavigationBar`; M3 `Card`/`ElevatedCard`/`OutlinedCard` (use `ElevatedCard` for the detail group cards and a flat `Card` for list rows, to create depth contrast); M3 `Chip`/`FilterChip`/`AssistChip` for the auto_mode badge, status pill, and history filters; `SegmentedButton`/`SingleChoiceSegmentedButton` for the dashboard 7/30-day period selector; `LinearProgressIndicator` (M3 stop-able) for loading states; `PullToRefreshBox` (current M3 pull-to-refresh, NOT the deprecated `PullRefreshIndicator`) for refresh; `HorizontalDivider`/`ListItem` (M3 `ListItem` with leading/trailing content slots) for dense rows. Follow the M3 typography scale from the existing `Type.kt` (`headlineLarge` for the live-count big number, `titleMedium` for card titles, `bodyMedium`/`labelSmall` for metadata) — no hardcoded sp sizes. Honor the existing dynamic color + dark theme (`Theme.kt`) so cards/pills/chips adapt to light/dark automatically. Add subtle motion: `animateContentSize()` on the live-count number so it ticks smoothly, and standard nav transitions. Status pill = a small filled/tonal `Chip` with a leading colored dot (`Box` 8dp circle, `MaterialTheme.colorScheme`-derived: blue=primary, green=primary/tertiary, orange=error-container, gray=outline) rather than a flat colored rectangle. Keep generous spacing (16dp card padding, 8–12dp gaps) and rounded M3 corner shapes (`MaterialTheme.shapes`). Empty/error states use `OutlinedCard` + `Icon` + `Text` (not bare text). This is IHM for a field device viewed daily — it must feel finished.
-- **HTTP client**: reuse the existing stdlib `HttpURLConnection` pattern in `JetsonClient.kt` (no OkHttp). All new methods are `suspend fun` on `Dispatchers.IO`, bind to the active WiFi `Network` via `openBound` so requests reach the Jetson HotSpot even when mobile data (5G) is the default internet uplink. 5s connect/read timeouts.
-- **State management**: each tab ViewModel extends `AndroidViewModel`, exposes `StateFlow<UiState>` (sealed interface: Loading / Loaded / Error / OutOfRange), seeds the Jetson IP from `SettingsRepository` (DataStore, default `192.168.100.1`), resolves the WiFi network via `activeWifiNetwork(ConnectivityManager)`. Matches the existing `TimeSyncViewModel` + `ProbeState` pattern verbatim.
-- **Status color mapping** (verified against `tests/companion_history_reader.py`): `/api/history` summary `status` is only `"ended"` | `"running"`; the clean/power-loss/unknown value is in the **separate** `end_reason` field. Pill color logic:
-  - `status == "running"` → blue
-  - else `end_reason == "clean"` → green
-  - else `end_reason == "power-loss"` → orange
-  - else (`"unknown"`, `"sigterm"`, null) → gray
-- **Session detail nesting** (verified): `/api/sessions/<id>` returns `{session_id, start (full session_start incl. config D), end (session_end OR null, containing B counters + E video + F system), end_at, end_reason, status, net_count, config, heartbeats[], events[], significant_events}`. For a **running** session `end` is `null` → counters/system fall back to the last `heartbeats[]` entry; `heartbeats[]` carry C perf/thermal + F system samples aggregated for the Performance card.
-- **Counters B fields**: `count_left_to_right`, `count_right_to_left`, `guard_interventions{lost_buffer_expired, mirror_guard, resurrection, reid_rebind}`, `id_switch_recoveries`, `unique_track_ids`, `max_concurrent_tracks`.
-- **Event types**: `crossed_left | crossed_right | id_switch_recovery | mirror_guard | resurrection | reid_suppress | track_lost | lost_buffer_expired` (+ `mirror_guard_enforce`, `mirror_suppress`).
-- **Response wrappers**: `/api/history` → `{sessions[], limit, offset, total}`; `/api/history/summary?days=N` → `{days, daily[{date, sessions, net_count, guard_events, events}]}`; `/api/startups` → `{startups[]}`; `/api/count` → `{count, status, auto_mode, timestamp, session_id}`.
-- **Live count polling**: lifecycle-aware — collect `getCount` every ~2s only while the tab is in the resumed (foreground) state; cancel the polling job on `onStop`/pause to avoid battery drain. Manual pull-to-refresh also supported.
-- **Dashboard chart**: Compose `Canvas`-drawn bar chart (no chart library dep). Period selector 7/30 days drives `getSummary(days)`.
-- **Navigation**: keep the `NavHost` + `navigateTo` (popUpTo start + saveState + launchSingleTop + restoreState) pattern. Session detail is a pushed `composable` route (not a bottom tab), e.g. `session/{sessionId}`.
-- **Localization**: app follows system locale (already the case BL-65). Add all new keys to both `values/strings.xml` (EN fallback) and `values-fr/strings.xml` (FR).
-- **Placeholder screen**: `ui/placeholder/PlaceholderScreen.kt` becomes unreferenced after the 5-tab conversion — remove it to avoid dead code.
+- `app/src/core/history.py:321` `_append(self, obj)` — the single atomic
+  append+fsync writer; `video()` will call it exactly like `emit_event` does.
+- `app/src/core/history.py:538` `heartbeat()` — already reads
+  `shared_state.counter_to_right`, `shared_state.display_thread.filename`,
+  `status`, `auto_mode`; adding `record_start_count` follows the same
+  `getattr(self.shared_state.display_thread, "record_start_count", None)` pattern.
+- `app/src/main.py:300-304` — `delta` and `output_path` are already computed in
+  `_finalize_recording`; the `video` entry reuses both (no recompute). The
+  timestamp stem is already in `output_path` (`tocompress-counting-{ts}-#{delta}.mp4`).
+- `ansible/.../configure_companion.yml:197` `HistoryIndex` — `_build()` scans the
+  JSONL once and keeps `_sessions`/`_session_order`/`_latest_hb`; a `video` index
+  (`_videos`/`_video_order`) is added the same way, keyed on `type == "video"`.
+- `ansible/.../configure_companion.yml:379` `session_summaries(limit, offset)` —
+  the pagination pattern (`ids = self._session_order[offset:offset+limit]`) is
+  reused verbatim for `video_summaries()`.
+- `ansible/.../configure_companion.yml:553+` route dispatch — the new routes are
+  additional `if path == ...` / `if path.startswith(...)` blocks mirroring the
+  existing `/api/history` and `/api/sessions/<id>` handlers.
+- Stdlib only: `http.server`, `os`, `glob`, `stat`, `re` — all already imported
+  by the companion script; Range parsing is stdlib string work (no new deps).
 
 ## Tasks
 
-### A. Networking layer
-- [x] **Task 1: ADD** `android/app/src/main/java/com/animalcounter/net/JetsonClient.kt` — add 5 `suspend fun` methods to the existing `JetsonClient` object, each following the existing `identify`/`postTime` pattern (`withContext(Dispatchers.IO)`, `URL("http://${sanitizeIp(ip)}:$JETSON_PORT/api/...")`, `openBound`, 5s connect/read timeouts, `readBody`, `outcomeFor`-style HTTP-code → result mapping, `finally { conn.disconnect() }`, try/catch → typed failure). Add small typed result data classes (sealed `ApiResult` with `Success(data)` / `HttpError(code)` / `NetworkError(msg)`), since the existing methods return `SyncEvent` (history tabs have no SyncEvent shape). Methods:
-  - `getCount(ip, network)` → parse `{count, status, auto_mode, timestamp, session_id}` into a `LiveCount` data class.
-  - `getHistory(ip, limit, offset, network)` → parse `{sessions[], limit, offset, total}` into `HistoryPage(list<SessionSummary>, limit, offset, total)`.
-  - `getSession(ip, id, network)` → parse `{session_id, start, end, end_at, end_reason, status, net_count, config, heartbeats[], events[], significant_events}` into a `SessionDetail` data class (with nested `Counters`, `VideoMeta`, `SystemHealth`, `Heartbeat`, `CountingEvent`, `ConfigSnapshot` data classes). Handle `end == null` (running session) gracefully.
-  - `getSummary(ip, days, network)` → parse `{days, daily[{date, sessions, net_count, guard_events, events}]}` into `Summary(days, list<DailyBucket>)`.
-  - `getStartups(ip, limit, network)` → parse `{startups[]}` into `StartupList(list<Startup>)`. Each `Startup`: `boot_at, image_tag, git_commit, mode, config_notable`.
-  Define the data classes either alongside in `JetsonClient.kt` or in a new `net/Models.kt` — prefer a single `net/Models.kt` to keep `JetsonClient.kt` focused on transport.
-
-### B. Navigation / hub shell
-- [x] **Task 2: EDIT** `android/app/src/main/java/com/animalcounter/ui/nav/AnimalCounterApp.kt` — replace the 3-tab scaffold with 5 tabs. Update `Destinations`: keep `TIME_SYNC = "time-sync"` and `LIVE_COUNT = "live-count"`; rename/add `HISTORY = "history"`, `DASHBOARD = "dashboard"`, `STARTUPS = "startups"`; add `SESSION_DETAIL = "session/{sessionId}"` (with `navArgument("sessionId")` / `decode= false`). Update the `NavigationBar` to 5 `NavigationBarItem`s with icons `Schedule`, `Visibility`, `History`, `BarChart`, `PowerSettingsNew` (all `Icons.Filled.*`), labels from new string resources (`tab_history`, `tab_dashboard`, `tab_startups`; reuse `tab_time_sync` / `tab_live_count`). Update the `NavHost`: keep `composable(TIME_SYNC) { TimeSyncScreen() }` unchanged; replace the two placeholder composables with `LiveCountScreen()`, `HistoryScreen(navController)`; add `composable(DASHBOARD) { DashboardScreen() }`, `composable(STARTUPS) { StartupsScreen() }`, `composable(SESSION_DETAIL) { backStackEntry -> SessionDetailScreen(backStackEntry.arguments?.getString("sessionId")) }`. Keep `navigateTo` helper unchanged. Remove the `PlaceholderScreen` import.
-
-### C. Live count tab
-- [x] **Task 3: CREATE** `android/app/src/main/java/com/animalcounter/ui/livecount/LiveCountViewModel.kt` — `AndroidViewModel` exposing `StateFlow<LiveCountUiState>` (Loading/Loaded/OutOfRange/Error) + `StateFlow<ProbeState>`. Seed IP from `SettingsRepository`. Lifecycle-aware polling: a `viewModelScope` job that calls `JetsonClient.getCount` every 2s; `startPolling()` / `stopPolling()` driven by the screen's lifecycle (resume→start, pause/stop→stop). `refresh()` for manual pull-to-refresh. Reachability probe via `JetsonClient.identify`.
-- [x] **Task 4: CREATE** `android/app/src/main/java/com/animalcounter/ui/livecount/LiveCountScreen.kt` — polished Compose layout. `Scaffold` with a `LargeTopAppBar` (collapsing). Reachability banner (reuse the TimeSync banner style keyed on `ProbeState`). Big number as `Text(style = MaterialTheme.typography.displayLarge, fontWeight = Bold)` centered in a `Card` with `animateContentSize()` so it ticks smoothly on change. Status pill = M3 tonal `Chip` with a leading colored-dot `Box` (per color mapping). `auto_mode` as a separate `AssistChip`. Pull-to-refresh via `PullToRefreshBox` (M3). Wire `lifecycle` to `viewModel.startPolling()`/`stopPolling()` (e.g. `DisposableEffect` with `LocalLifecycleOwner` observing ON_RESUME/ON_PAUSE). Loading = M3 `LinearProgressIndicator`; empty/error states in `OutlinedCard` with icon + localized strings.
-
-### D. History tab
-- [x] **Task 5: CREATE** `android/app/src/main/java/com/animalcounter/ui/history/HistoryViewModel.kt` — `AndroidViewModel` exposing `StateFlow<HistoryUiState>` (Loading/Loaded/OutOfRange/Error/Empty). Holds the accumulated `List<SessionSummary>`, current `limit=50`/`offset`, `total`, and filter state (selected date `LocalDate?` + selected status filter `String?`). `loadFirstPage()` (refresh), `loadNextPage()` (append when scrolling near the end and `offset < total`). Filter applied client-side on the loaded summaries (date compares to `start_at` parsed to locale date; status compares to `end_reason`/`running`). Reachability probe. Light in-memory cache (the accumulated list).
-- [x] **Task 6: CREATE** `android/app/src/main/java/com/animalcounter/ui/history/HistoryScreen.kt` — polished Compose list. `Scaffold` + `LargeTopAppBar` with collapsing scroll behavior + a top-app-bar Refresh action (TimeSync pattern). `LazyColumn` of M3 `Card` rows (one `Card` per session, with a `ListItem`-style inner layout): video filename (leading `Icon`), start date/time (locale, parsed from `start_at`, `labelSmall`), duration, `net_count` with direction icon (arrow based on sign), status pill (M3 `Chip` + colored dot per mapping), video-complete `Icon` trailing. Filter controls in a collapsible row: `DatePickerDialog`-backed `OutlinedButton` for date + a `FilterChip` group (single-choice) for status. Pull-to-refresh via `PullToRefreshBox`. Tap row → `navController.navigate("session/$sessionId")`. Infinite-scroll trigger on last visible item. Loading = M3 `LinearProgressIndicator`; empty/error states in `OutlinedCard`. Reachability banner.
-
-### E. Session detail screen
-- [x] **Task 7: CREATE** `android/app/src/main/java/com/animalcounter/ui/sessiondetail/SessionDetailViewModel.kt` — `AndroidViewModel` taking `sessionId` (passed in via factory or saved-state handle). `StateFlow<SessionDetailUiState>` (Loading/Loaded/OutOfRange/Error). `load(sessionId)` calls `JetsonClient.getSession`. Reachability probe. Expose parsed `SessionDetail` for the screen to render A–G groups.
-- [x] **Task 8: CREATE** `android/app/src/main/java/com/animalcounter/ui/sessiondetail/SessionDetailScreen.kt` — polished Compose detail. `Scaffold` + centered `TopAppBar` with back nav arrow. Vertical scrollable `Column` (or `LazyColumn`) of Material 3 `ElevatedCard`s, one per group, each with an `Icon` + `titleMedium` title header and `HorizontalDivider`:
-  - **En-tête**: video filename (`labelSmall`), start/end (locale), duration, status pill (M3 `Chip` + colored dot per mapping), end_reason label (`bodyMedium`).
-  - **Comptage**: net (`headlineSmall`) + `count_left_to_right` / `count_right_to_left` (directional, with arrow icons), `unique_track_ids`, `id_switch_recoveries`, `max_concurrent_tracks` (from `end.counters`, fall back to last heartbeat count for running sessions) in a tidy key/value `ListItem` grid.
-  - **Guards**: per-type counters from `end.counters.guard_interventions` (`lost_buffer_expired`, `mirror_guard`, `resurrection`, `reid_rebind`) as mini horizontal `LinearProgressIndicator`-style bars or `ListItem` count rows.
-  - **Performance/thermique**: aggregate from `heartbeats[]` (fps avg/min vs 30, frames dropped, SoC temp avg/peak, inference ms, gpu util). Render "N/A" gracefully when a field is absent (best-effort thermal) using `optInt`/`optString`.
-  - **Config snapshot**: model, thresholds, guard params, `git_commit` (monospace `bodySmall`), `image_tag` (from `config` / `start.config`).
-  - **Vidéo**: size, duration, resolution, codec, complete/truncated, path (from `end.video`; "running / N/A" when absent).
-  - **Système**: `disk_free` start (last heartbeat) / end (`end.system`), `cpu_load_avg` (three values), `mem_used`.
-  - **Timeline d'événements**: chronological list of `events[]` → each a compact `ListItem`/row `{ts (locale, labelSmall), event_type label (bodyMedium), detail (bodySmall, monospace if JSON-ish)}`.
-  Generous 16dp card padding, 8–12dp inter-card gaps, M3 `shapes` rounded corners. Loading = M3 `LinearProgressIndicator`; error/empty in `OutlinedCard`. Reachability banner.
-
-### F. Dashboard tab
-- [x] **Task 9: CREATE** `android/app/src/main/java/com/animalcounter/ui/dashboard/DashboardViewModel.kt` — `AndroidViewModel` exposing `StateFlow<DashboardUiState>` + period selector (7/30 days). `load(days)` calls `JetsonClient.getSummary`. Derive clean-vs-power-loss split by reusing... (note: summary only carries `guard_events`/`sessions`/`net_count` per day, not status split — compute status split client-side only if a per-session source is available; otherwise show sessions + net_count + guard_events per day as the dashboard cards). Reachability probe.
-- [x] **Task 10: CREATE** `android/app/src/main/java/com/animalcounter/ui/dashboard/DashboardScreen.kt` — polished Compose dashboard. `Scaffold` + centered `TopAppBar`. Period selector as M3 `SingleChoiceSegmentedButton` (7 / 30 days) at the top. Compose `Canvas`-drawn bar chart of `net_count` per day (axis baseline + value labels on bars, dynamic-color bars, `drawRoundRect` with M3 `colorScheme.primary`, light grid lines) sized responsively. Summary `Card`s in a 2-column row: total counted (period, `headlineMedium`), total sessions, total guard events, avg/day. Pull-to-refresh via `PullToRefreshBox`. Loading = M3 `LinearProgressIndicator`; empty/error in `OutlinedCard`. Reachability banner.
-
-### G. Startups tab
-- [x] **Task 11: CREATE** `android/app/src/main/java/com/animalcounter/ui/startups/StartupsViewModel.kt` — `AndroidViewModel` exposing `StateFlow<StartupsUiState>` (Loading/Loaded/OutOfRange/Error/Empty). `load()` calls `JetsonClient.getStartups(ip, 50)`. Tri plus récent d'abord (sort by `boot_at` desc). Reachability probe.
-- [x] **Task 12: CREATE** `android/app/src/main/java/com/animalcounter/ui/startups/StartupsScreen.kt` — polished Compose list. `Scaffold` + `LargeTopAppBar` with collapsing scroll behavior + top-app-bar Refresh action. `LazyColumn` of M3 `Card` rows (one per startup): `boot_at` (locale, `labelSmall`), `image_tag` (`titleMedium`), `git_commit` (monospace `bodySmall`), `mode` (`AssistChip`), `config_notable` (key/value `ListItem`s). Pull-to-refresh via `PullToRefreshBox`. Loading = M3 `LinearProgressIndicator`; empty/error in `OutlinedCard`. Reachability banner.
-
-### H. Localization
-- [x] **Task 13: EDIT** `android/app/src/main/res/values/strings.xml` — add EN fallback keys: `tab_history` ("History"), `tab_dashboard` ("Dashboard"), `tab_startups` ("Startups"); status labels `status_running`/`status_clean`/`status_power_loss`/`status_unknown`/`status_ended`; unit suffixes `unit_seconds` ("s"), `unit_celsius` ("°C"), `unit_mb` ("MB"), `unit_gb` ("GB"); A–G group titles `group_header`/`group_counting`/`group_guards`/`group_perf`/`group_config`/`group_video`/`group_system`/`group_timeline`; empty/error messages (`empty_history`, `empty_startups`, `empty_dashboard`, `error_load`, `error_out_of_range`, `error_network`); dashboard labels (`dashboard_period_7`, `dashboard_period_30`, `dashboard_total_counted`, `dashboard_total_sessions`, `dashboard_total_guards`, `dashboard_avg_per_day`, `dashboard_title`); live-count labels (`live_auto_mode`, `live_count_label`, `live_status_label`); detail labels (`detail_title`, `detail_back`, counters labels, guard-type labels, event-type labels). Keep all existing BL-65 keys intact.
-- [x] **Task 14: EDIT** `android/app/src/main/res/values-fr/strings.xml` — mirror all new keys from Task 13 in French (`tab_history`="Historique", `tab_dashboard`="Tableau de bord", `tab_startups`="Démarrages", `status_running`="En cours", `status_clean`="Propre", `status_power_loss`="Coupure secteur", `status_unknown`="Inconnu", etc.). Keep all existing BL-65 FR keys intact.
-
-### I. Cleanup
-- [x] **Task 15: DELETE** `android/app/src/main/java/com/animalcounter/ui/placeholder/PlaceholderScreen.kt` — after Task 2 removes its only references, delete the now-dead placeholder (it was only used by the two replaced tabs). Verify no remaining imports before deleting.
-
-### J. Tests
-- [x] **Task 16: CREATE** `android/app/src/test/java/com/animalcounter/net/JetsonClientParsingTest.kt` — unit tests (JUnit4, already on classpath via `kotlinx.coroutines`/android test? if not, add `testImplementation(libs.junit4)` + `testImplementation(libs.kotlinx.coroutines.test)` to `app/build.gradle.kts` `dependencies{}`) that feed mock JSON fixtures (mirroring the BL-68 shapes from `tests/companion_history_reader.py` + the `/api/count` brief shape) into a pure parse function and assert every field:
-  - `getCount` parse: count, status, auto_mode, timestamp, session_id.
-  - `getHistory` parse: pagination wrapper + a summary with `end_reason="clean"` + a running session (`end_reason=null`, `status="running"`).
-  - `getSession` parse: ended session with full `end.counters`/`end.video`/`end.system`, AND a running session with `end=null` (assert counters fall back to last heartbeat).
-  - `getSummary` parse: `{days, daily[]}` with multiple day buckets.
-  - `getStartups` parse: list with `boot_at`, `image_tag`, `git_commit`, `mode`, `config_notable`.
-  Extract the JSON→data-class parse logic into package-private functions (e.g. `JetsonClient.parseLiveCount(json): LiveCount`) so tests can call them directly without HTTP. Add `testImplementation` deps only if missing (check `libs.versions.toml`/`build.gradle.kts` first).
-- [x] **Task 17: VERIFY** `cd android && ./gradlew assembleDebug` builds the APK and the new test task compiles (`./gradlew testDebugUnitTest` if test deps are wired; otherwise at least `assembleDebug` must succeed). No Jetson/video business validation — UI-only feature.
+- [x] **Task 1: ADD `video()` writer + `record_start_count` to heartbeat** `app/src/core/history.py` — Add a `video(self, video_id, filename, duration, count_delta, session_id=None)` method that builds a `{"type":"video","video_id":...,"filename":...,"duration":...,"count_delta":...,"session_id":...,"ts":_utcnow_iso()}` line and appends it via the existing `self._append(line)` (best-effort, guards on `self._stopped`/`self.session_id is None` like `emit_event`). In `heartbeat()`, add `"record_start_count": <int or None>` sourced from `getattr(self.shared_state.display_thread, "record_start_count", None)` alongside the existing `count`/`last_segment`/`status`/`auto_mode` reads, so the companion can compute `live_delta = heartbeat.count - heartbeat.record_start_count`.
+- [x] **Task 2: EMIT `video` entry in `_finalize_recording`** `app/src/main.py` — After the successful `os.rename(self.filename, output_path)` (and before/after the `shared_state.status`/`recording` reset), call the history writer's new `video()` with: `video_id` = the timestamp stem `counting-{time.strftime('%Y%m%d-%H%M%S')}` (strip the `tocompress-` prefix and the `-#{delta}` suffix from `output_path`), `filename` = `os.path.basename(output_path)`, `duration` = `self.record_duration`, `count_delta` = `delta`, `session_id` = the current session id from `shared_state.history.session_id` (best-effort via getattr; None if unavailable). Wrap in try/except so a history write failure never breaks recording finalization (mirrors the "history is best-effort" contract). Do NOT emit on the rename-failure `return` path. Derive the `time.strftime` stem from the SAME `time.strftime('%Y%m%d-%H%M%S')` call already used to build `output_path` (capture it into a local once, reuse for both the filename and the `video_id`), so the id and the on-disk filename stay in lockstep.
+- [x] **Task 3: RENAME companion routes (clean break)** `ansible/playbooks/system/configure_companion.yml` — In the embedded script's `do_GET` dispatch, change `if path == "/api/history":` → `if path == "/api/sessions":` and `if path == "/api/history/summary":` → `if path == "/api/summary":`. Leave the bodies (pagination/daily-aggregate logic) unchanged. Do NOT add any handler for the old paths — they fall through to the existing `GET {} -> 404` line. Update the two endpoint-listing comment blocks (the playbook top-of-file `# What it does:` block and the script-header `# Endpoints:` block) to list `/api/sessions`, `/api/summary`, and the two new routes from Tasks 4-5.
+- [x] **Task 4: ADD `/api/videos` list endpoint** `ansible/playbooks/system/configure_companion.yml` — Extend `HistoryIndex` with a `video` index: in `_build()`, collect `type == "video"` lines into `self._videos` (a dict keyed by `video_id`) and `self._video_order` (newest-first by the line's `ts`). Add a `video_summaries(self, limit=50, offset=0)` method mirroring `session_summaries` that returns `(rows, total)` where each row is `{"video_id","filename","duration","count_delta","session_id","ts","status":"ready"}`. Add a `_running_video_row()` helper that, from `self.latest_count()` (the newest heartbeat), synthesizes a first row when a recording is in progress: `status:"running"`, `video_id` = the `counting-{ts}` stem derived from the heartbeat's `last_segment` filename (parse the `tocompress-counting-{ts}-#N.mp4` / `tmp-counting-{ts}.mp4` stem; if `last_segment` is absent or unparseable, omit the running row), `count_delta` = `hb["count"] - hb["record_start_count"]` (only when `record_start_count` is present and non-None; else omit), `filename` = `counting-{ts}.mp4` (no `#N`), `session_id`/`ts` from the heartbeat. Add a new `if path == "/api/videos":` route that reads `limit`/`offset` via the existing `_int_arg`, calls `video_summaries`, prepends the running row (so it is index 0 and excluded from pagination offset math — i.e. `total` includes it, and `offset=0` returns it first), and returns `{"videos": rows, "limit":..., "offset":..., "total":...}`. Newest-first ordering: the running row is always first, then finalized videos newest-first.
+- [x] **Task 5: ADD `/api/video/<id>` Range-streaming endpoint** `ansible/playbooks/system/configure_companion.yml` — Add a new `if path.startswith("/api/video/"):` route (note: must be checked AFTER `/api/videos` so the plural isn't shadowed — actually `startswith` vs `==` are distinct, but place the `/api/videos` `==` check first for clarity). Extract `vid = path[len("/api/video/"):]`; reject empty/missing with 404. Resolve the file by `glob.glob(os.path.join(FILES_DIR, "counting-" + vid + "-*.mp4"))` (where `FILES_DIR` is the directory of `HISTORY_FILE_HOST`, i.e. `/data/orin/files`); if no match → 404 `{"error":"video not found"}`. If multiple matches (shouldn't happen, but defensively) pick the lexicographically first / newest by mtime. Implement HTTP Range support: read `self.headers.get("Range")`, `os.stat` the file for size, and respond with either 200 (full file, `Content-Length`, `Accept-Ranges: bytes`) when no Range header, or 206 (`Content-Range: bytes {start}-{end}/{size}`, `Content-Length: {end-start+1}`, `Accept-Ranges: bytes`) for a single `bytes=start-end` / `bytes=start-` range. Stream in chunks (e.g. 64 KiB) via `self.wfile.write` to avoid loading large files into memory. On malformed Range, respond 416 `Range Not Satisfiable` with `Content-Range: bytes */{size}`. Set `Content-Type: video/mp4`. Log the request (`GET /api/video/<id> -> 200/206/404/416`). Multi-range is NOT required (single-range resumable download suffices for the Android player).
+- [x] **Task 6: SYNC the doc reference** `docs/11_jetson_companion.md` — If the companion doc lists the endpoint table, update `/api/history`→`/api/sessions`, `/api/history/summary`→`/api/summary`, and add `/api/videos` + `/api/video/<id>` rows so the docs match the implementation. (This is a doc-only touch; if no such table exists, skip.) [Planner note: implementer should grep `docs/` for `/api/history` and update any stale references.]
 
 ## Validation
-- `cd android && ./gradlew assembleDebug` builds the APK with no errors.
-- 5 bottom-nav tabs render; the Synchro horloge tab works unchanged (BL-65 time push + log intact).
-- Comptage live polls `/api/count` while foregrounded and stops on background.
-- Historique lists sessions (paginated, filterable, refresh), tapping a row opens the Détail screen with all A–G groups.
-- Dashboard shows the 7/30-day bar chart + summary cards.
-- Démarrages lists startups newest-first.
-- FR/EN strings switch with the system locale.
-- Reachability banner appears on all four data tabs.
-- JSON-parsing unit tests pass for all 5 endpoints (incl. running-session `end=null` fallback).
+
+- **Syntax (per AGENTS.md, Python only — NEVER bun):**
+  - `python3 -m py_compile app/src/core/history.py app/src/main.py`
+  - The companion script is embedded in a YAML `copy.content` block; extract-check with `python3 - <<'PY'` pulling the block, or simply `python3 -m py_compile` the rendered script on the Jetson after `ansible-playbook` re-runs (idempotent — `changed` only on content change, then the notify handler restarts the service).
+- **Unit/local (no Jetson needed):**
+  - Append a fake `video` line + `heartbeat` (with `record_start_count`) to a scratch JSONL and point the companion's `HistoryIndex` at it; assert `video_summaries()` returns the row and `_running_video_row()` computes the delta. (Best-effort manual check; there is no formal Python test harness in this repo.)
+- **End-to-end on Jetson (STANDARD validation mode, reference video only):**
+  - `scripts/validate_on_jetson.sh` runs the reference video and parses `validation-report.json`. This change is instrumentation + endpoints, NOT counting logic, so the pig count must remain unchanged (no regression). `pass` → ship; `count_mismatch` → HITL pause (do NOT auto-correct).
+  - Manual companion checks over the hotspot after deploy:
+    - `curl http://<jetson>:8090/api/sessions?limit=5` → 200, `{sessions:[...],total}` (old `/api/history` → 404).
+    - `curl http://<jetson>:8090/api/summary?days=7` → 200 (old `/api/history/summary` → 404).
+    - `curl http://<jetson>:8090/api/videos?limit=10` → 200, running recording as first row (`status:"running"`) when a recording is active.
+    - `curl -H "Range: bytes=0-1023" http://<jetson>:8090/api/video/<id> -o /tmp/head.mp4` → 206, `Content-Range: bytes 0-1023/<size>`; full `curl ... -o file.mp4` → 200 playable on Android.
+    - `curl http://<jetson>:8090/api/video/nonexistent` → 404.
 
 ## Risks
-- **Thermal/perf fields best-effort**: `heartbeats[]` thermal/system fields are documented as best-effort and may be absent on some builds — every Perf/Thermal/Système UI element must render "N/A" gracefully instead of crashing on null/missing JSON keys (use `optInt`/`optString`/`optJSONObject` defensively, not `getInt`/`getString`).
-- **`/api/count` shape not in this repo**: the live-count endpoint response (`{count, status, auto_mode, timestamp, session_id}`) comes from the brief, not from a fixture in this repo — parse defensively (`optInt`/`optString` with defaults) so a missing field degrades to "unknown" rather than throwing.
-- **Status mapping divergence**: the brief says "clean/power-loss/unknown/running" but the real API splits this across `status` (ended/running) + `end_reason` (clean/power-loss/unknown). If the implementer follows the brief literally the pills will be wrong — Task 6/8 must branch on `end_reason`, not `status`.
-- **`end == null` for running sessions**: the detail screen must never `getJSONObject("end")` unconditionally — use `optJSONObject("end")` and fall back to `heartbeats[last]`.
-- **Test deps**: `app/src/test` does not exist yet and `testImplementation` may not be wired — Task 16 must check `libs.versions.toml`/`build.gradle.kts` and add `junit4` + `kotlinx-coroutines-test` only if absent.
-- **Material 3 API churn**: `PullToRefreshBox` is the current Material 3 pull-to-refresh (replaces the deprecated `PullRefreshIndicator`); pin to the Compose BOM already in the project to avoid version drift.
+
+- **`video` line vs compaction** — The 1x/day compactor collapses ended sessions into `summary` lines. `video` lines are per-recording facts that must survive compaction. Mitigation: the compactor already re-emits `startup` lines verbatim; do the same for `video` lines (do not fold them into `summary`). If the implementer finds the compactor drops unknown line types, explicitly pass `video` lines through.
+- **video_id ↔ filename drift** — The `video_id` stem is captured at finalize from the same `time.strftime` call that builds the filename, so they cannot drift at write time. The cron later rewrites `tocompress-counting-{ts}-#N.mp4` → `counting-{ts}-#N.mp4` (same `{ts}`), so the glob `counting-{id}-*.mp4` still resolves post-compression. Risk: if two recordings finalize in the same wall-clock second, the stems collide. Mitigation: acceptable for this single-camera, ~2-min-recording use case; the glob would return both and the endpoint picks one (defensive). No counter change needed.
+- **Range parsing edge cases** — Malformed `Range` headers could crash the handler. Mitigation: parse defensively, respond 416 (not 500) on unparseable ranges, and wrap the whole file-serving path in try/except → 500 with a JSON error body so a bad request never kills the companion thread (matches the best-effort logging style of the other handlers).
+- **`/api/video/<id>` shadowing `/api/videos`** — The `startswith("/api/video/")` route must not swallow `/api/videos`. Mitigation: check the exact `== "/api/videos"` route FIRST, then `startswith("/api/video/")` (the trailing slash in the prefix means `/api/videos` — no trailing slash — never matches `startswith("/api/video/")` anyway, but ordering removes all doubt).
+- **Running-row synthesis when no recording is active** — `latest_count()` may return the last heartbeat of an ended session where `record_start_count` is stale/None. Mitigation: only synthesize the running row when `record_start_count` is present and non-None AND the heartbeat is "recent" (the existing `latest_count()` already prefers the running session); otherwise omit the row. This keeps a phantom running row from appearing when the app is idle.
