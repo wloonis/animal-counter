@@ -114,8 +114,13 @@ spec:
                     DELTA=$(echo "$ORIG" | grep -oE '"count_delta": [0-9]+' | grep -oE '[0-9]+$')
                     SID=$(echo "$ORIG" | grep -oE '"session_id": "[^"]*"' | grep -oE '"[a-f0-9-]+"' | tr -d '"')
                     OUTBN=$(basename "$out")
-                    NOW=$(date -u +%Y-%m-%dT%H:%M:%S.%6NZ)
-                    echo "{\"type\": \"video\", \"video_id\": \"$VID\", \"filename\": \"$OUTBN\", \"duration\": ${RDUR:-null}, \"file_duration\": $ACTUAL, \"count_delta\": ${DELTA:-0}, \"session_id\": \"$SID\", \"ts\": \"$NOW\"}" >> /videos/counting-history.jsonl
+                    # Reuse the ORIGINAL finalize ts (NOT now): the companion
+                    # attributes events by [ts - duration, ts], so ts MUST stay
+                    # the finalize time. The companion collision keeps the last
+                    # line on equal ts (>=), so this corrected line (same ts,
+                    # +file_duration) supersedes the finalize-time entry.
+                    OTS=$(echo "$ORIG" | grep -oE '"ts": "[^"]*"' | sed -E 's/.*"ts": "([^"]*)".*/\1/')
+                    echo "{\"type\": \"video\", \"video_id\": \"$VID\", \"filename\": \"$OUTBN\", \"duration\": ${RDUR:-null}, \"file_duration\": $ACTUAL, \"count_delta\": ${DELTA:-0}, \"session_id\": \"$SID\", \"ts\": \"$OTS\"}" >> /videos/counting-history.jsonl
                   fi
                 fi
 

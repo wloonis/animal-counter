@@ -298,7 +298,11 @@
                                   video_order.append(vid)
                               else:
                                   # Keep the newest by ts on collision.
-                                  if (obj.get("ts") or "") > (
+                                  # Use >= (not >) so a corrected video line
+                                  # with the SAME finalize ts (e.g. the cron
+                                  # file_duration rewrite) supersedes the
+                                  # original finalize-time entry.
+                                  if (obj.get("ts") or "") >= (
                                       videos[vid].get("ts") or ""
                                   ):
                                       videos[vid] = obj
