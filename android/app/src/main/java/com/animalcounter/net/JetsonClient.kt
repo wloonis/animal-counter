@@ -8,6 +8,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.net.HttpURLConnection
+import java.net.URLEncoder
 import java.net.URL
 
 /**
@@ -215,4 +216,109 @@ object JetsonClient {
             .removePrefix("https://")
             .substringBefore(':')
             .ifBlank { "192.168.100.1" }
+
+    // -----------------------------------------------------------------------
+    // BL-68 / BL-69 read-only history + count endpoints
+    // -----------------------------------------------------------------------
+    //
+    // The five methods below all reuse the transport pattern of
+    // [identify]/[postTime] (stdlib [HttpURLConnection], bound to the active
+    // WiFi [Network] via [openBound], 5s connect/read timeouts,
+    // `finally { conn.disconnect() }`, typed failures). They return an
+    // [ApiResult] (Success/HttpError/NetworkError) instead of a [SyncEvent]
+    // because the history tabs render structured data, not a log line.
+    //
+    // The JSON → data-class decoders live in [Models.kt] and are `internal`
+    // so the unit tests can feed mock fixtures straight into them.
+
+    /** `GET /api/count` → [LiveCount]. */
+    suspend fun getCount(ip: String, network: Network? = null): ApiResult<LiveCount> =
+        getJson(ip, "/api/count", network) { parseLiveCount(it) }
+
+    /** `GET /api/history?limit=&offset=` → [HistoryPage]. */
+    suspend fun getHistory(
+        ip: String,
+        limit: Int = 50,
+        offset: Int = 0,
+        network: Network? = null,
+    ): ApiResult<HistoryPage> =
+        getJson(ip, "/api/history?limit=$limit&offset=$offset", network) { parseHistory(it) }
+
+    /** `GET /api/sessions/<id>` → [SessionDetail] (A–G groups, `end` may be null). */
+    suspend fun getSession(
+        ip: String,
+        id: String,
+        network: Network? = null,
+    ): ApiResult<SessionDetail> =
+        getJson(
+            ip,
+            "/api/sessions/" + URLEncoder.encode(id, "UTF-8"),
+            network,
+        ) { parseSessionDetail(it) }
+
+    /** `GET /api/history/summary?days=N` → [Summary] (daily buckets). */
+    suspend fun getSummary(
+        ip: String,
+        days: Int = 7,
+        network: Network? = null,
+    ): ApiResult<Summary> =
+        getJson(ip, "/api/history/summary?days=$days", network) { parseSummary(it) }
+
+    /** `GET /api/startups?limit=` → [StartupList] (newest boot first). */
+    suspend fun getStartups(
+        ip: String,
+        limit: Int = 50,
+        network: Network? = null,
+    ): ApiResult<StartupList> =
+        getJson(ip, "/api/startups?limit=$limit", network) { parseStartups(it) }
+
+    /** `GET <path>` → raw response body string (for offline caching of the
+     * history/dashboard/startups tabs). Same transport as the typed getters
+     * (WiFi-bound, 5s timeouts, never throws); returns [ApiResult.Success]
+     * with the body, or HttpError/NetworkError. The caller caches the body on
+     * success and parses it with the `internal` parsers in [Models.kt]. */
+    suspend fun fetchRaw(
+        ip: String,
+        path: String,
+        network: Network? = null,
+    ): ApiResult<String> = getJson(ip, path, network) { it }
+
+    /**
+     * Shared GET transport for the read-only history endpoints: binds to
+     * [network] (the WiFi HotSpot) when non-null, applies the 5s timeouts,
+     * drains the body, and maps HTTP 200 → [ApiResult.Success] (parsed via
+     * [parse]), non-2xx → [ApiResult.HttpError], thrown/parse failure →
+     * [ApiResult.NetworkError]. Never throws.
+     */
+    private suspend fun <T> getJson(
+        ip: String,
+        path: String,
+        network: Network?,
+        parse: (String) -> T,
+    ): ApiResult<T> = withContext(Dispatchers.IO) {
+        try {
+            val url = URL("http://${sanitizeIp(ip)}:$JETSON_PORT$path")
+            val conn = (openBound(url, network) as HttpURLConnection).apply {
+                requestMethod = "GET"
+                connectTimeout = CONNECT_TIMEOUT_MS
+                readTimeout = READ_TIMEOUT_MS
+                instanceFollowRedirects = false
+                useCaches = false
+                setRequestProperty("Accept", "application/json")
+            }
+            try {
+                val code = conn.responseCode
+                val body = conn.readBody(code)
+                if (code == 200) {
+                    ApiResult.Success(parse(body))
+                } else {
+                    ApiResult.HttpError(code)
+                }
+            } finally {
+                conn.disconnect()
+            }
+        } catch (t: Throwable) {
+            ApiResult.NetworkError(t.message ?: t.javaClass.simpleName)
+        }
+    }
 }
