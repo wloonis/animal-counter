@@ -290,7 +290,18 @@ class DisplayThread(threading.Thread):
         # Capture the recording (video) duration before resetting state.
         if self.record_start_time is not None:
             self.record_duration = time.monotonic() - self.record_start_time
-        output_path = os.path.join(settings.OUTPUT_VIDEO_PATH, f"tocompress-counting-{time.strftime('%Y%m%d-%H%M%S')}-#{shared_state.counter_to_right}.mp4")
+        # BL-70 (issue #74): the filename carries the per-video delta (pigs
+        # counted *during this recording*) instead of the global cumulative
+        # counter_to_right. The snapshot was taken at recording start, before
+        # the triggering frame's counting.count() ran, so the triggering pig is
+        # not yet counted in the zero-point. delta = end - start. Defensive
+        # guard: if the snapshot is missing (e.g. finalize from a path that
+        # skipped recording-start), fall back to 0 so the filename stays well-formed.
+        if self.record_start_count is not None:
+            delta = shared_state.counter_to_right - self.record_start_count
+        else:
+            delta = 0
+        output_path = os.path.join(settings.OUTPUT_VIDEO_PATH, f"tocompress-counting-{time.strftime('%Y%m%d-%H%M%S')}-#{delta}.mp4")
         try:
             os.rename(self.filename, output_path)
         except OSError as e:
