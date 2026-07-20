@@ -285,7 +285,7 @@ class DisplayThread(threading.Thread):
         self.video_writer = None
         # Capture the recording (video) duration before resetting state.
         if self.record_start_time is not None:
-            self.record_duration = time.time() - self.record_start_time
+            self.record_duration = time.monotonic() - self.record_start_time
         output_path = os.path.join(settings.OUTPUT_VIDEO_PATH, f"tocompress-counting-{time.strftime('%Y%m%d-%H%M%S')}-#{shared_state.counter_to_right}.mp4")
         try:
             os.rename(self.filename, output_path)
@@ -489,7 +489,7 @@ class DisplayThread(threading.Thread):
                     output_path = os.path.join(settings.OUTPUT_VIDEO_PATH, f"tmp-counting-{time.strftime('%Y%m%d-%H%M%S')}.mp4")
                     os.makedirs(settings.OUTPUT_VIDEO_PATH, exist_ok=True)
                     self.filename = output_path
-                    self.record_start_time = time.time()
+                    self.record_start_time = time.monotonic()
                     logger.info(f"Record started: {self.filename}")
 
                     self.video_writer = cv2.VideoWriter(

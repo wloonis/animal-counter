@@ -44,7 +44,7 @@ spec:
               for f in /videos/tocompress-*; do
                 [ -e "$f" ] || continue
 
-                out="/videos/$(basename "$f" | sed 's/^tocompress-//; s/-#[0-9]*\.mp4$/.mp4/')"
+                out="/videos/$(basename "$f" | sed 's/^tocompress-//')"
 
                 # Compute input duration; trim the last TRIM_TAIL seconds.
                 DUR=$(ffprobe -v error -show_entries format=duration -of csv=p=0 "$f")
