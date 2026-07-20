@@ -23,6 +23,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.InputStream
@@ -116,12 +117,17 @@ class VideoDetailViewModel(
      *  videoId. Best-effort: a failure leaves the previous detail (or null). */
     fun loadDetail() {
         val videoId = _ui.value.row.videoId ?: return
-        val cm = cm()
-        val wifi = if (cm != null) activeWifiNetwork(cm) else null
         viewModelScope.launch {
+            // Wait for the DataStore IP before fetching — the seed
+            // DEFAULT_JETSON_IP (hotspot) is wrong when the Jetson is on
+            // internet WiFi (192.168.0.180); fetching too early hits the
+            // wrong host and fails silently.
+            val ip = repo.jetsonIp.first()
+            val cm = cm()
+            val wifi = if (cm != null) activeWifiNetwork(cm) else null
             try {
                 when (val r = JetsonClient.getVideoDetail(
-                    ip = _ip.value, videoId = videoId, network = wifi,
+                    ip = ip, videoId = videoId, network = wifi,
                 )) {
                     is ApiResult.Success -> _detail.value = r.data
                     is ApiResult.HttpError, is ApiResult.NetworkError -> {
