@@ -17,7 +17,7 @@ import time
 import logging
 from queue import Queue
 
-from settings import Settings, settings
+from settings import Settings
 from core.inference import Inference
 from utils.frame_source import FrameSource
 from utils.timer_fps import TimerFps

@@ -22,15 +22,13 @@ import os
 import numpy as np
 from queue import Queue
 
-from settings import settings
 from core.tracking import Tracking
 from core.counting import Counting
 from ui.rendering import Rendering
 from utils.timer_fps import TimerFps
 from supervision import Detections
 
-from state import shared_state, logger
-
+from state import shared_state, logger, settings
 
 class DisplayThread(threading.Thread):
     """
