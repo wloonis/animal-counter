@@ -99,3 +99,4 @@ Task 5: ADD VideoDetailViewModel (download state) — 7db887f
 Task 6: REWIRE VideoDetailScreen (VideoDetailViewModel nav-args, header+download/open card, still-recording hint) — c286990
 Task 7: REWIRE SessionsViewModel path (/api/sessions) — e2b8433
 Task 8: REWIRE DashboardViewModel path (/api/summary) — d32ca58
+Task 9: UPDATE nav route (video/{videoId} with VideoRow string args) — 5defbdd
