@@ -10,11 +10,11 @@ import com.animalcounter.data.DEFAULT_JETSON_IP
 import com.animalcounter.data.OfflineCache
 import com.animalcounter.data.SettingsRepository
 import com.animalcounter.net.ApiResult
-import com.animalcounter.net.HistoryPage
+import com.animalcounter.net.SessionPage
 import com.animalcounter.net.JetsonClient
 import com.animalcounter.net.SessionSummary
 import com.animalcounter.net.activeWifiNetwork
-import com.animalcounter.net.parseHistory
+import com.animalcounter.net.parseSessions
 import com.animalcounter.ui.timesync.ProbeState
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -24,7 +24,7 @@ import java.time.Instant
 
 /**
  * UI state for the Sessions list (Dashboard -> "Sessions: N" -> list of
- * session-level entries). Reuses the `/api/history` payload (each session =
+ * session-level entries). Reuses the `/api/sessions` payload (each session =
  * one video/counting run) but renders session-centric fields (session id,
  * start, end, end_reason, heartbeats, events) and navigates to the full
  * Session detail (`session/{sessionId}`).
@@ -142,11 +142,11 @@ class SessionsViewModel(
             val wifi = if (cm != null) activeWifiNetwork(cm) else null
             when (val result = JetsonClient.fetchRaw(
                 ip = _ip.value,
-                path = "/api/history?limit=$HISTORY_LIMIT&offset=$offset",
+                path = "/api/sessions?limit=$HISTORY_LIMIT&offset=$offset",
                 network = wifi,
             )) {
                 is ApiResult.Success -> {
-                    val page: HistoryPage = parseHistory(result.data)
+                    val page: SessionPage = parseSessions(result.data)
                     if (!append) OfflineCache.save(getApplication(), CACHE_KEY, result.data)
                     if (append) cache.addAll(page.sessions)
                     else { cache.clear(); cache.addAll(page.sessions) }
@@ -175,7 +175,7 @@ class SessionsViewModel(
     /** Offline fallback — serve the last cached first page. */
     private fun loadCached(): SessionsUiState? {
         val cached = OfflineCache.load(getApplication(), CACHE_KEY) ?: return null
-        val page = runCatching { parseHistory(cached.json) }.getOrNull() ?: return null
+        val page = runCatching { parseSessions(cached.json) }.getOrNull() ?: return null
         cache.clear(); cache.addAll(page.sessions)
         total = page.total.coerceAtLeast(cache.size)
         offset = cache.size

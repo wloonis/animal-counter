@@ -67,6 +67,7 @@
     <string name="filter_status_clean">Propre</string>
     <string name="filter_status_power_loss">Coupure secteur</string>
     <string name="filter_status_unknown">Inconnu</string>
+    <string name="filter_status_ready">Prêt</string>
     <string name="filter_date_label">Date</string>
     <string name="filter_date_none">Toutes les dates</string>
     <string name="filter_clear">Effacer</string>
@@ -171,4 +172,12 @@
 
     <!-- BL-69 — live count status label -->
     <string name="live_status_label">Statut</string>
+
+    <!-- BL-72 — video detail (download / open) -->
+    <string name="video_count_delta">Delta comptage</string>
+    <string name="video_download">Télécharger</string>
+    <string name="video_open">Ouvrir</string>
+    <string name="video_unavailable">Vidéo indisponible (compression en cours ou nettoyée)</string>
+    <string name="video_still_recording">Enregistrement en cours</string>
+    <string name="video_download_failed">Échec du téléchargement</string>
 </resources>

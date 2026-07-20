@@ -1,5 +1,6 @@
 package com.animalcounter.ui.history
 
+import android.net.Uri
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -23,7 +24,6 @@ import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Clear
-import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.VideoFile
 import androidx.compose.material.icons.filled.Wifi
@@ -64,14 +64,13 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
 import com.animalcounter.R
-import com.animalcounter.net.SessionSummary
+import com.animalcounter.net.VideoRow
 import com.animalcounter.ui.common.OfflineBanner
 import com.animalcounter.ui.timesync.ProbeState
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -83,25 +82,29 @@ import java.time.OffsetDateTime
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.time.format.DateTimeParseException
-import java.time.temporal.ChronoUnit
 import java.util.Locale
 
 /**
- * Historique tab — paginated, filterable list of past + running sessions
- * from `GET /api/history`.
+ * Historique tab — paginated, filterable list of videos (past + running)
+ * from `GET /api/videos`.
+ *
+ * BL-72: the History tab now lists `/api/videos` rows (each row is already
+ * a video — the old `matchesFilters` video-only hack is gone). Each card
+ * shows the final filename (`counting-{ts}-#N.mp4`, straight from the API),
+ * the per-video `count_delta` (big number + direction arrow), the `duration`,
+ * and a status pill (Running = primary, Ready = tertiary). The status chip
+ * group is collapsed to All / Running / Ready (a [VideoRow] carries no
+ * `end_reason`). Tapping a row navigates to `video/{videoId}` passing the
+ * full [VideoRow] as nav args (no re-fetch on the detail screen).
  *
  * Visual language: Material 3 — `LargeTopAppBar` with collapsing scroll
  * behavior + a top-app-bar Refresh action; `LazyColumn` of flat M3 `Card`
- * rows (one per session) with a `ListItem`-style inner layout (video
- * filename with leading `Icon`, start date/time, duration, `net_count`
- * with a direction arrow, status pill = tonal `Chip` + colored dot per
- * the verified `end_reason` mapping, video-complete trailing `Icon`);
- * collapsible filter row with a `DatePickerDialog`-backed `OutlinedButton`
- * for the date and a single-choice `FilterChip` group for the status;
- * `PullToRefreshBox` for manual refresh; `LinearProgressIndicator` for
- * loading; empty/error states in `OutlinedCard`s; reachability banner.
+ * rows; collapsible filter row with a `DatePickerDialog`-backed
+ * `OutlinedButton` for the date and a single-choice `FilterChip` group for
+ * the status; `PullToRefreshBox` for manual refresh;
+ * `LinearProgressIndicator` for loading; empty/error states in
+ * `OutlinedCard`s; reachability banner.
  *
- * Tapping a row navigates to `video/{sessionId}` (the Détail vidéo screen).
  * Infinite-scroll: when the last visible item is near the end of the
  * loaded list and more pages are available, [HistoryViewModel.loadNextPage]
  * is invoked.
@@ -203,11 +206,14 @@ fun HistoryScreen(navController: NavController) {
                         if (s.rows.isEmpty()) {
                             item { EmptyCard() }
                         } else {
-                            items(s.rows, key = { it.sessionId ?: it.startAt ?: it.hashCode() }) { row ->
-                                SessionRowCard(
-                                    session = row,
+                            items(s.rows, key = { it.videoId ?: it.filename ?: it.hashCode() }) { row ->
+                                VideoRowCard(
+                                    row = row,
                                     onClick = {
-                                        row.sessionId?.let { navController.navigate("video/$it") }
+                                        val videoId = row.videoId
+                                        if (!videoId.isNullOrBlank()) {
+                                            navController.navigate(videoDetailRoute(row))
+                                        }
                                     },
                                 )
                             }
@@ -230,6 +236,28 @@ fun HistoryScreen(navController: NavController) {
             }
         }
     }
+}
+
+/**
+ * Build the `video/{videoId}?...` navigation route carrying the full
+ * [VideoRow] as nav args (so the detail screen needs no re-fetch). Every
+ * value is URL-encoded; null/blank fields encode to the empty string and
+ * are parsed defensively on the detail side.
+ *
+ * The route placeholder names (`videoId`, `filename`, `countDelta`,
+ * `duration`, `status`, `sessionId`, `ts`) match the NavHost registration
+ * (see [com.animalcounter.ui.nav.AnimalCounterApp]).
+ */
+internal fun videoDetailRoute(row: VideoRow): String = buildString {
+    append("video/")
+    append(Uri.encode(row.videoId ?: ""))
+    append("?filename="); append(Uri.encode(row.filename ?: ""))
+    append("&countDelta="); append(Uri.encode(row.countDelta?.toString() ?: ""))
+    append("&duration="); append(Uri.encode(row.duration?.toString() ?: ""))
+    append("&fileDuration="); append(Uri.encode(row.fileDuration?.toString() ?: ""))
+    append("&status="); append(Uri.encode(row.status))
+    append("&sessionId="); append(Uri.encode(row.sessionId ?: ""))
+    append("&ts="); append(Uri.encode(row.ts ?: ""))
 }
 
 // ---------------------------------------------------------------------------
@@ -325,12 +353,12 @@ private fun StatusChipRow(
     selected: HistoryStatusFilter,
     onSelect: (HistoryStatusFilter) -> Unit,
 ) {
+    // BL-72: a VideoRow carries only `status` (`ready` | `running`) — no
+    // `end_reason` — so the chip group is All / Running / Ready.
     val options = listOf(
         HistoryStatusFilter.ALL to R.string.filter_status_all,
         HistoryStatusFilter.RUNNING to R.string.filter_status_running,
-        HistoryStatusFilter.CLEAN to R.string.filter_status_clean,
-        HistoryStatusFilter.POWER_LOSS to R.string.filter_status_power_loss,
-        HistoryStatusFilter.UNKNOWN to R.string.filter_status_unknown,
+        HistoryStatusFilter.READY to R.string.filter_status_ready,
     )
     options.forEach { (filter, labelRes) ->
         FilterChip(
@@ -342,43 +370,43 @@ private fun StatusChipRow(
 }
 
 // ---------------------------------------------------------------------------
-// Session row
+// Video row
 // ---------------------------------------------------------------------------
 
 @Composable
-private fun SessionRowCard(session: SessionSummary, onClick: () -> Unit) {
+private fun VideoRowCard(row: VideoRow, onClick: () -> Unit) {
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = MaterialTheme.shapes.medium,
         onClick = onClick,
     ) {
         Column(modifier = Modifier.fillMaxWidth().padding(14.dp)) {
-            // Hero line: net count (big number) + direction arrow + status
+            // Hero line: count_delta (big number) + direction arrow + status
             // pill (secondary, trailing). The count is the primary info.
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
             ) {
-                val net = session.netCount ?: 0
-                val arrow = if (net >= 0) Icons.Filled.ArrowUpward else Icons.Filled.ArrowDownward
-                val arrowTint = if (net >= 0)
+                val delta = row.countDelta ?: 0
+                val arrow = if (delta >= 0) Icons.Filled.ArrowUpward else Icons.Filled.ArrowDownward
+                val arrowTint = if (delta >= 0)
                     MaterialTheme.colorScheme.primary
                 else MaterialTheme.colorScheme.tertiary
                 Icon(arrow, contentDescription = null, tint = arrowTint, modifier = Modifier.size(28.dp))
                 Text(
-                    text = net.toString(),
+                    text = delta.toString(),
                     style = MaterialTheme.typography.displaySmall,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.onSurface,
                     modifier = Modifier.weight(1f),
                 )
-                StatusPill(status = session.status, endReason = session.endReason)
+                StatusPill(status = row.status)
             }
 
             Spacer(Modifier.height(8.dp))
 
-            // Video filename / session id (secondary).
+            // Video filename (secondary) — straight from the API, no tmp- logic.
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -390,7 +418,7 @@ private fun SessionRowCard(session: SessionSummary, onClick: () -> Unit) {
                     modifier = Modifier.size(16.dp),
                 )
                 Text(
-                    text = displayFilename(session.videoPath, session.status) ?: session.sessionId?.take(8) ?: "—",
+                    text = row.filename ?: row.videoId?.take(20) ?: "—",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
@@ -400,17 +428,17 @@ private fun SessionRowCard(session: SessionSummary, onClick: () -> Unit) {
 
             // Start date/time (locale).
             Text(
-                text = formatStart(session.startAt),
+                text = formatStart(row.ts),
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
 
-            // Duration + events + video-complete trailing icon (secondary line).
+            // Duration + ready-complete trailing icon (secondary line).
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                val dur = formatSeconds(session.videoDuration)
+                val dur = formatSeconds(row.fileDuration ?: row.duration)
                 if (dur != null) {
                     Text(
                         text = stringResource(R.string.history_duration_label) + ": " + dur,
@@ -418,16 +446,11 @@ private fun SessionRowCard(session: SessionSummary, onClick: () -> Unit) {
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
-                Text(
-                    text = stringResource(R.string.history_events_label) + ": " + session.events,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                if (session.status == "ended") {
+                if (row.status == "ready") {
                     Icon(
                         imageVector = Icons.Filled.CheckCircle,
                         contentDescription = null,
-                        tint = MaterialTheme.colorScheme.primary,
+                        tint = MaterialTheme.colorScheme.tertiary,
                         modifier = Modifier.size(14.dp),
                     )
                 }
@@ -438,16 +461,15 @@ private fun SessionRowCard(session: SessionSummary, onClick: () -> Unit) {
 
 /**
  * Status pill = small tonal `Surface` with a leading colored dot. Color
- * logic branches on `end_reason` (+ `running` via `status`) per the
- * verified mapping — NOT on `status`, which is only `"ended"` | `"running"`:
+ * logic branches on the [VideoRow] `status` field (the only status a
+ * video row carries):
  *  - `status == "running"` → blue (primary)
- *  - else `end_reason == "clean"` → green (tertiary)
- *  - else `end_reason == "power-loss"` → orange (error)
- *  - else (`"unknown"`, `"sigterm"`, null) → gray (outline)
+ *  - `status == "ready"` → green (tertiary)
+ *  - else → gray (outline)
  */
 @Composable
-private fun StatusPill(status: String, endReason: String?) {
-    val (dotColor, label) = statusVisual(status, endReason)
+private fun StatusPill(status: String) {
+    val (dotColor, label) = statusVisual(status)
     Surface(
         color = MaterialTheme.colorScheme.surfaceVariant,
         contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -469,17 +491,14 @@ private fun StatusPill(status: String, endReason: String?) {
 }
 
 @Composable
-private fun statusVisual(status: String, endReason: String?): Pair<Color, String> =
-    when {
-        status == "running" ->
-            MaterialTheme.colorScheme.primary to stringResource(R.string.filter_status_running)
-        endReason == "clean" ->
-            MaterialTheme.colorScheme.tertiary to stringResource(R.string.filter_status_clean)
-        endReason == "power-loss" ->
-            MaterialTheme.colorScheme.error to stringResource(R.string.filter_status_power_loss)
-        else ->
-            MaterialTheme.colorScheme.outline to stringResource(R.string.filter_status_unknown)
-    }
+private fun statusVisual(status: String): Pair<Color, String> = when (status) {
+    "running" ->
+        MaterialTheme.colorScheme.primary to stringResource(R.string.filter_status_running)
+    "ready" ->
+        MaterialTheme.colorScheme.tertiary to stringResource(R.string.filter_status_ready)
+    else ->
+        MaterialTheme.colorScheme.outline to stringResource(R.string.filter_status_unknown)
+}
 
 // ---------------------------------------------------------------------------
 // Reachability banner (reuses the Time sync banner style keyed on ProbeState)
@@ -590,7 +609,7 @@ private fun InfoCard(icon: ImageVector, title: String, body: String) {
 // Date/time helpers
 // ---------------------------------------------------------------------------
 
-/** Render a session's `start_at` as a short locale date-time (e.g. "12 Aug 14:30"). */
+/** Render a video's `ts` as a short locale date-time (e.g. "12 Aug 14:30"). */
 private fun formatStart(iso: String?): String {
     if (iso.isNullOrBlank()) return "—"
     return runCatching {
@@ -607,33 +626,6 @@ private fun formatStart(iso: String?): String {
     }.getOrNull() ?: iso.take(19)
 }
 
-/** Whole-second duration between `start_at` and `end_at`, null when either is absent. */
-private fun durationBetween(startIso: String?, endIso: String?): String? {
-    if (startIso.isNullOrBlank() || endIso.isNullOrBlank()) return null
-    return runCatching {
-        val start = parseInstant(startIso) ?: return null
-        val end = parseInstant(endIso) ?: return null
-        val secs = ChronoUnit.SECONDS.between(start, end)
-        if (secs < 0) return null
-        val h = secs / 3600
-        val m = (secs % 3600) / 60
-        val s = secs % 60
-        if (h > 0) String.format(Locale.ROOT, "%dh %02dm", h, m)
-        else if (m > 0) String.format(Locale.ROOT, "%dm %02ds", m, s)
-        else String.format(Locale.ROOT, "%ds", s)
-    }.getOrNull()
-}
-
-/** Display the video filename for a history row: basename of [videoPath],
- * with the `tmp-` prefix stripped once the session has ended (the cron
- * compresses `tmp-counting-<ts>.mp4` -> `counting-<ts>.mp4`). Running
- * sessions keep the `tmp-` prefix (the recording is still in progress). */
-private fun displayFilename(videoPath: String?, status: String): String? {
-    if (videoPath == null) return null
-    val base = videoPath.substringAfterLast('/')
-    return if (status != "running" && base.startsWith("tmp-")) base.removePrefix("tmp-") else base
-}
-
 /** Format a duration in seconds as `H:MM:SS` / `MM:SS` / `SSs`, null when null. */
 private fun formatSeconds(seconds: Double?): String? {
     if (seconds == null || seconds < 0 || seconds.isNaN()) return null
@@ -647,27 +639,3 @@ private fun formatSeconds(seconds: Double?): String? {
         else -> String.format(Locale.ROOT, "%ds", s)
     }
 }
-
-/** Whole-second elapsed since `start_at` to now (for running sessions). */
-private fun durationSinceNow(startIso: String?): String? {
-    if (startIso.isNullOrBlank()) return null
-    return runCatching {
-        val start = parseInstant(startIso) ?: return null
-        val secs = ChronoUnit.SECONDS.between(start, Instant.now())
-        if (secs < 0) return null
-        val h = secs / 3600
-        val m = (secs % 3600) / 60
-        val s = secs % 60
-        if (h > 0) String.format(Locale.ROOT, "%dh %02dm", h, m)
-        else if (m > 0) String.format(Locale.ROOT, "%dm %02ds", m, s)
-        else String.format(Locale.ROOT, "%ds", s)
-    }.getOrNull()
-}
-
-private fun parseInstant(iso: String): Instant? = runCatching {
-    try {
-        OffsetDateTime.parse(iso, DateTimeFormatter.ISO_OFFSET_DATE_TIME).toInstant()
-    } catch (e: DateTimeParseException) {
-        java.time.LocalDateTime.parse(iso.take(19)).atZone(ZoneId.systemDefault()).toInstant()
-    }
-}.getOrNull()

@@ -168,7 +168,7 @@ class DashboardViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /**
-     * One `/api/history/summary?days=N` fetch mapped onto [state]. On a
+     * One `/api/summary?days=N` fetch mapped onto [state]. On a
      * network failure we transition to [DashboardUiState.OutOfRange];
      * on HTTP error to [DashboardUiState.Error]. A successful fetch with
      * zero daily buckets → [DashboardUiState.Empty]. A successful fetch
@@ -187,7 +187,7 @@ class DashboardViewModel(app: Application) : AndroidViewModel(app) {
                 val wifi = if (cm != null) activeWifiNetwork(cm) else null
                 when (val result = JetsonClient.fetchRaw(
                     ip = _ip.value,
-                    path = "/api/history/summary?days=${period.days}",
+                    path = "/api/summary?days=${period.days}",
                     network = wifi,
                 )) {
                     is ApiResult.Success -> {
@@ -258,7 +258,7 @@ class DashboardViewModel(app: Application) : AndroidViewModel(app) {
     /** Cache key per period (7 vs 30 days cached separately). */
     private fun cacheKey(days: Int) = "dashboard_$days"
 
-    /** Offline fallback — serve the last cached `/api/history/summary` for the
+    /** Offline fallback — serve the last cached `/api/summary` for the
      * active period so the dashboard stays consultable with no Jetson link.
      * Returns null when there is no cache (caller falls back to Error/OutOfRange). */
     private fun loadCachedDashboard(period: DashboardPeriod): DashboardUiState.Loaded? {
