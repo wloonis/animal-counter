@@ -268,6 +268,10 @@ class DisplayThread(threading.Thread):
         # the video duration in /api/history (distinct from session duration).
         self.record_start_time = None
         self.record_duration = None
+        # BL-70 (#74): per-video delta snapshot — captured at recording start,
+        # consumed in _finalize_recording to put the per-video count (not the
+        # global cumulative counter) in the clip filename.
+        self.record_start_count = None
         self.window_name = "Counter"
         self.x_offset = self.y_offset = 30
         self.stop_event = stop_event
