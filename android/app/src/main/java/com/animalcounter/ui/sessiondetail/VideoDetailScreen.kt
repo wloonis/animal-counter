@@ -161,7 +161,7 @@ private fun VideoHeaderCard(row: VideoRow) {
         Spacer(Modifier.height(8.dp))
 
         KeyValueRow(R.string.detail_start, formatIso(row.ts))
-        val dur = formatSeconds(row.duration)
+        val dur = formatSeconds(row.fileDuration ?: row.duration)
         if (dur != null) KeyValueRow(R.string.detail_duration, dur)
         KeyValueRow(R.string.video_count_delta, row.countDelta?.toString())
 

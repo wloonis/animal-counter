@@ -367,6 +367,7 @@ class VideoDetailViewModel(
         const val KEY_FILENAME = "filename"
         const val KEY_COUNT_DELTA = "countDelta"
         const val KEY_DURATION = "duration"
+        const val KEY_FILE_DURATION = "fileDuration"
         const val KEY_STATUS = "status"
         const val KEY_SESSION_ID = "sessionId"
         const val KEY_TS = "ts"
@@ -382,6 +383,7 @@ class VideoDetailViewModel(
                 sessionId = handle.get<String>(KEY_SESSION_ID)?.takeIf { it.isNotBlank() },
                 filename = handle.get<String>(KEY_FILENAME)?.takeIf { it.isNotBlank() },
                 duration = handle.get<String>(KEY_DURATION)?.toNullableDouble(),
+                fileDuration = handle.get<String>(KEY_FILE_DURATION)?.toNullableDouble(),
                 countDelta = handle.get<String>(KEY_COUNT_DELTA)?.toNullableInt(),
                 ts = handle.get<String>(KEY_TS)?.takeIf { it.isNotBlank() },
                 status = handle.get<String>(KEY_STATUS)?.takeIf { it.isNotBlank() } ?: "unknown",

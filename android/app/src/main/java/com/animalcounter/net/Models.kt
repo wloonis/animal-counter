@@ -119,6 +119,7 @@ data class VideoRow(
     val sessionId: String?,
     val filename: String?,
     val duration: Double?,
+    val fileDuration: Double?,   // BL-71: actual compressed+trimmed file length (ffprobe)
     val countDelta: Int?,
     val ts: String?,
     val status: String,          // "ready" | "running" | "unknown" | …
@@ -139,6 +140,7 @@ data class VideoDetail(
     val videoId: String?,
     val filename: String?,
     val duration: Double?,
+    val fileDuration: Double?,   // BL-71: actual compressed+trimmed file length
     val countDelta: Int?,
     val sessionId: String?,
     val ts: String?,
@@ -400,6 +402,7 @@ internal fun parseVideoRow(o: JSONObject): VideoRow = VideoRow(
     sessionId = o.optStringOrNull("session_id"),
     filename = o.optStringOrNull("filename"),
     duration = o.optDoubleOrNull("duration"),
+    fileDuration = o.optDoubleOrNull("file_duration"),
     countDelta = o.optIntOrNull("count_delta"),
     ts = o.optStringOrNull("ts"),
     status = o.optStringOrNull("status") ?: "unknown",
@@ -437,6 +440,7 @@ internal fun parseVideoDetail(json: String): VideoDetail {
         videoId = o.optStringOrNull("video_id"),
         filename = o.optStringOrNull("filename"),
         duration = o.optDoubleOrNull("duration"),
+        fileDuration = o.optDoubleOrNull("file_duration"),
         countDelta = o.optIntOrNull("count_delta"),
         sessionId = o.optStringOrNull("session_id"),
         ts = o.optStringOrNull("ts"),

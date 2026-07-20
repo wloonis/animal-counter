@@ -254,6 +254,7 @@ internal fun videoDetailRoute(row: VideoRow): String = buildString {
     append("?filename="); append(Uri.encode(row.filename ?: ""))
     append("&countDelta="); append(Uri.encode(row.countDelta?.toString() ?: ""))
     append("&duration="); append(Uri.encode(row.duration?.toString() ?: ""))
+    append("&fileDuration="); append(Uri.encode(row.fileDuration?.toString() ?: ""))
     append("&status="); append(Uri.encode(row.status))
     append("&sessionId="); append(Uri.encode(row.sessionId ?: ""))
     append("&ts="); append(Uri.encode(row.ts ?: ""))
@@ -437,7 +438,7 @@ private fun VideoRowCard(row: VideoRow, onClick: () -> Unit) {
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                val dur = formatSeconds(row.duration)
+                val dur = formatSeconds(row.fileDuration ?: row.duration)
                 if (dur != null) {
                     Text(
                         text = stringResource(R.string.history_duration_label) + ": " + dur,

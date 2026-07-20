@@ -47,7 +47,7 @@ private object Destinations {
     const val DASHBOARD = "dashboard"
     const val STARTUPS = "startups"
     const val SESSION_DETAIL = "session/{sessionId}"
-    const val VIDEO_DETAIL = "video/{videoId}?filename={filename}&countDelta={countDelta}&duration={duration}&status={status}&sessionId={sessionId}&ts={ts}"
+    const val VIDEO_DETAIL = "video/{videoId}?filename={filename}&countDelta={countDelta}&duration={duration}&fileDuration={fileDuration}&status={status}&sessionId={sessionId}&ts={ts}"
     const val SESSIONS = "sessions?days={days}"
 }
 
@@ -137,6 +137,10 @@ fun AnimalCounterApp() {
                         defaultValue = ""
                     },
                     navArgument("duration") {
+                        type = NavType.StringType
+                        defaultValue = ""
+                    },
+                    navArgument("fileDuration") {
                         type = NavType.StringType
                         defaultValue = ""
                     },
