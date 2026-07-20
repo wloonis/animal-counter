@@ -744,6 +744,13 @@
           RestartSec=3
           Environment=COMPANION_PORT={{ companion_port }}
           Environment=HISTORY_FILE_HOST={{ companion_history_file_host }}
+          # Defense-in-depth: the companion must never starve inference.
+          # Nice + best-effort I/O + a 30% CPU cap keep it subservient to
+          # the countingapp pod even if the JSONL grows or a video stream
+          # spikes (BL-71).
+          Nice=10
+          IOSchedulingClass=best-effort
+          CPUQuota=30%
 
           [Install]
           WantedBy=multi-user.target
