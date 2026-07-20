@@ -64,3 +64,7 @@ Task 12: ADD docs/12_counting_history.md — d9750d2
 Task 13: ADD tests/test_history_writer.py (16 tests, stdlib only) — fixed 2 history.py bugs (end_session _append blocked by _stopped; disk_warning emit blocked by _writes_suspended)
 Task 13: ADD tests/test_history_writer.py — 0377cc6
 Task 14: ADD tests/test_companion_history_api.py (23 tests, stdlib mirror reader) — 38f4039
+Task 1: ADD record_start_count attribute to DisplayThread.__init__ — 70fa5c6
+Task 2: CAPTURE record_start_count snapshot at recording start — 1d64b59
+Task 3: COMPUTE delta in _finalize_recording filename — 9ae6435
+Task 4: RESET record_start_count after finalize — ef93b15
