@@ -101,3 +101,4 @@ Task 3: CREATE app/src/display_thread.py — 9c80e2c
 Task 4: CREATE app/src/validate.py — 3a7d7fb
 Task 5: CREATE app/src/cli.py — 0c63b4d
 Task 6: REWRITE app/src/main.py as thin entry point + fix split-module imports — fd2bf7d
+Task 7: TRANSLATE French comments → English — VERIFIED (translation already done during copy in Tasks 1-6; grep confirms no French comments remain in the 5 new modules + main.py) — f2800b6
