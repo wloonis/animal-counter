@@ -99,6 +99,26 @@ spec:
                     "$out"
                 fi
 
+                # BL-71: rewrite the video JSONL entry with the ACTUAL
+                # compressed+trimmed file duration (file_duration) so the
+                # app shows the real playback length. Keep `duration` =
+                # record_duration (the companion uses it for event
+                # attribution by timespan). The companion keeps the newest
+                # video line by ts, so this corrected line supersedes the
+                # finalize-time entry.
+                if [ -e "$out" ]; then
+                  ACTUAL=$(ffprobe -v error -show_entries format=duration -of csv=p=0 "$out" 2>/dev/null)
+                  ORIG=$(grep "\"video_id\": \"$VID\"" /videos/counting-history.jsonl 2>/dev/null | tail -1)
+                  if [ -n "$ACTUAL" ] && [ -n "$ORIG" ]; then
+                    RDUR=$(echo "$ORIG" | grep -oE '"duration": [0-9.]+' | grep -oE '[0-9.]+$')
+                    DELTA=$(echo "$ORIG" | grep -oE '"count_delta": [0-9]+' | grep -oE '[0-9]+$')
+                    SID=$(echo "$ORIG" | grep -oE '"session_id": "[^"]*"' | grep -oE '"[a-f0-9-]+"' | tr -d '"')
+                    OUTBN=$(basename "$out")
+                    NOW=$(date -u +%Y-%m-%dT%H:%M:%S.%6NZ)
+                    echo "{\"type\": \"video\", \"video_id\": \"$VID\", \"filename\": \"$OUTBN\", \"duration\": ${RDUR:-null}, \"file_duration\": $ACTUAL, \"count_delta\": ${DELTA:-0}, \"session_id\": \"$SID\", \"ts\": \"$NOW\"}" >> /videos/counting-history.jsonl
+                  fi
+                fi
+
                 rm -f "$f"
               done
 
