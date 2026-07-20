@@ -20,6 +20,7 @@ import com.animalcounter.data.SettingsRepository
 import com.animalcounter.data.SyncEvent
 import com.animalcounter.data.SyncLog
 import com.animalcounter.net.JetsonClient
+import com.animalcounter.net.activeWifiNetwork
 import com.animalcounter.net.nowIsoForCompanion
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -58,7 +59,34 @@ class TimeSyncService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         startForegroundCompat()
         registerNetworkCallback()
+        // Best-effort immediate sync: if the phone is already on a WiFi
+        // network when the service starts (e.g. the app is opened while
+        // already on the Jetson HotSpot), onAvailable will not fire again,
+        // so push the time now.
+        syncNowIfOnWifi()
         return START_STICKY
+    }
+
+    /**
+     * Best-effort immediate time sync on the currently-active WiFi network.
+     * Handles the app-open case where the phone is already on the Jetson
+     * HotSpot (onAvailable already fired before we registered). No-op when no
+     * WiFi network is active (the NetworkCallback will sync on the next join).
+     */
+    private fun syncNowIfOnWifi() {
+        val cm = connectivityManager
+            ?: (getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager)
+            ?: return
+        val network = activeWifiNetwork(cm) ?: return
+        SyncLog.add(
+            SyncEvent(
+                timestamp = Instant.now(),
+                type = SyncEvent.Type.Sync,
+                outcome = SyncEvent.Outcome.Success,
+                detail = "App open — pushing time",
+            ),
+        )
+        pushTime(network)
     }
 
     /**

@@ -411,8 +411,6 @@ private fun SessionRowCard(session: SessionSummary, onClick: () -> Unit) {
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 val dur = formatSeconds(session.videoDuration)
-                    ?: durationBetween(session.startAt, session.endAt)
-                    ?: if (session.status == "running") durationSinceNow(session.startAt) else null
                 if (dur != null) {
                     Text(
                         text = stringResource(R.string.history_duration_label) + ": " + dur,

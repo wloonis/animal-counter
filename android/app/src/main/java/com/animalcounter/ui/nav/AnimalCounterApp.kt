@@ -1,5 +1,6 @@
 package com.animalcounter.ui.nav
 
+import android.content.Intent
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
@@ -14,9 +15,12 @@ import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.core.content.ContextCompat
 import androidx.navigation.NavController
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.NavType
@@ -26,6 +30,7 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.animalcounter.R
+import com.animalcounter.service.TimeSyncService
 import com.animalcounter.ui.dashboard.DashboardScreen
 import com.animalcounter.ui.history.HistoryScreen
 import com.animalcounter.ui.livecount.LiveCountScreen
@@ -51,6 +56,17 @@ fun AnimalCounterApp() {
     val navController = rememberNavController()
     val backStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = backStackEntry?.destination?.route
+
+    val context = LocalContext.current
+    // On app open, (re)start the TimeSyncService so it does an immediate
+    // best-effort time sync on the active WiFi network — pushes the phone's
+    // correct time to the Jetson (no RTC; clock may have drifted/reverted).
+    LaunchedEffect(Unit) {
+        ContextCompat.startForegroundService(
+            context,
+            Intent(context, TimeSyncService::class.java),
+        )
+    }
 
     Scaffold(
         modifier = Modifier.fillMaxSize(),

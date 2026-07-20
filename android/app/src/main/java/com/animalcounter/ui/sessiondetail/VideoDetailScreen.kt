@@ -107,7 +107,6 @@ private fun VideoHeaderCard(d: SessionDetail) {
     val video = displayFilename(rawVideo, d.status)
     val startStr = formatIso(start?.startAt)
     val videoDur = formatSeconds(end?.video?.duration)
-        ?: durationBetween(start?.startAt, d.endAt ?: end?.endAt)
     GroupCard(
         icon = Icons.Filled.PlayCircle,
         title = stringResource(R.string.detail_video),
