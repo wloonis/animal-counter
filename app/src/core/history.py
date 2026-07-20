@@ -543,6 +543,8 @@ class HistoryWriter:
             return
         count = 0
         last_segment = None
+        status = None
+        auto_mode = None
         if self.shared_state is not None:
             try:
                 count = int(getattr(self.shared_state, "counter_to_right", 0))
@@ -555,11 +557,22 @@ class HistoryWriter:
                     last_segment = dt.filename
             except Exception:
                 last_segment = None
+            # Live status + auto_mode for /api/count (absorbed BL-66 scope).
+            try:
+                status = int(getattr(self.shared_state, "status", 3))
+            except Exception:
+                status = None
+            try:
+                auto_mode = bool(getattr(self.shared_state, "auto_mode", True))
+            except Exception:
+                auto_mode = None
         line = {
             "type": "heartbeat",
             "session_id": self.session_id,
             "ts": _utcnow_iso(),
             "count": count,
+            "status": status,
+            "auto_mode": auto_mode,
             "last_segment": last_segment,
             "thermal": _sample_thermal(),
             "system": _sample_system(),
@@ -601,6 +614,7 @@ class HistoryWriter:
                     if dt is not None:
                         e = {
                             "last_segment": getattr(dt, "filename", None),
+                            "duration": getattr(dt, "record_duration", None),
                         }
                 except Exception:
                     e = {}

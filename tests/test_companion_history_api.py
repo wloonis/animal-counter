@@ -349,6 +349,45 @@ def test_startups_missing_file(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# Live count (/api/count) — newest heartbeat across all sessions
+# ---------------------------------------------------------------------------
+
+def test_latest_count_returns_newest_heartbeat(history_file):
+    idx = HistoryIndex(history_file)
+    hb = idx.latest_count()
+    assert hb is not None
+    # Session 3 (running) has the newest heartbeat (at(0, 30)) with count 4.
+    assert hb["count"] == 4
+    assert hb["session_id"] == "sess-running-0003"
+
+
+def test_latest_count_prefers_later_ts_across_sessions(history_file):
+    # Session 2's last heartbeat is at(0, 80) count 9; session 3's is at(0, 30)
+    # count 4. The newest by ts is session 3's (30s ago is more recent than 80s).
+    idx = HistoryIndex(history_file)
+    hb = idx.latest_count()
+    assert hb["ts"].endswith("+00:00") or hb["ts"].endswith("Z") or "T" in hb["ts"]
+    assert hb["count"] == 4
+
+
+def test_latest_count_none_when_no_heartbeats(tmp_path):
+    p = tmp_path / "h.jsonl"
+    _write_lines(p, [
+        {"type": "startup", "ts": "2026-01-01T00:00:00+00:00",
+         "boot_at": "2026-01-01T00:00:00+00:00",
+         "image_tag": "v1", "git_commit": "g", "mode": "serve",
+         "config_notable": {}},
+    ])
+    idx = HistoryIndex(str(p))
+    assert idx.latest_count() is None
+
+
+def test_latest_count_none_when_file_missing(tmp_path):
+    idx = HistoryIndex(str(tmp_path / "nope.jsonl"))
+    assert idx.latest_count() is None
+
+
+# ---------------------------------------------------------------------------
 # Partial-line tolerance (power cut mid-append)
 # ---------------------------------------------------------------------------
 

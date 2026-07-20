@@ -152,6 +152,39 @@ def test_heartbeat_appends_count_and_segment(tmp_jsonl):
     assert "system" in hb[0]
 
 
+def test_heartbeat_includes_live_status_and_auto_mode(tmp_jsonl):
+    """The heartbeat carries status + auto_mode from SharedState for /api/count
+    (absorbed BL-66 scope)."""
+    class FakeDisplay:
+        filename = "/files/seg_0001.mp4"
+
+    class FakeShared:
+        counter_to_right = 12
+        display_thread = FakeDisplay()
+        status = 3
+        auto_mode = False
+
+    w = HistoryWriter(tmp_jsonl, FakeSettings(), shared_state=FakeShared(),
+                      mode="serve")
+    w.start_session()
+    w.heartbeat()
+    hb = [o for o in _read_jsonl(tmp_jsonl) if o["type"] == "heartbeat"][0]
+    assert hb["count"] == 12
+    assert hb["status"] == 3
+    assert hb["auto_mode"] is False
+
+
+def test_heartbeat_status_auto_mode_default_when_shared_state_absent(tmp_jsonl):
+    """Without a shared_state, status + auto_mode are None (graceful)."""
+    w = HistoryWriter(tmp_jsonl, FakeSettings(), shared_state=None,
+                      mode="serve")
+    w.start_session()
+    w.heartbeat()
+    hb = [o for o in _read_jsonl(tmp_jsonl) if o["type"] == "heartbeat"][0]
+    assert hb["status"] is None
+    assert hb["auto_mode"] is None
+
+
 # ---------------------------------------------------------------------------
 # partial-line tolerance on reopen
 # ---------------------------------------------------------------------------

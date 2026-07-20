@@ -264,6 +264,10 @@ class DisplayThread(threading.Thread):
         self.timer = TimerFps()
         self.video_writer = None
         self.filename = None
+        # BL-69: recording wall-clock window (1st pig -> release), exposed as
+        # the video duration in /api/history (distinct from session duration).
+        self.record_start_time = None
+        self.record_duration = None
         self.window_name = "Counter"
         self.x_offset = self.y_offset = 30
         self.stop_event = stop_event
@@ -279,6 +283,9 @@ class DisplayThread(threading.Thread):
             return
         self.video_writer.release()
         self.video_writer = None
+        # Capture the recording (video) duration before resetting state.
+        if self.record_start_time is not None:
+            self.record_duration = time.monotonic() - self.record_start_time
         output_path = os.path.join(settings.OUTPUT_VIDEO_PATH, f"tocompress-counting-{time.strftime('%Y%m%d-%H%M%S')}-#{shared_state.counter_to_right}.mp4")
         try:
             os.rename(self.filename, output_path)
@@ -482,6 +489,7 @@ class DisplayThread(threading.Thread):
                     output_path = os.path.join(settings.OUTPUT_VIDEO_PATH, f"tmp-counting-{time.strftime('%Y%m%d-%H%M%S')}.mp4")
                     os.makedirs(settings.OUTPUT_VIDEO_PATH, exist_ok=True)
                     self.filename = output_path
+                    self.record_start_time = time.monotonic()
                     logger.info(f"Record started: {self.filename}")
 
                     self.video_writer = cv2.VideoWriter(
