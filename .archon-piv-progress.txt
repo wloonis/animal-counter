@@ -69,3 +69,4 @@ Task 2: CAPTURE record_start_count snapshot at recording start — 1d64b59
 Task 3: COMPUTE delta in _finalize_recording filename — 9ae6435
 Task 4: RESET record_start_count after finalize — ef93b15
 Task 5: ADD tests/test_finalize_recording_filename.py (5 tests, stubbed GPU deps) — 26e868d
+Task 6: VERIFY k3s/templates/cronvideo-dep.j2 compatibility — VERIFIED (no edit). tocompress-counting-{ts}-#{delta}.mp4 matches /videos/tocompress-* glob; sed yields counting-{ts}-#{delta}.mp4 (matches ls -t count*); find *.mp4 size+2G and budget guard ls -t count* both match. Globs are prefix-based, agnostic to #{delta} numeric value (incl #-1, #0).
