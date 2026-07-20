@@ -288,10 +288,12 @@ are unchanged. New read-only history endpoints (stdlib only; the companion
 
 | Method | Path                          | Query             | Purpose                                              |
 |--------|-------------------------------|-------------------|------------------------------------------------------|
-| `GET`  | `/api/history`                | `limit=50&offset=0` | Paginated session summaries (A + net count + last event ts), newest first |
+| `GET`  | `/api/sessions`               | `limit=50&offset=0` | Paginated session summaries (A + net count + last event ts), newest first |
 | `GET`  | `/api/sessions/<id>`          | —                 | Full session detail (A–G): aggregate `session_start` + `heartbeat`s (last = `end_at` if no `session_end`) + `event`s + `session_end` |
-| `GET`  | `/api/history/summary`        | `days=7`          | Daily aggregates (count per day, sessions, guard events) |
+| `GET`  | `/api/summary`                | `days=7`          | Daily aggregates (count per day, sessions, guard events) |
 | `GET`  | `/api/startups`               | `limit=50`        | Startup history lines                                |
+| `GET`  | `/api/videos`                 | `limit=50&offset=0` | Paginated video summaries (one row per recorded video + running recording as synthetic first row), newest first |
+| `GET`  | `/api/video/<id>`             | — (Range supported) | Range-streamed compressed `counting-<id>-*.mp4` (HTTP 200/206/416); 404 if absent or not yet compressed |
 
 The reader uses a lazy `HistoryIndex`: on the first history request it scans
 the JSONL once, builds an in-memory `session_id → {offsets, summary}` map +
@@ -311,13 +313,13 @@ curl http://192.168.0.180:8090/api/identify
 
 **List recent sessions:**
 ```bash
-curl 'http://192.168.0.180:8090/api/history?limit=10'
+curl 'http://192.168.0.180:8090/api/sessions?limit=10'
 # {"sessions":[...],"limit":10,"offset":0,"total":N}
 ```
 
 **Paginate (next page):**
 ```bash
-curl 'http://192.168.0.180:8090/api/history?limit=10&offset=10'
+curl 'http://192.168.0.180:8090/api/sessions?limit=10&offset=10'
 ```
 
 **Get full detail for one session:**
@@ -328,8 +330,23 @@ curl http://192.168.0.180:8090/api/sessions/<session_id>
 
 **Daily summary (last 7 days):**
 ```bash
-curl 'http://192.168.0.180:8090/api/history/summary?days=7'
+curl 'http://192.168.0.180:8090/api/summary?days=7'
 # {"days":7,"daily":[{"date":"2025-07-15","count":9,"sessions":1,"guard_events":0},...]}
+```
+
+**List recent videos (running recording is the synthetic first row):**
+```bash
+curl 'http://192.168.0.180:8090/api/videos?limit=10'
+# {"videos":[{"video_id":"counting-20250608-100000","filename":"counting-20250608-100000-#9.mp4","duration":120,"count_delta":9,"session_id":"...","ts":"...","status":"ready"},...],"limit":10,"offset":0,"total":N}
+```
+
+**Range-stream a video (resumable/partial download):**
+```bash
+curl -H 'Range: bytes=0-1023' \
+  http://192.168.0.180:8090/api/video/counting-20250608-100000 -o /tmp/head.mp4
+# HTTP 206, Content-Range: bytes 0-1023/<size>
+curl http://192.168.0.180:8090/api/video/counting-20250608-100000 -o file.mp4
+# HTTP 200, full file (playable on Android)
 ```
 
 **Startup history:**
@@ -381,7 +398,7 @@ persisted history on the Jetson. The existing excludes (`model/`, `.env`,
   `heartbeat` / `session_end` lines, and a forced compaction yields a file ≤
   `HISTORY_MAX_BYTES` with cold sessions collapsed to one summary line.
 - **Companion API smoke (on Jetson host, post-deploy):**
-  `curl http://127.0.0.1:8090/api/history?limit=10` and
+  `curl http://127.0.0.1:8090/api/sessions?limit=10` and
   `curl http://127.0.0.1:8090/api/sessions/<id>` return JSON;
   `curl http://127.0.0.1:8090/api/identify` still returns the service (now
   version `"2"`).
