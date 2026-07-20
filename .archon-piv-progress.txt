@@ -100,3 +100,5 @@ Task 6: REWIRE VideoDetailScreen (VideoDetailViewModel nav-args, header+download
 Task 7: REWIRE SessionsViewModel path (/api/sessions) — e2b8433
 Task 8: REWIRE DashboardViewModel path (/api/summary) — d32ca58
 Task 9: UPDATE nav route (video/{videoId} with VideoRow string args) — 5defbdd
+Task 10: MANIFEST + strings (verify no storage perm, BL-72 video strings EN+FR present) — 34fd189
+Task 11: UNIT TESTS (parseVideos/VideoRow + renamed parseSessions + endpoint-mapping sanity, 31 tests pass) — 3fc9c3a
