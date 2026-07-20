@@ -64,6 +64,12 @@ Task 12: ADD docs/12_counting_history.md — d9750d2
 Task 13: ADD tests/test_history_writer.py (16 tests, stdlib only) — fixed 2 history.py bugs (end_session _append blocked by _stopped; disk_warning emit blocked by _writes_suspended)
 Task 13: ADD tests/test_history_writer.py — 0377cc6
 Task 14: ADD tests/test_companion_history_api.py (23 tests, stdlib mirror reader) — 38f4039
+Task 1: ADD record_start_count attribute to DisplayThread.__init__ — 70fa5c6
+Task 2: CAPTURE record_start_count snapshot at recording start — 1d64b59
+Task 3: COMPUTE delta in _finalize_recording filename — 9ae6435
+Task 4: RESET record_start_count after finalize — ef93b15
+Task 5: ADD tests/test_finalize_recording_filename.py (5 tests, stubbed GPU deps) — 26e868d
+Task 6: VERIFY k3s/templates/cronvideo-dep.j2 compatibility — VERIFIED (no edit). tocompress-counting-{ts}-#{delta}.mp4 matches /videos/tocompress-* glob; sed yields counting-{ts}-#{delta}.mp4 (matches ls -t count*); find *.mp4 size+2G and budget guard ls -t count* both match. Globs are prefix-based, agnostic to #{delta} numeric value (incl #-1, #0).
 
 === BL-69 Android app — history/count tabs ===
 Task 1: ADD 5 JetsonClient methods + net/Models.kt — dfca630
@@ -83,4 +89,3 @@ Task 14: i18n(fr) add dashboard/startups/live-status FR strings — 913f241
 Task 15: DELETE dead PlaceholderScreen after 5-tab conversion — 8c73160
 Task 16: CREATE JetsonClientParsingTest.kt (21 unit tests, 5 endpoints incl. running-session end=null fallback) — 153b6a5
 Task 17: VERIFY assembleDebug BUILD SUCCESSFUL + testDebugUnitTest 21 tests pass (0 failures) — 153b6a5
-=======

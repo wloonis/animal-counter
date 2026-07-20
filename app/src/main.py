@@ -268,6 +268,10 @@ class DisplayThread(threading.Thread):
         # the video duration in /api/history (distinct from session duration).
         self.record_start_time = None
         self.record_duration = None
+        # BL-70 (#74): per-video delta snapshot — captured at recording start,
+        # consumed in _finalize_recording to put the per-video count (not the
+        # global cumulative counter) in the clip filename.
+        self.record_start_count = None
         self.window_name = "Counter"
         self.x_offset = self.y_offset = 30
         self.stop_event = stop_event
@@ -286,7 +290,18 @@ class DisplayThread(threading.Thread):
         # Capture the recording (video) duration before resetting state.
         if self.record_start_time is not None:
             self.record_duration = time.monotonic() - self.record_start_time
-        output_path = os.path.join(settings.OUTPUT_VIDEO_PATH, f"tocompress-counting-{time.strftime('%Y%m%d-%H%M%S')}-#{shared_state.counter_to_right}.mp4")
+        # BL-70 (issue #74): the filename carries the per-video delta (pigs
+        # counted *during this recording*) instead of the global cumulative
+        # counter_to_right. The snapshot was taken at recording start, before
+        # the triggering frame's counting.count() ran, so the triggering pig is
+        # not yet counted in the zero-point. delta = end - start. Defensive
+        # guard: if the snapshot is missing (e.g. finalize from a path that
+        # skipped recording-start), fall back to 0 so the filename stays well-formed.
+        if self.record_start_count is not None:
+            delta = shared_state.counter_to_right - self.record_start_count
+        else:
+            delta = 0
+        output_path = os.path.join(settings.OUTPUT_VIDEO_PATH, f"tocompress-counting-{time.strftime('%Y%m%d-%H%M%S')}-#{delta}.mp4")
         try:
             os.rename(self.filename, output_path)
         except OSError as e:
@@ -296,6 +311,9 @@ class DisplayThread(threading.Thread):
             shared_state.status = 0
         shared_state.recording = False
         shared_state.reset = False
+        # BL-70: clear the per-recording snapshot so a stale zero-point can never
+        # leak into the next recording (mirrors record_start_time lifecycle).
+        self.record_start_count = None
         logger.info(f"------->Record Stop; Value Status: {shared_state.status}: Store:{output_path}")
 
     def mouse_click(self, event, x, y, flags, param):
@@ -490,6 +508,7 @@ class DisplayThread(threading.Thread):
                     os.makedirs(settings.OUTPUT_VIDEO_PATH, exist_ok=True)
                     self.filename = output_path
                     self.record_start_time = time.monotonic()
+                    self.record_start_count = shared_state.counter_to_right
                     logger.info(f"Record started: {self.filename}")
 
                     self.video_writer = cv2.VideoWriter(
