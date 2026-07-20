@@ -24,7 +24,7 @@ import java.time.Instant
 
 /**
  * UI state for the Sessions list (Dashboard -> "Sessions: N" -> list of
- * session-level entries). Reuses the `/api/history` payload (each session =
+ * session-level entries). Reuses the `/api/sessions` payload (each session =
  * one video/counting run) but renders session-centric fields (session id,
  * start, end, end_reason, heartbeats, events) and navigates to the full
  * Session detail (`session/{sessionId}`).
@@ -142,7 +142,7 @@ class SessionsViewModel(
             val wifi = if (cm != null) activeWifiNetwork(cm) else null
             when (val result = JetsonClient.fetchRaw(
                 ip = _ip.value,
-                path = "/api/history?limit=$HISTORY_LIMIT&offset=$offset",
+                path = "/api/sessions?limit=$HISTORY_LIMIT&offset=$offset",
                 network = wifi,
             )) {
                 is ApiResult.Success -> {
