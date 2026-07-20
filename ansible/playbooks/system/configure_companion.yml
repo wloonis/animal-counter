@@ -586,19 +586,29 @@
                   sess = self._sessions.get(sid) if sid else None
                   duration = obj.get("duration")
                   start_ts = obj.get("ts")
-                  start_dt = None
-                  end_dt = None
+                  # The video line's `ts` is the FINALIZE (stop) time
+                  # (_utcnow_iso() in history.video(), called at
+                  # _finalize_recording). The recording STARTED `duration`
+                  # seconds before that. So the attribution timespan is
+                  # [ts - duration, ts], NOT [ts, ts + duration].
+                  finalize_dt = None
                   if start_ts:
                       try:
-                          start_dt = _parse_iso(start_ts)
+                          finalize_dt = _parse_iso(start_ts)
                       except Exception:
-                          start_dt = None
-                  if start_dt is not None and duration is not None:
+                          finalize_dt = None
+                  start_dt = None
+                  end_dt = None
+                  if finalize_dt is not None and duration is not None:
                       try:
-                          end_dt = start_dt + datetime.timedelta(
+                          end_dt = finalize_dt
+                          start_dt = finalize_dt - datetime.timedelta(
                               seconds=float(duration))
                       except Exception:
+                          start_dt = None
                           end_dt = None
+                  else:
+                      start_dt = finalize_dt
 
                   def _in_span(ts_str):
                       if not ts_str or start_dt is None:
