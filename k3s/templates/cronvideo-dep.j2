@@ -46,13 +46,38 @@ spec:
 
                 out="/videos/$(basename "$f" | sed 's/^tocompress-//')"
 
-                # Compute input duration; trim the last TRIM_TAIL seconds.
+                # ffprobe file duration (playback time). May be < real time:
+                # the writer is 30fps but inference produces fewer frames, so
+                # the file plays back faster than the actual recording.
                 DUR=$(ffprobe -v error -show_entries format=duration -of csv=p=0 "$f")
 
-                if [ -z "$DUR" ] || ! awk "BEGIN{ exit !($DUR > $TRIM_TAIL) }"; then
-                  # Short or unreadable clip: keep the whole file, skip -t.
-                  echo "WARN: trim skipped for $f (DUR=${DUR:-empty}, TRIM_TAIL=$TRIM_TAIL)"
-                  ffmpeg -y -i "$f" \
+                # video_id from the tocompress filename
+                # (tocompress-counting-{start}-#N.mp4 -> counting-{start}).
+                VID=$(basename "$f" | sed 's/^tocompress-//; s/-#[0-9]*\.mp4$//')
+
+                # record_duration (real/monotonic time) from the JSONL video
+                # entry (BL-71). Empty if the entry is missing (best-effort).
+                REC_DUR=$(grep "\"video_id\": \"$VID\"" /videos/counting-history.jsonl 2>/dev/null | grep -oE '\"duration\": [0-9.]+' | head -1 | grep -oE '[0-9.]+$')
+
+                if [ -n "$DUR" ] && [ -n "$REC_DUR" ] && awk "BEGIN{ exit !($REC_DUR > $TRIM_TAIL) }"; then
+                  # Frame-drop compensation: scale the active part
+                  # (record_duration - TRIM_TAIL) from real time to playback
+                  # time, then -t to keep only the active pigs.
+                  KEEP=$(awk "BEGIN{ print ($REC_DUR - $TRIM_TAIL) * ($DUR / $REC_DUR) }")
+                  echo "Compress+trim $f: DUR=$DUR REC_DUR=$REC_DUR TRIM_TAIL=$TRIM_TAIL KEEP=$KEEP"
+                  ffmpeg -y -i "$f" -t "$KEEP" \
+                    -vf "scale=640:-2" \
+                    -c:v libx264 \
+                    -preset ultrafast \
+                    -crf 23 \
+                    -c:a aac \
+                    -b:a 64k \
+                    "$out"
+                elif [ -n "$DUR" ] && awk "BEGIN{ exit !($DUR > $TRIM_TAIL) }"; then
+                  # Fallback (no JSONL entry): old behavior - fixed tail trim.
+                  KEEP=$(awk "BEGIN{ print ($DUR) - $TRIM_TAIL }")
+                  echo "Compress+trim $f (fallback, no JSONL): DUR=$DUR TRIM_TAIL=$TRIM_TAIL KEEP=$KEEP"
+                  ffmpeg -y -i "$f" -t "$KEEP" \
                     -vf "scale=640:-2" \
                     -c:v libx264 \
                     -preset ultrafast \
@@ -61,9 +86,10 @@ spec:
                     -b:a 64k \
                     "$out"
                 else
-                  KEEP=$(awk "BEGIN{ print ($DUR) - $TRIM_TAIL }")
-                  echo "Compress+trim $f: DUR=$DUR TRIM_TAIL=$TRIM_TAIL KEEP=$KEEP"
-                  ffmpeg -y -i "$f" -t "$KEEP" \
+                  # Short or unreadable clip, or no record_duration: keep
+                  # the whole file, skip -t.
+                  echo "WARN: trim skipped for $f (DUR=${DUR:-empty}, REC_DUR=${REC_DUR:-empty}, TRIM_TAIL=$TRIM_TAIL)"
+                  ffmpeg -y -i "$f" \
                     -vf "scale=640:-2" \
                     -c:v libx264 \
                     -preset ultrafast \
