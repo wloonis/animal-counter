@@ -525,6 +525,7 @@
                           "video_id": vid,
                           "filename": obj.get("filename"),
                           "duration": obj.get("duration"),
+                          "file_duration": obj.get("file_duration"),
                           "count_delta": obj.get("count_delta"),
                           "session_id": obj.get("session_id"),
                           "ts": obj.get("ts"),
@@ -565,6 +566,7 @@
                       "video_id": "counting-" + ts_stem,
                       "filename": "counting-{}.mp4".format(ts_stem),
                       "duration": None,
+                      "file_duration": None,
                       "count_delta": delta,
                       "session_id": hb.get("session_id"),
                       "ts": hb.get("ts"),
@@ -580,35 +582,57 @@
                   video_id is unknown."""
                   self._maybe_rebuild()
                   obj = self._videos.get(video_id)
+                  running = False
                   if obj is None:
-                      return None
+                      # Not a finalized video - maybe the currently-running
+                      # recording. Synthesize a detail from the running row +
+                      # the heartbeats/events since the recording start.
+                      row = self._running_video_row()
+                      if row is None or row.get("video_id") != video_id:
+                          return None
+                      obj = row
+                      running = True
                   sid = obj.get("session_id")
                   sess = self._sessions.get(sid) if sid else None
                   duration = obj.get("duration")
                   start_ts = obj.get("ts")
-                  # The video line's `ts` is the FINALIZE (stop) time
-                  # (_utcnow_iso() in history.video(), called at
-                  # _finalize_recording). The recording STARTED `duration`
-                  # seconds before that. So the attribution timespan is
-                  # [ts - duration, ts], NOT [ts, ts + duration].
                   finalize_dt = None
-                  if start_ts:
+                  start_dt = None
+                  end_dt = None
+                  if running:
+                      # Recording in progress: attribute events/heartbeats from
+                      # the first heartbeat whose last_segment matches this
+                      # recording's tmp filename, up to now (end_dt = None).
+                      stem = _parse_video_stem(obj.get("filename") or "")
+                      if sess is not None and stem:
+                          for h in (sess.get("heartbeats") or []):
+                              ls = h.get("last_segment") or ""
+                              if ("tmp-counting-" + stem) in ls:
+                                  try:
+                                      start_dt = _parse_iso(h.get("ts"))
+                                  except Exception:
+                                      start_dt = None
+                                  break
+                  elif start_ts:
+                      # The video line's `ts` is the FINALIZE (stop) time
+                      # (_utcnow_iso() in history.video(), called at
+                      # _finalize_recording). The recording STARTED `duration`
+                      # seconds before that. So the attribution timespan is
+                      # [ts - duration, ts], NOT [ts, ts + duration].
                       try:
                           finalize_dt = _parse_iso(start_ts)
                       except Exception:
                           finalize_dt = None
-                  start_dt = None
-                  end_dt = None
-                  if finalize_dt is not None and duration is not None:
-                      try:
-                          end_dt = finalize_dt
-                          start_dt = finalize_dt - datetime.timedelta(
-                              seconds=float(duration))
-                      except Exception:
-                          start_dt = None
-                          end_dt = None
-                  else:
-                      start_dt = finalize_dt
+                      if finalize_dt is not None and duration is not None:
+                          try:
+                              end_dt = finalize_dt
+                              start_dt = finalize_dt - datetime.timedelta(
+                                  seconds=float(duration))
+                          except Exception:
+                              start_dt = None
+                              end_dt = None
+                      else:
+                          start_dt = finalize_dt
 
                   def _in_span(ts_str):
                       if not ts_str or start_dt is None:
@@ -710,10 +734,11 @@
                       "video_id": video_id,
                       "filename": obj.get("filename"),
                       "duration": duration,
+                      "file_duration": obj.get("file_duration"),
                       "count_delta": obj.get("count_delta"),
                       "session_id": sid,
                       "ts": start_ts,
-                      "status": "ready",
+                      "status": "running" if running else "ready",
                       "count_left_to_right": count_left,
                       "count_right_to_left": count_right,
                       "guard_interventions": guard_interventions,
@@ -1230,6 +1255,13 @@
           RestartSec=3
           Environment=COMPANION_PORT={{ companion_port }}
           Environment=HISTORY_FILE_HOST={{ companion_history_file_host }}
+          # Defense-in-depth: the companion must never starve inference.
+          # Nice + best-effort I/O + a 30% CPU cap keep it subservient to
+          # the countingapp pod even if the JSONL grows or a video stream
+          # spikes (BL-71).
+          Nice=10
+          IOSchedulingClass=best-effort
+          CPUQuota=30%
 
           [Install]
           WantedBy=multi-user.target
