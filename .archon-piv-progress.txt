@@ -70,3 +70,22 @@ Task 3: COMPUTE delta in _finalize_recording filename — 9ae6435
 Task 4: RESET record_start_count after finalize — ef93b15
 Task 5: ADD tests/test_finalize_recording_filename.py (5 tests, stubbed GPU deps) — 26e868d
 Task 6: VERIFY k3s/templates/cronvideo-dep.j2 compatibility — VERIFIED (no edit). tocompress-counting-{ts}-#{delta}.mp4 matches /videos/tocompress-* glob; sed yields counting-{ts}-#{delta}.mp4 (matches ls -t count*); find *.mp4 size+2G and budget guard ls -t count* both match. Globs are prefix-based, agnostic to #{delta} numeric value (incl #-1, #0).
+
+=== BL-69 Android app — history/count tabs ===
+Task 1: ADD 5 JetsonClient methods + net/Models.kt — dfca630
+Task 3: CREATE LiveCountViewModel (lifecycle-aware polling) — 90c3969
+Task 5: CREATE HistoryViewModel (paginated + client-side date/status filtering) — 1b7b161
+Task 7: CREATE SessionDetailViewModel (SavedStateHandle session id) — 0bbc57e
+Task 4: feccc79
+Task 6: CREATE HistoryScreen.kt — 10fd1e1
+Task 8: CREATE SessionDetailScreen (A–G group ElevatedCards, end_reason pill, heartbeat perf agg) — ed4eea5
+Task 9: CREATE DashboardViewModel (7/30-day period selector, summary aggregation) — 42415d6
+Task 13: ADD EN strings (dashboard/startups/live-status) — aa81ba3
+Task 10: CREATE DashboardScreen.kt (Canvas bar chart + segmented period selector) — 7284dde
+Task 11: CREATE StartupsViewModel (newest-first boot_at sort, reachability probe) — 233fa7e
+Task 12: CREATE StartupsScreen.kt (LargeTopAppBar + Refresh + PullToRefreshBox + Card rows) — c86aff2
+Task 2: EDIT AnimalCounterApp.kt — 5-tab NavigationBar + session/{sessionId} detail route — 0cac7d9
+Task 14: i18n(fr) add dashboard/startups/live-status FR strings — 913f241
+Task 15: DELETE dead PlaceholderScreen after 5-tab conversion — 8c73160
+Task 16: CREATE JetsonClientParsingTest.kt (21 unit tests, 5 endpoints incl. running-session end=null fallback) — 153b6a5
+Task 17: VERIFY assembleDebug BUILD SUCCESSFUL + testDebugUnitTest 21 tests pass (0 failures) — 153b6a5

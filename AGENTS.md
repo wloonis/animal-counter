@@ -272,8 +272,15 @@ CLI above (what the relay agent uses) and plannotator for plan review.
   the manifest in `validation/expected_counts.json` (the 4 priority videos under
   `.videos`; the rest are in `.disabled`). **Run standard by default; use `--full`
   ONLY when the branch touches counting code** (`app/src/counting.py`,
-  `app/src/main.py` tracking/counting logic, `app/src/core/*`, tracker/guard
-  params). k3s/ansible/docs/UI/infra-only changes → standard.
+  `app/src/main.py` **tracking/counting DECISION logic** — i.e. the counting
+  line-crossing + guard/tracker decision code, NOT recording-lifecycle code
+  like the `DisplayThread` filename/video-writer/record flow, `app/src/core/*`,
+  tracker/guard params). **A change to `app/src/main.py` that is limited to
+  recording lifecycle (filename, video writer, `DisplayThread` recording flow),
+  UI, or infrastructure does NOT justify `--full` — use standard.** When unsure,
+  check the diff: if it does not alter *what gets counted* (crossing detection,
+  guard eligibility, tracker params), it is standard. k3s/ansible/docs/UI/
+  infra-only changes → standard.
 - **Skip validation entirely for branches that touch NO file under `app/`**
   (companion host service, ansible playbooks, docs, k3s manifests, scripts).
   The counting-video validation only proves the *counting pipeline* still
