@@ -1,7 +1,10 @@
 package com.animalcounter.ui.sessiondetail
 
+import android.content.Intent
+import android.net.Uri
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -13,48 +16,77 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.OpenInNew
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.PlayCircle
+import androidx.compose.material.icons.filled.VideoFile
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedCard
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.animalcounter.R
-import com.animalcounter.net.SessionDetail
+import com.animalcounter.net.VideoRow
 import java.util.Locale
 
 /**
- * Détail vidéo — simplified video-centric view reached from the History tab.
+ * Détail vidéo — video-centric detail screen reached from the History tab
+ * via the `video/{videoId}?...` nav route.
  *
- * Shows only the video facts the operator cares about: filename, start,
- * video duration, net count + directional/tracking breakdown, guards, and a
- * simple running/ended status. Session-level diagnostics (end_reason,
- * heartbeats, config, thermal, events timeline) are deliberately NOT shown
- * here — those live in the Session detail reached from the Dashboard
- * "Sessions" entry. Reuses [SessionDetailViewModel] (same `/api/sessions/<id>`
- * fetch) keyed by the `video/{sessionId}` nav arg.
+ * BL-72: the screen no longer fetches `/api/sessions/<id>` (the old
+ * `SessionDetailViewModel` diagnostics dump). Instead it reads the
+ * [VideoRow] facts straight from the Navigation Compose back-stack args
+ * via [VideoDetailViewModel] (no re-fetch — the `/api/videos` row carries
+ * everything). It renders a [VideoHeaderCard] (filename, start/ts,
+ * duration, count_delta, status pill) and a download/open button:
+ *  - On enter the gallery is probed for an existing copy of `filename`;
+ *    a hit → the button reads "Open" and fires `ACTION_VIEW` on the
+ *    existing `contentUri`.
+ *  - On miss → the button reads "Download" and streams
+ *    `GET /api/video/<videoId>` into `MediaStore` (`Movies/Films`) with a
+ *    [LinearProgressIndicator] driven by `DownloadState.Downloading(percent)`.
+ *  - 404 → the "video no longer available" message.
+ *  - A `status == "running"` row disables the button with a "still
+ *    recording" hint (the compressed file does not exist yet).
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun VideoDetailScreen(
     onBack: () -> Unit = {},
 ) {
-    val vm: SessionDetailViewModel = viewModel()
-    val state by vm.state.collectAsState()
-    val probeState by vm.probeState.collectAsState()
+    val vm: VideoDetailViewModel = viewModel()
+    val ui by vm.ui.collectAsState()
+    val downloadState by vm.downloadState.collectAsState()
+    val context = LocalContext.current
+    val row = ui.row
+
+    // Probe the gallery on enter — decides "Open" vs "Download" and
+    // short-circuits the network round-trip when the clip is already saved.
+    LaunchedEffect(row.filename) {
+        vm.probe(context)
+    }
 
     Scaffold(
         modifier = Modifier.fillMaxSize(),
@@ -79,61 +111,64 @@ fun VideoDetailScreen(
             ),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            item { ReachabilityBanner(probeState = probeState) }
-
-            when (val s = state) {
-                is SessionDetailUiState.Loading -> item {
-                    LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-                }
-                is SessionDetailUiState.Loaded -> {
-                    val d = s.detail
-                    item { VideoHeaderCard(d) }
-                    item { CountingCard(d) }
-                    item { GuardsCard(d) }
-                }
-                is SessionDetailUiState.OutOfRange -> item { OutOfRangeCard() }
-                is SessionDetailUiState.Error -> item { ErrorCard(message = s.message) }
-            }
+            item { VideoHeaderCard(row) }
+            item { DownloadCard(row, downloadState, onDownload = { vm.downloadOrOpen(context) }) }
         }
     }
 }
 
-/** A — En-tête vidéo: filename, start, video duration, status (En cours / Terminé). */
+// ---------------------------------------------------------------------------
+// Header card
+// ---------------------------------------------------------------------------
+
+/** En-tête vidéo: filename, start/ts, duration, count_delta, status pill. */
 @Composable
-private fun VideoHeaderCard(d: SessionDetail) {
-    val start = d.start
-    val end = d.end
-    val rawVideo = end?.video?.path ?: d.heartbeats.lastOrNull()?.lastSegment
-    val video = displayFilename(rawVideo, d.status)
-    val startStr = formatIso(start?.startAt)
-    val videoDur = formatSeconds(end?.video?.duration)
+private fun VideoHeaderCard(row: VideoRow) {
     GroupCard(
         icon = Icons.Filled.PlayCircle,
         title = stringResource(R.string.detail_video),
     ) {
-        KeyValueRow(R.string.detail_video, video ?: "—")
-        KeyValueRow(R.string.detail_start, startStr)
-        if (videoDur != null) KeyValueRow(R.string.detail_duration, videoDur)
+        // Filename (straight from the API — no tmp- logic).
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Icon(
+                imageVector = Icons.Filled.VideoFile,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(16.dp),
+            )
+            Text(
+                text = row.filename ?: row.videoId ?: "—",
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.Medium,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        Spacer(Modifier.height(8.dp))
+
+        KeyValueRow(R.string.detail_start, formatIso(row.ts))
+        val dur = formatSeconds(row.duration)
+        if (dur != null) KeyValueRow(R.string.detail_duration, dur)
+        KeyValueRow(R.string.video_count_delta, row.countDelta?.toString())
+
         Row(
             modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             KeyValueLabel(R.string.detail_status)
-            SimpleStatusPill(d.status)
+            VideoStatusPill(status = row.status)
         }
     }
 }
 
-/** Simple running/ended pill — En cours / Terminé (no end_reason). */
+/** Running/Ready/Unknown pill keyed on the [VideoRow] `status` field. */
 @Composable
-private fun SimpleStatusPill(status: String) {
-    val running = status == "running"
-    val (dotColor, label) = if (running) {
-        MaterialTheme.colorScheme.primary to stringResource(R.string.filter_status_running)
-    } else {
-        MaterialTheme.colorScheme.tertiary to stringResource(R.string.status_ended)
-    }
+private fun VideoStatusPill(status: String) {
+    val (dotColor, label) = statusVisual(status)
     Surface(
         color = MaterialTheme.colorScheme.surfaceVariant,
         contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -154,12 +189,170 @@ private fun SimpleStatusPill(status: String) {
     }
 }
 
-/** Display the video filename: basename, with `tmp-` stripped once ended. */
-private fun displayFilename(videoPath: String?, status: String): String? {
-    if (videoPath == null) return null
-    val base = videoPath.substringAfterLast('/')
-    return if (status != "running" && base.startsWith("tmp-")) base.removePrefix("tmp-") else base
+@Composable
+private fun statusVisual(status: String): Pair<Color, String> = when (status) {
+    "running" ->
+        MaterialTheme.colorScheme.primary to stringResource(R.string.filter_status_running)
+    "ready" ->
+        MaterialTheme.colorScheme.tertiary to stringResource(R.string.filter_status_ready)
+    else ->
+        MaterialTheme.colorScheme.outline to stringResource(R.string.filter_status_unknown)
 }
+
+// ---------------------------------------------------------------------------
+// Download / open card
+// ---------------------------------------------------------------------------
+
+/**
+ * Download/open button + progress + status messages.
+ *
+ * - `status == "running"` → button disabled with a "still recording" hint.
+ * - [DownloadState.Done] → "Open" button; tap fires `ACTION_VIEW` on the uri.
+ * - [DownloadState.Downloading] → indeterminate/percent progress bar; button disabled.
+ * - [DownloadState.Probing] → small progress bar; button disabled.
+ * - [DownloadState.Error] → error message (404 → "video no longer available").
+ * - [DownloadState.Idle] → "Download" button.
+ */
+@Composable
+private fun DownloadCard(
+    row: VideoRow,
+    state: DownloadState,
+    onDownload: () -> Unit,
+) {
+    val running = row.status == "running"
+    val context = LocalContext.current
+
+    ElevatedCard(
+        modifier = Modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.medium,
+    ) {
+        Column(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
+            when (val s = state) {
+                is DownloadState.Downloading -> {
+                    val percent = s.percent
+                    if (percent > 0) {
+                        LinearProgressIndicator(
+                            progress = { percent / 100f },
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    } else {
+                        // Unknown length — indeterminate.
+                        LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        text = stringResource(R.string.video_download) +
+                            if (percent > 0) " $percent%" else "",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                is DownloadState.Probing -> {
+                    LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                }
+                is DownloadState.Done -> {
+                    DownloadButton(
+                        label = stringResource(R.string.video_open),
+                        icon = Icons.AutoMirrored.Filled.OpenInNew,
+                        enabled = !running,
+                        hint = if (running) stringResource(R.string.video_still_recording) else null,
+                        onClick = { openVideo(context, s.uri) },
+                    )
+                }
+                is DownloadState.Error -> {
+                    val msg = if (running) stringResource(R.string.video_still_recording) else s.message
+                    OutlinedErrorCard(message = msg)
+                    if (!running) {
+                        Spacer(Modifier.height(10.dp))
+                        DownloadButton(
+                            label = stringResource(R.string.video_download),
+                            icon = Icons.Filled.Download,
+                            enabled = true,
+                            hint = null,
+                            onClick = onDownload,
+                        )
+                    }
+                }
+                DownloadState.Idle -> {
+                    if (running) {
+                        OutlinedErrorCard(message = stringResource(R.string.video_still_recording))
+                    }
+                    DownloadButton(
+                        label = stringResource(R.string.video_download),
+                        icon = Icons.Filled.Download,
+                        enabled = !running,
+                        hint = if (running) stringResource(R.string.video_still_recording) else null,
+                        onClick = onDownload,
+                    )
+                }
+            }
+        }
+    }
+}
+
+/** Primary download/open button with an optional disabled hint line. */
+@Composable
+private fun DownloadButton(
+    label: String,
+    icon: ImageVector,
+    enabled: Boolean,
+    hint: String?,
+    onClick: () -> Unit,
+) {
+    Button(
+        onClick = onClick,
+        enabled = enabled,
+        modifier = Modifier.fillMaxWidth(),
+        colors = if (enabled) ButtonDefaults.buttonColors()
+        else ButtonDefaults.buttonColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant,
+            contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+        ),
+    ) {
+        Icon(icon, contentDescription = null, modifier = Modifier.size(18.dp))
+        Spacer(Modifier.size(8.dp))
+        Text(label)
+    }
+    if (hint != null) {
+        Spacer(Modifier.height(6.dp))
+        Text(
+            text = hint,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+/** Small tonal error / info card used for the 404 + still-recording messages. */
+@Composable
+private fun OutlinedErrorCard(message: String) {
+    OutlinedCard(
+        modifier = Modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.medium,
+    ) {
+        Text(
+            text = message,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.fillMaxWidth().padding(12.dp),
+        )
+    }
+}
+
+/** Fire `ACTION_VIEW` on a gallery `contentUri` (grants read to the chooser). */
+private fun openVideo(context: android.content.Context, uri: Uri) {
+    val intent = Intent(Intent.ACTION_VIEW).apply {
+        setDataAndType(uri, "video/mp4")
+        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    }
+    runCatching {
+        context.startActivity(Intent.createChooser(intent, null))
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Formatting helpers
+// ---------------------------------------------------------------------------
 
 /** Format a duration in seconds as `H:MM:SS` / `MM:SS` / `SSs`, null when null. */
 private fun formatSeconds(seconds: Double?): String? {

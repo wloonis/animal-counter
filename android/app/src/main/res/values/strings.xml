@@ -172,4 +172,12 @@
 
     <!-- BL-69 — live count status label -->
     <string name="live_status_label">Status</string>
+
+    <!-- BL-72 — video detail (download / open) -->
+    <string name="video_count_delta">Count delta</string>
+    <string name="video_download">Download</string>
+    <string name="video_open">Open</string>
+    <string name="video_unavailable">Video no longer available (compression in progress or cleaned up)</string>
+    <string name="video_still_recording">Still recording</string>
+    <string name="video_download_failed">Download failed</string>
 </resources>

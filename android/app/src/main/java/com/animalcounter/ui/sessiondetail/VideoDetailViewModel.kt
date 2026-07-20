@@ -154,6 +154,34 @@ class VideoDetailViewModel(
         }
     }
 
+    /**
+     * Probe-only entry point (no download): query `MediaStore.Video` for an
+     * existing copy of [VideoRow.filename] and emit [DownloadState.Done]
+     * with its `contentUri` on hit, or [DownloadState.Idle] on miss. Used by
+     * the detail screen on enter to decide the button label ("Open" when
+     * the clip is already in the gallery, "Download" otherwise). No-op when
+     * a download/probe is already in flight or the row has no filename.
+     */
+    fun probe(context: Context) {
+        if (_downloadState.value is DownloadState.Probing ||
+            _downloadState.value is DownloadState.Downloading
+        ) return
+        val filename = _ui.value.row.filename
+        if (filename.isNullOrBlank()) return
+        _downloadState.value = DownloadState.Probing
+        viewModelScope.launch {
+            try {
+                val existing = probeGallery(context, filename)
+                _downloadState.value =
+                    if (existing != null) DownloadState.Done(existing)
+                    else DownloadState.Idle
+            } catch (t: Throwable) {
+                // A probe failure is non-fatal — fall back to the Download path.
+                _downloadState.value = DownloadState.Idle
+            }
+        }
+    }
+
     /** Reset back to [DownloadState.Idle] (e.g. on screen re-entry). */
     fun reset() {
         _downloadState.value = DownloadState.Idle
