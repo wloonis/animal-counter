@@ -1,0 +1,88 @@
+# Plan: BL-68 — Persistent Counting History + Companion API (Jetson side)
+
+## Summary
+
+Add an append-only JSONL counting-session history (sessions, heartbeats, events, startups) written read-only from the `countingapp` pod onto the hostPath `/files`, with a single in-process history thread (heartbeat + compaction) that is resilient to power cuts, bounded to ~200 MB on the small SSD. Extend the existing stdlib `jetson-companion` host service (BL-64, port 8090) with read-only history API endpoints (`/api/history`, `/api/sessions/<id>`, `/api/history/summary`, `/api/startups`) backed by a lazy in-memory index over the JSONL. Counting/tracking/guard decision logic is untouched (read-only instrumentation only); validation STANDARD must keep the reference count unchanged.
+
+## In Scope
+- **Session schema A–G** (lifecycle, counting/tracking health, sampled perf/thermal, config snapshot at startup, video metadata, system health, per-session event timeline).
+- **Startup history** (boot_at, image_tag, git_commit, mode, config_notable).
+- **Power-loss-resilient end-time**: periodic heartbeat (append+fsync, separate thread, no per-frame I/O); recovery at next boot (last heartbeat = end_at + `power-loss`, or `unknown` if stale); clean end via BL-62 shutdown; crash/oom detection via `journalctl -b -1` / `dmesg` at next boot.
+- **Append-only JSONL** on persistent volume (`/files` in pod → `/data/orin/files` on host), tolerate partial lines; exclude history file from `validate_on_jetson.sh` rsync `--delete`.
+- **Bounded retention**: ~200 MB cap; 2-level compaction (startup + 1x/day: hot ≤30d raw, cold >30d → 1 summary line/session + significant events, drop heartbeats); size rotation (>10 MB → gz archive, bounded count); disk guard (<2 GB → heartbeat 5s→30s; <500 MB → suspend writes, counting continues + alert).
+- **Configurable `HISTORY_*` settings** in `app/src/settings.py` + env.
+- **Companion API endpoints** (stdlib `http.server`, no deps, reuse BL-64 structure), reading the host JSONL read-only.
+- **Build-info baking**: `/app/.build-info.json` (git_commit + image_tag) written at `docker build` time, read at startup.
+- **Tests** for JSONL write/compact/bounded-size and read-only instrumentation invariance.
+
+## Out of Scope
+- Android display (BL-69).
+- Any change to counting/tracking/guard decision logic or OC-SORT params.
+- History in validate/test mode (production/serve only — `result.json` stays the validation source of truth).
+- Index maintenance in the pod (writer stays pure append-only; companion builds the index lazily).
+- A separate service/sidecar/CronJob for compaction (single in-pod thread owns it).
+
+## Architecture Decisions
+- **One writer (pod), one reader (companion host), same hostPath `/files`.** The pod appends the JSONL; the companion reads it read-only and never mutates the source file. The JSONL is the single source of truth — the pod keeps no sidecar index, so a power cut can only lose the last partial line, never corrupt an index. (Decided in clarify.)
+- **git_commit + image_tag via build-info file baked into the image.** `app/Dockerfile` adds a `RUN` that writes `/app/.build-info.json` from build args (`IMAGE_TAG` + a `GIT_COMMIT` arg populated by `git rev-parse HEAD` in `build_countingapp.yml`). `main.py` reads it at startup; fallback to env `IMAGE_TAG` if missing, `git_commit='unknown'`. Robust to K3s env drift; travels with the image. (Decided in clarify.)
+- **Secondary index by session_id is reader-built lazily by the companion.** On first history request the companion scans the JSONL once, builds an in-memory map `session_id → {line offsets, summary}`, and caches it; the cache is invalidated on file-size change. This keeps the pod writer simple and is fine for the infrequent Android-driven requests. (Decided in clarify.)
+- **Compaction runs in the pod, in one dedicated history thread, serialized with heartbeats.** The thread does (a) startup compaction once before the heartbeat loop, (b) the heartbeat loop, (c) a 1x/day compaction timer in the same thread. No concurrent rewrite while heartbeats append; the companion never rewrites the JSONL. (Decided in clarify.)
+- **Read-only instrumentation in `counting.py`**: `self._emit_event(type, detail)` is a no-op by default; `main.py` wires a recorder that subscribes to it. Accumulator counters (directional raw, `guard_interventions` map, det stats) are appended-only state that no decision branch reads. The reference count must stay identical — proven by validation STANDARD (tolerance 0).
+- **History only in serve mode.** The `RESULT_JSON_PATH` env (set only by the validate Job) is the guard: history recording is enabled iff `RESULT_JSON_PATH` is unset (serve mode), consistent with the existing `write_result_json` branch in `main.py`.
+
+## Tasks
+
+### Phase 1 — Settings + build-info plumbing
+- [ ] Task 1: ADD `app/src/settings.py` — new `HISTORY_*` settings with env + documented defaults: `HISTORY_RETENTION_DAYS` (30), `HISTORY_MAX_BYTES` (200*1024*1024), `HISTORY_HEARTBEAT_S` (5), `HISTORY_DISK_WARN_GB` (2), `HISTORY_DISK_CRIT_GB` (0.5), plus `HISTORY_FILE` default (`/files/counting-history.jsonl`), `HISTORY_ROTATE_BYTES` (10*1024*1024), `HISTORY_ARCHIVE_MAX` (e.g. 20). Mirror the existing env-overridable pattern (`os.getenv(...)` with inline-commented rationale).
+- [ ] Task 2: EDIT `app/Dockerfile` — add `ARG IMAGE_TAG=local` and `ARG GIT_COMMIT=unknown`, then a `RUN` that writes `/app/.build-info.json` `{"git_commit":"$GIT_COMMIT","image_tag":"$IMAGE_TAG"}`. Keep it before `WORKDIR /app` so it lands at `/app/.build-info.json` (or write to the app dir post-`WORKDIR`). No new runtime deps.
+- [ ] Task 3: EDIT `ansible/playbooks/app/build_countingapp.yml` — pass `--build-arg IMAGE_TAG={{ image_tag }}` and `--build-arg GIT_COMMIT=$(git rev-parse HEAD)` (capture the SHA via a `shell`/`command` fact, or inline `$(...)` in the `docker buildx build` line). Keep the existing `--no-cache`-optional comment block intact.
+
+### Phase 2 — Read-only instrumentation in counting.py
+- [ ] Task 4: EDIT `app/src/core/counting.py` — add `self._emit_event(type, detail)` method (no-op default: `pass`) and an `self._event_subscribers = []` hook list, plus accumulator counters initialized in `__init__`: `self.count_left_to_right = 0`, `self.count_right_to_left = 0`, `self.guard_interventions = {"lost_buffer_expired":0,"mirror_guard":0,"resurrection":0,"reid_rebind":0}`, `self.id_switch_recoveries = 0`, `self.unique_track_ids = set()`, `self.max_concurrent_tracks = 0`, and det stat accumulators (`det_per_frame` list or running min/sum/max, `det_confidence` running avg). Instrument the **existing** `crossed LEFT`/`crossed RIGHT`/`ID-SWITCH recovery`/`MIRROR`/`RESURRECTION`/`REID-SUPPRESS`/`track lost`/`lost_buffer_expired` points with one-line `self._emit_event(...)` calls and counter increments. CRITICAL: do NOT add, remove, or reorder any `if`/`elif`/`continue`/`return` that affects `counter_to_right`; every emit/counter is additive on a code path that already executes. The guards' control flow must be byte-identical except for inserted instrumentation lines.
+- [ ] Task 5: ADD `tests/test_counting_invariance.py` — a regression test that runs the existing `test_counting.py` scenarios (or a representative crossing sequence) and asserts `counter_to_right` is **identical** with and without subscribers attached, proving the instrumentation is read-only. Also assert the new accumulators increment correctly on a known crossing sequence. This is the unit-level proof that complements the Jetson validation.
+
+### Phase 3 — History recorder/writer (pod, main.py)
+- [ ] Task 6: ADD `app/src/core/history.py` — a `HistoryWriter` class (stdlib only: `json`, `os`, `time`, `threading`, `uuid`, `datetime`, `subprocess`, `shutil`). Responsibilities:
+  - JSONL append-only writes (`session_start`, `heartbeat`, `event`, `session_end`) with `os.fsync` per line; tolerate partial last line on open (skip a trailing line that fails `json.loads`).
+  - `start_session(...)`: emit `session_start` (A: session_id uuid, prev_session_id from the last session in the file, start_at UTC+locale, start_reason, status=running) + config snapshot D (from Settings + `.build-info.json`) + startup history line (`boot_at`, `image_tag`, `git_commit`, mode, config_notable). Before starting, run **recovery**: scan the file for the last session without a `session_end`; if found, write a synthetic `session_end` using the last `heartbeat` ts as `end_at` and `end_reason=power-loss` (or `unknown` if heartbeat older than a staleness threshold, e.g. 1h). Attempt crash/oom classification via `journalctl -b -1` / `dmesg` (best-effort, non-fatal if unavailable).
+  - `emit_event(type, detail)`: append an `event` line (called from the counting instrumentation via the subscriber wired in `main.py`).
+  - `heartbeat()`: read current count (`shared_state.counter_to_right`) + last video segment (`DisplayThread.filename`), append a `heartbeat` line.
+  - `end_session(end_reason)`: append `session_end` with real `end_at` + E (video metadata) + B final counters (read from the `Counting` accumulator) + F (disk_free_end, cpu_load_avg, mem_used) + status=clean.
+  - `compact()`: 2-level compaction — hot (≤ `HISTORY_RETENTION_DAYS`): keep raw lines; cold (> retention): replace each session's lines with one summary line (A–F aggregates) keeping only significant events, drop heartbeats. Atomic rewrite via temp file + `os.replace`. Bounded to `HISTORY_MAX_BYTES`; rotation: if file > `HISTORY_ROTATE_BYTES`, gzip-archive the cold portion to `counting-history.<ts>.jsonl.gz` (bounded count `HISTORY_ARCHIVE_MAX`, delete oldest archive beyond).
+  - Disk guard: `disk_free("/files")` check; < `HISTORY_DISK_WARN_GB` → set heartbeat interval to 30s; < `HISTORY_DISK_CRIT_GB` → suspend writes (counting continues) + emit a `disk_warning` event + log alert. Sampling for C/F/G fields is cheap (read `cat /sys/...temp`, `nvidia-smi`/`tegrastats`-style, `os.statvfs`, `/proc/loadavg`, `/proc/meminfo`) — done only in the heartbeat/compaction path, never per-frame.
+  - Thread lifecycle: `HistoryThread(threading.Thread)` runs (a) `compact()` once at start, (b) heartbeat loop (`while not stop_event: heartbeat(); sleep(interval)` with the disk-guard-adjusted interval), (c) 1x/day compaction via a deadline timestamp checked each loop iteration. Serialized: compaction and heartbeat are never concurrent because they're in the same thread.
+- [ ] Task 7: EDIT `app/src/main.py` — wire the history recorder (serve mode only, i.e. when `RESULT_JSON_PATH` is unset). In `start()`: instantiate `HistoryWriter` (path = `settings.HISTORY_FILE`), start its `HistoryThread`. Wire the `Counting` instance's `_emit_event`/subscribers to `history_writer.emit_event`. On BL-62 clean stop (`stop()` / `arret_requested` path): call `history_writer.end_session("clean")` before `poweroff`. On SIGTERM handler: best-effort `end_session("clean")`. Pass the `Counting` accumulator reference to the writer so `session_end` reads B counters. Add `history_writer` to `shared_state` (or module-global) so `stop()` and the SIGTERM handler can reach it.
+- [ ] Task 8: EDIT `app/src/utils/shared_state.py` — add `self.history_writer = None` (and `self.history_session_id = None` if needed) so the recorder is reachable from `stop()` and the BL-62 poweroff path. No behavioral change to existing fields.
+
+### Phase 4 — Companion read-only API (host)
+- [ ] Task 9: EDIT `ansible/playbooks/system/configure_companion.yml` — extend the inline `jetson-companion` script (`content: |` block) with a read-only JSONL reader module + the new endpoints. Add:
+  - A lazy indexer: `HistoryIndex` class that scans `/data/orin/files/counting-history.jsonl` once, builds `{session_id: {offsets, summary, events, detail}}` + a list of `startup` lines, caches it, and invalidates on `os.path.getsize` change. Tolerate partial last lines.
+  - `GET /api/history?limit=50&offset=0` → paginated session summaries (A + net count + last event ts), newest first.
+  - `GET /api/sessions/<id>` → full session detail (A–G): aggregate the session's `session_start`, `heartbeat`s (last = end_at if no `session_end`), `event`s, and `session_end` into one object.
+  - `GET /api/history/summary?days=7` → daily aggregates (count per day, sessions, guard events).
+  - `GET /api/startups?limit=50` → startup history lines.
+  Keep the existing `/api/identify` and `POST /api/time` endpoints intact. Bump `SERVICE_VERSION` to `"2"`. All stdlib (`http.server`, `json`, `os`, `datetime`); no new deps; no mutation of the JSONL.
+- [ ] Task 10: EDIT `ansible/playbooks/system/configure_companion.yml` — ensure the history file path is configurable via env `HISTORY_FILE_HOST` (default `/data/orin/files/counting-history.jsonl`) in the systemd unit `Environment=` lines, mirroring `COMPANION_PORT`.
+
+### Phase 5 — Rsync guard + docs
+- [ ] Task 11: EDIT `scripts/validate_on_jetson.sh` — add `--exclude='counting-history*.jsonl*'` (covers the live file + gz archives) to the rsync `--delete` command in step 3, so a code rsync never wipes the persisted history on the Jetson. Keep the existing excludes (`model/`, `.env`, `video/`, `img/old/`).
+- [ ] Task 12: ADD `docs/12_counting_history.md` — document BL-68: the JSONL schema (line types + A–G fields), the hostPath layout (pod `/files` → host `/data/orin/files`), the heartbeat/compaction/disk-guard behavior, the `HISTORY_*` settings, the build-info baking, and the companion API endpoints (with curl examples). Follow the existing `docs/11_jetson_companion.md` style.
+
+### Phase 6 — Tests
+- [ ] Task 13: ADD `tests/test_history_writer.py` — unit tests for `HistoryWriter` (stdlib only): append+fsync, partial-line tolerance on reopen, recovery writes a synthetic `session_end` for an unterminated last session (power-loss vs `unknown` staleness), compaction drops heartbeats for cold sessions and keeps a summary line, bounded size ≤ `HISTORY_MAX_BYTES` after compaction, rotation creates a gz archive and bounds the count, disk guard suspends writes below the crit threshold. Use a temp dir for the JSONL.
+- [ ] Task 14: ADD `tests/test_companion_history_api.py` — unit tests for the companion history reader/indexer extracted as importable functions (parse JSONL, build index, paginate, session detail, daily summary, startups). Run against a fixture JSONL with a few sessions + heartbeats + events + an unterminated session. (If the companion script is inline in the playbook and not importable, factor the reader into a small stdlib module shipped alongside or paste the relevant functions into the test; prefer keeping the reader logic testable.)
+
+## Validation
+- **Unit (Python, no Jetson):**
+  - `python3 -m pytest tests/test_counting_invariance.py tests/test_history_writer.py tests/test_companion_history_api.py -v` — invariance (count unchanged with instrumentation), JSONL write/compact/bounded-size, companion reader.
+  - `python3 -m py_compile app/src/core/history.py app/src/core/counting.py app/src/main.py app/src/settings.py app/src/utils/shared_state.py` — syntax.
+- **Jetson business (the gate):** `./scripts/validate_on_jetson.sh` in **STANDARD** mode (reference video `validation-1-#9.mp4`, tolerance 0). **Pass = reference count unchanged AND** (after a serve-mode run on the Jetson) `counting-history.jsonl` appears on `/files` with `session_start`/`heartbeat`/`session_end` lines, and a forced compaction yields a file ≤ `HISTORY_MAX_BYTES` with cold sessions collapsed to one summary line. Note: this branch touches `app/` (instrumentation), so per AGENTS.md the `jetson-validate` node runs standard validation; the count-must-not-change is the core proof that the instrumentation is read-only.
+- **Companion API smoke (on Jetson host, post-deploy):** `curl http://127.0.0.1:8090/api/history?limit=10` and `curl http://127.0.0.1:8090/api/sessions/<id>` return JSON; `curl http://127.0.0.1:8090/api/identify` still returns the service (now version `"2"`).
+
+## Risks
+- **Instrumentation accidentally alters the count** — the highest-priority risk. Mitigation: every instrumentation line is additive on an existing code path; the invariance unit test asserts byte-identical `counter_to_right` with/without subscribers; the Jetson STANDARD validation (tolerance 0) is the final gate. Reviewer must verify no `if`/`continue`/`return` was added/removed in `counting.py`.
+- **Power cut mid-compaction corrupts the JSONL** — mitigation: compaction writes to a temp file in the same dir + `os.fsync` + `os.replace` (atomic); a crash before `os.replace` leaves the old file intact; the partial-temp is discarded on reopen.
+- **SSD fills up (already seen at 80%)** — mitigation: disk guard suspends writes below `HISTORY_DISK_CRIT_GB` (counting continues), compaction bounds size to `HISTORY_MAX_BYTES`, rotation bounds archive count; the test asserts post-compaction size ≤ cap.
+- **Companion reads a file the pod is mid-append to** — mitigation: JSONL lines are fsync'd atomically; the reader tolerates a partial last line; the companion only ever reads, never rewrites, so no writer/reader race on the file content.
+- **`build_countingapp.yml` git SHA capture fails in a shallow/non-git worktree** — mitigation: `GIT_COMMIT` build arg defaults to `"unknown"`; `main.py` falls back to `git_commit='unknown'`; history still records, just without a precise commit.
+- **Companion reader is inline in the playbook (not importable for tests)** — mitigation: factor the reader into a small stdlib helper block that can be copy-tested, or keep a mirror in `tests/`; prefer making the reader logic a self-contained function string the test can `exec`/import.
