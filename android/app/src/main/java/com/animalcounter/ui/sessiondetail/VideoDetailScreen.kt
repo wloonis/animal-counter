@@ -52,6 +52,10 @@ import com.animalcounter.R
 import com.animalcounter.net.VideoRow
 import com.animalcounter.net.VideoDetail
 import com.animalcounter.net.VideoPerf
+import com.animalcounter.net.CountingEvent
+import com.animalcounter.net.optIntOrNull
+import com.animalcounter.net.optStringOrNull
+import com.animalcounter.net.optDoubleOrNull
 import java.util.Locale
 
 /**
@@ -243,9 +247,99 @@ private fun VideoMetadataCard(detail: VideoDetail?) {
             KeyValueRow("SoC avg C", p.thermalAvg?.let { "%.1f".format(it) } ?: "-")
             KeyValueRow("SoC peak C", p.thermalPeak?.let { "%.1f".format(it) } ?: "-")
             KeyValueRow(R.string.sys_cpu_load, p.cpuLoadAvg?.let { "%.2f".format(it) } ?: "-")
-            KeyValueRow("Events", detail.events.size.toString())
+            // Events timeline (per-video, BL-71).
+            if (detail.events.isNotEmpty()) {
+                Spacer(Modifier.height(8.dp))
+                HorizontalDivider()
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    text = stringResource(R.string.history_events_label),
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    text = "${detail.events.size}",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(6.dp))
+                for (ev in detail.events) {
+                    EventRow(ev)
+                }
+            }
         }
     }
+}
+
+@Composable
+private fun EventRow(ev: CountingEvent) {
+    Column(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Text(
+                text = formatTimeOnly(ev.ts),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Text(
+                text = videoEventLabel(ev),
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.Medium,
+            )
+        }
+        val d = ev.detail
+        if (d != null && d.length() > 0) {
+            val parts = mutableListOf<String>()
+            d.optIntOrNull("track_id")?.let { parts.add("ID=$it") }
+            d.optIntOrNull("count")?.let { parts.add("count=$it") }
+            d.optStringOrNull("side")?.let { parts.add("cote=$it") }
+            val cx = d.optDoubleOrNull("cx")
+            val cy = d.optDoubleOrNull("cy")
+            if (cx != null && cy != null) parts.add("pos=%.0f,%.0f".format(cx, cy))
+            if (parts.isNotEmpty()) {
+                Text(
+                    text = parts.joinToString("  "),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun videoEventLabel(ev: CountingEvent): String {
+    if (ev.eventType == "crossed") {
+        return when (ev.detail?.optStringOrNull("direction")) {
+            "LEFT" -> stringResource(R.string.event_crossed_left)
+            "RIGHT" -> stringResource(R.string.event_crossed_right)
+            else -> "Traversee"
+        }
+    }
+    return when (ev.eventType) {
+        "track_lost" -> stringResource(R.string.event_track_lost)
+        "lost_buffer_expired" -> stringResource(R.string.event_lost_buffer_expired)
+        "resurrection" -> stringResource(R.string.event_resurrection)
+        "reid_suppress" -> stringResource(R.string.event_reid_suppress)
+        "mirror_suppress" -> stringResource(R.string.event_mirror_suppress)
+        "id_switch_recovery" -> stringResource(R.string.event_id_switch_recovery)
+        "mirror_guard_enforce" -> stringResource(R.string.event_mirror_guard_enforce)
+        "mirror_candidate" -> "Candidat miroir"
+        else -> ev.eventType ?: "—"
+    }
+}
+
+private fun formatTimeOnly(iso: String?): String {
+    if (iso.isNullOrBlank()) return "—"
+    return runCatching {
+        val instant = try {
+            java.time.OffsetDateTime.parse(iso, java.time.format.DateTimeFormatter.ISO_OFFSET_DATE_TIME).toInstant()
+        } catch (e: java.time.format.DateTimeParseException) {
+            java.time.LocalDateTime.parse(iso.take(19)).atZone(java.time.ZoneId.systemDefault()).toInstant()
+        }
+        java.time.format.DateTimeFormatter.ofPattern("HH:mm:ss", Locale.getDefault())
+            .withZone(java.time.ZoneId.systemDefault()).format(instant)
+    }.getOrNull() ?: iso.take(19).let { if (it.length >= 19) it.substring(11) else it }
 }
 
 /** Running/Ready/Unknown pill keyed on the [VideoRow] `status` field. */
