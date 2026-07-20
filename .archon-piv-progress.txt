@@ -68,3 +68,4 @@ Task 1: ADD record_start_count attribute to DisplayThread.__init__ — 70fa5c6
 Task 2: CAPTURE record_start_count snapshot at recording start — 1d64b59
 Task 3: COMPUTE delta in _finalize_recording filename — 9ae6435
 Task 4: RESET record_start_count after finalize — ef93b15
+Task 5: ADD tests/test_finalize_recording_filename.py (5 tests, stubbed GPU deps) — 26e868d
