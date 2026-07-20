@@ -69,12 +69,21 @@ def stop():
 
     shared_state.stop_event.set()
 
+    # Finalize the in-progress recording FIRST (before ending the history
+    # session) so the per-video `video` JSONL line is written while the
+    # HistoryWriter is still active (history.video() guards on _stopped).
+    # _finalize_recording releases the mp4 writer (flushing the moov atom)
+    # AND renames tmp-counting to tocompress-counting. Idempotent (no-op if
+    # the loop already finalized). Best-effort: never raises into the
+    # shutdown path. The SIGTERM handler calls stop(), so this covers SIGTERM.
+    if shared_state.display_thread is not None:
+        shared_state.display_thread._finalize_recording()
+
     # BL-68: finalize the history session (serve mode) before joining
     # threads, so the session_end line is fsync'd to /files even if a
     # later join times out or the process is killed during poweroff.
     # Idempotent (end_session guards on _stopped). Best-effort: never
-    # raises into the shutdown path. The SIGTERM handler calls stop(),
-    # so this also covers SIGTERM.
+    # raises into the shutdown path.
     hw = getattr(shared_state, "history_writer", None)
     if hw is not None:
         try:
@@ -88,16 +97,6 @@ def stop():
             ht.join(timeout=2)
         except Exception as e:
             logger.warning(f"history: thread join failed: {e!r}")
-
-    # Finalize the mp4 before joining display_thread: on a K3s SIGTERM the
-    # 5s join may time out and the thread can be killed mid-write, leaving
-    # the file without a moov atom (unreadable). _finalize_recording releases
-    # the writer (flushing the moov atom) AND renames tmp-counting to
-    # tocompress-counting, even if the join times out. The idempotent guard
-    # inside _finalize_recording makes this a no-op if the loop already
-    # finalized (writer is None).
-    if shared_state.display_thread is not None:
-        shared_state.display_thread._finalize_recording()
 
     if shared_state.infer_thread and shared_state.infer_thread.is_alive():
         shared_state.infer_thread.join(timeout=5)
@@ -272,10 +271,10 @@ class DisplayThread(threading.Thread):
         # consumed in _finalize_recording to put the per-video count (not the
         # global cumulative counter) in the clip filename.
         self.record_start_count = None
-        # BL-71: timestamp stem captured at recording START (not stop) so the
-        # tmp filename, the tocompress/counting output filename, and the
-        # video_id all share the SAME {ts} — the running row and the ended
-        # entry thus share one stable id.
+        # BL-71: recording START timestamp stem (YYYYMMDD-HHMMSS), captured
+        # once at recording start and reused at finalize so the tmp filename,
+        # the tocompress/counting output, and the video_id all share the same
+        # {ts} (the running row and the ended entry must match).
         self.record_start_ts = None
         self.window_name = "Counter"
         self.x_offset = self.y_offset = 30
@@ -306,13 +305,10 @@ class DisplayThread(threading.Thread):
             delta = shared_state.counter_to_right - self.record_start_count
         else:
             delta = 0
-        # BL-71: capture the timestamp stem once so the on-disk filename and the
-        # video_id stay in lockstep (the cron later rewrites tocompress- -> counting-
-        # with the same {ts}; the #N delta suffix is metadata, not part of the id).
         # BL-71: reuse the START timestamp (captured at recording start) so the
         # output filename + video_id match the tmp filename's {ts}. The running
         # row derives its id from the tmp filename; the ended entry derives its
-        # id from here — they must match. The stop time is NOT used.
+        # id from here - they must match. The stop time is NOT used.
         ts_stem = self.record_start_ts or time.strftime('%Y%m%d-%H%M%S')
         output_path = os.path.join(settings.OUTPUT_VIDEO_PATH, f"tocompress-counting-{ts_stem}-#{delta}.mp4")
         try:
@@ -328,19 +324,18 @@ class DisplayThread(threading.Thread):
         # leak into the next recording (mirrors record_start_time lifecycle).
         self.record_start_count = None
         self.record_start_ts = None
-        # BL-71: emit a per-video `video` JSONL line so the recorded video becomes
-        # a first-class entity in the counting-history. Best-effort: a history
-        # write failure must never break recording finalization (mirrors the
-        # "history is best-effort" contract of HistoryWriter._append).
+        # BL-71: emit a per-video `video` JSONL line so the recorded video
+        # becomes a first-class entity in the counting-history. Best-effort: a
+        # history write failure must never break recording finalization.
         try:
             history = getattr(shared_state, "history_writer", None)
             if history is not None:
                 video_id = f"counting-{ts_stem}"
                 session_id = getattr(history, "session_id", None)
-                # BL-71: store the FINAL compressed name (counting-...) in the
-                # JSONL, not the transient tocompress- prefix (the cron later
-                # rewrites tocompress- -> counting- on disk; the API/history
-                # must show the definitive name immediately).
+                # Store the FINAL compressed name (counting-...) in the JSONL,
+                # not the transient tocompress- prefix (the cron rewrites
+                # tocompress- -> counting- on disk; the API must show the
+                # definitive name immediately).
                 final_filename = os.path.basename(output_path).replace("tocompress-", "", 1)
                 history.video(
                     video_id=video_id,
@@ -410,7 +405,7 @@ class DisplayThread(threading.Thread):
             if self.video_writer is not None and self.video_writer.isOpened() and shared_state.recording and ((
                 shared_state.status == 0 or shared_state.learning_mode or shared_state.reset or
                 (shared_state.status in [1,3] and 
-                (datetime.datetime.now() - shared_state.delay_reinit).total_seconds() > shared_state.delay_last_class)
+                (time.monotonic() - shared_state.delay_reinit) > shared_state.delay_last_class)
             )):
                 self._finalize_recording()
                 if self.input_type == "FILE":
@@ -563,7 +558,7 @@ class DisplayThread(threading.Thread):
 
                 if continue_recording.any():
                 #if 0 in result_classid and result_scores > settings.PIG_CONFIDENCE_THRESHOLD_START_VIDEO :
-                    shared_state.delay_reinit = datetime.datetime.now()
+                    shared_state.delay_reinit = time.monotonic()
 
                 # COUNT FIX
                 shared_state.counter_to_right = self.counting.count(

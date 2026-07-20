@@ -593,19 +593,19 @@ class HistoryWriter:
                 auto_mode = bool(getattr(self.shared_state, "auto_mode", True))
             except Exception:
                 auto_mode = None
-        # record_start_count: snapshot of the counter at recording start,
-        # sourced from the DisplayThread so the companion can compute the
-        # running recording's live count delta (count - record_start_count).
-        record_start_count = None
-        if self.shared_state is not None:
-            try:
-                dt = getattr(self.shared_state, "display_thread", None)
-                if dt is not None:
-                    rsc = getattr(dt, "record_start_count", None)
-                    if rsc is not None:
-                        record_start_count = int(rsc)
-            except Exception:
-                record_start_count = None
+            # record_start_count: snapshot of the counter at recording start,
+            # sourced from the DisplayThread so the companion can compute the
+            # running recording's live count delta (count - record_start_count).
+            record_start_count = None
+            if self.shared_state is not None:
+                try:
+                    dt = getattr(self.shared_state, "display_thread", None)
+                    if dt is not None:
+                        rsc = getattr(dt, "record_start_count", None)
+                        if rsc is not None:
+                            record_start_count = int(rsc)
+                except Exception:
+                    record_start_count = None
         line = {
             "type": "heartbeat",
             "session_id": self.session_id,
