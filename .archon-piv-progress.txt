@@ -95,3 +95,4 @@ Task 3: RENAME companion routes (clean break) — 4c8bb84
 Task 4: ADD /api/videos list endpoint — 4d30d38
 Task 5: ADD /api/video/<id> Range-streaming endpoint — c655241
 Task 6: SYNC doc reference docs/12_counting_history.md — 3dd7d12
+Task 1: CREATE app/src/state.py — e1cc856

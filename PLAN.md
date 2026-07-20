@@ -1,131 +1,63 @@
-# Plan: BL-71 — Video as a first-class entity + companion endpoint naming (sessions vs videos)
+# Plan: BL-29 — Refactor main.py into testable modules
 
 ## Summary
 
-Make the recorded VIDEO a first-class entity in the counting-history JSONL by
-emitting a per-video `video` line at recording release (`_finalize_recording`),
-and clarify the Jetson companion's HTTP API: add `/api/videos` (paginated list,
-one row per video including the currently-running recording as a synthetic
-first row) and `/api/video/<id>` (Range-streamed compressed MP4), and cleanly
-rename `/api/history` → `/api/sessions` and `/api/history/summary` → `/api/summary`
-with **no** compatibility alias. Expose `record_start_count` in heartbeats so
-the companion can compute the running recording's live count delta. This is
-instrumentation + endpoints only — no counting/tracking/guard logic changes.
+`app/src/main.py` (840 lines) mixes inference thread, display/recording logic, validation output, CLI parsing, signal handling, and orchestration in one file. This refactor splits it into 5 leaf modules (`state.py`, `infer_thread.py`, `display_thread.py`, `validate.py`, `cli.py`) and reduces `main.py` to a thin entry point that imports and orchestrates. **Pure refactor — zero behavior change.** Counting/decision logic (`counting.py`), tracker/guard params, and recording behavior (BL-62/68/69/70/71) are preserved exactly. No test files modified.
 
 ## In Scope
-
-- `app/src/core/history.py`: new `video()` writer (append-only `video` JSONL line
-  type) + add `record_start_count` to the `heartbeat()` line.
-- `app/src/main.py`: emit the `video` entry in `_finalize_recording()` after the
-  successful rename to `tocompress-counting-{ts}-#{delta}.mp4`.
-- `ansible/playbooks/system/configure_companion.yml` (embedded stdlib HTTP server
-  + `HistoryIndex`):
-  - Rename route `/api/history` → `/api/sessions` and `/api/history/summary` →
-    `/api/summary` (clean break; old paths return 404 — no alias).
-  - New `/api/videos`: paginated list (`limit`/`offset`, newest first) built from
-    `video` JSONL lines, with the running recording as a synthetic first row.
-  - New `/api/video/<id>`: serve the compressed `counting-{id}-*.mp4` only, with
-    full HTTP Range / 206 partial streaming; 404 if absent.
-  - Update the endpoint-listing comment blocks (playbook header + script header).
+- Create `app/src/state.py` — module-level singletons: `shared_state` (SharedState instance + the draw_* field setup currently at main.py:31-41), `logger` + `logging.basicConfig`, `_IOU_METRICS` dict.
+- Create `app/src/infer_thread.py` — `class InferThread` (the real class at main.py:124+). Drop the dead empty `class InferThread` stub at main.py:111-123.
+- Create `app/src/display_thread.py` — `class DisplayThread` incl. `__init__`, `_finalize_recording`, `mouse_click`, `has_pig_high_score`, `run()` (the recording/learning/auto-stop/BL-62 logic). Reads `shared_state`/`settings`/`logger` via import from `state`/`settings`, NOT via constructor params.
+- Create `app/src/validate.py` — `write_result_json()` (main.py:707).
+- Create `app/src/cli.py` — `cli.main()` containing: `handle_sigterm`, `signal.signal` registration, argparse setup (3 args `-m`/`-f`/`-d`), the serve loop (wait `stop_event` + `stop()` + poweroff `nsenter systemctl poweroff` BL-62), the validate branch (join infer + `frame_queue.join()` + `stop_event.set` + join display + `write_result_json`), and the error handler (write error result JSON).
+- Rewrite `app/src/main.py` as thin entry point: imports from new modules, `start()` (main.py:620 — instantiates OCSORTTracker/Tracking/Counting/Rendering/InferThread/DisplayThread/HistoryWriter+Thread, unchanged params), `stop()` (main.py:67 — finalize recording + history end_session + joins), **re-exports** (`from display_thread import DisplayThread`; expose `shared_state`, `settings`, `logger` as module attributes for the test), and `if __name__ == "__main__": cli.main()`.
 
 ## Out of Scope
-
-- No OC-SORT / counting / tracking / guard decision-logic changes (instrumentation only).
-- No `requirements.txt` change (no image rebuild) — companion stays stdlib-only.
-- Compression cron (`k3s/templates/cronvideo-dep.j2`) unchanged — it already
-  produces H.264/AAC `counting-*.mp4` readable on the phone.
-- No `config.json` mode flip (validation mode = STANDARD, reference video only).
-- No compatibility alias for old `/api/history` / `/api/history/summary` (clean
-  break — the Android app is the only consumer and is updated in lockstep).
-- No fallback to raw `tocompress-*` / `tmp-*` files in `/api/video/<id>`.
+- `app/src/core/counting.py` and any counting/decision logic — untouched.
+- Tracker/guard params (`TRACKER_*`, `COUNTING_*`) — moved verbatim within `start()`, not modified.
+- `--full` / multi-video validation — not (validation standard, single reference video).
+- Any test file — **no changes**. `tests/test_finalize_recording_filename.py` keeps `import main as main_mod` + `main_mod.DisplayThread`/`main_mod.shared_state`/`main_mod.settings` working via re-exports.
+- `app/entrypoint.sh`, `k3s/`, `scripts/`, `validation/` — untouched.
+- **No French comments** — any existing French comments in `main.py` (e.g. BL-62 serve-mode comment, poweroff comment) are translated to English when copied into the new modules. Logic unchanged; only comment language changes.
 
 ## Architecture Decisions
 
-- **`video_id` = the timestamp stem `counting-{YYYYMMDD-HHMMSS}`** (e.g.
-  `counting-20250608-100000`), WITHOUT the `#N` delta suffix. Unique per
-  recording, human-readable, no UUID. `/api/video/<id>` resolves the file by
-  globbing `counting-{id}-*.mp4` in `/data/orin/files` — the same host directory
-  the JSONL lives in and the compression cron writes `counting-*.mp4` into (the
-  cron strips the `tocompress-` prefix), so no new mount is needed.
-  - Rationale: the on-disk filename is `tocompress-counting-{ts}-#{delta}.mp4`
-    at release, then the cron rewrites it to `counting-{ts}-#{delta}.mp4`. The
-    stable, compression-independent key is the `{ts}` stem; the `#N` is metadata
-    carried in the JSONL `video` line, not part of the id.
-- **Running recording id** = `counting-{ts}` with no `#N` (delta not finalized
-  until release); surfaced as the synthetic first row of `/api/videos` with
-  `status:"running"`. There is no compressed file to serve for it yet, so
-  `/api/video/<id>` on a running id returns 404 (no `tocompress`/`tmp` fallback).
-- **`/api/video/<id>`** serves compressed `counting-*.mp4` only; 404 if absent
-  (not yet compressed, or deleted by the budget guard). Range/206 streaming is
-  required so the Android player can seek/resume large files.
-- **`/api/videos`** mirrors `/api/sessions` (`limit`/`offset`, newest first); the
-  running recording is a synthetic first row in one unified list — NOT a separate
-  top-level `recording` field.
-- **Renames are clean breaks** — old `/api/history` and `/api/history/summary`
-  paths fall through to the existing 404 handler; no alias is added.
-- **`video` entry emit point** = `_finalize_recording` after the successful
-  `os.rename` (best-effort, never raises; history is best-effort per the existing
-  `_append` contract). It is NOT emitted on the rename-failure early return.
-- **`video` JSONL line is a new first-class type** alongside `session_start`,
-  `heartbeat`, `event`, `session_end`, `summary`. The companion's `HistoryIndex`
-  gains a parallel `video`-line index (rebuilt on file-size change, same
-  invalidation strategy as the session index). Compaction (`summary` lines) does
-  not need to fold `video` lines for BL-71 — videos are per-recording facts that
-  remain valid after a session is compacted; the compactor re-emits `video` lines
-  verbatim (like it already does for `startup` lines).
-
-## Reuse
-
-- `app/src/core/history.py:321` `_append(self, obj)` — the single atomic
-  append+fsync writer; `video()` will call it exactly like `emit_event` does.
-- `app/src/core/history.py:538` `heartbeat()` — already reads
-  `shared_state.counter_to_right`, `shared_state.display_thread.filename`,
-  `status`, `auto_mode`; adding `record_start_count` follows the same
-  `getattr(self.shared_state.display_thread, "record_start_count", None)` pattern.
-- `app/src/main.py:300-304` — `delta` and `output_path` are already computed in
-  `_finalize_recording`; the `video` entry reuses both (no recompute). The
-  timestamp stem is already in `output_path` (`tocompress-counting-{ts}-#{delta}.mp4`).
-- `ansible/.../configure_companion.yml:197` `HistoryIndex` — `_build()` scans the
-  JSONL once and keeps `_sessions`/`_session_order`/`_latest_hb`; a `video` index
-  (`_videos`/`_video_order`) is added the same way, keyed on `type == "video"`.
-- `ansible/.../configure_companion.yml:379` `session_summaries(limit, offset)` —
-  the pagination pattern (`ids = self._session_order[offset:offset+limit]`) is
-  reused verbatim for `video_summaries()`.
-- `ansible/.../configure_companion.yml:553+` route dispatch — the new routes are
-  additional `if path == ...` / `if path.startswith(...)` blocks mirroring the
-  existing `/api/history` and `/api/sessions/<id>` handlers.
-- Stdlib only: `http.server`, `os`, `glob`, `stat`, `re` — all already imported
-  by the companion script; Range parsing is stdlib string work (no new deps).
+- **Singletons in a leaf `state.py`** — `shared_state`, `logger` (+ `logging.basicConfig`), `_IOU_METRICS` live in one leaf module that every split module imports. This breaks the circular dependency that would arise if modules imported from `main.py` (main → display_thread → main). `settings` stays imported from the existing `settings` module.
+- **No constructor injection of `shared_state`** — `_finalize_recording` and `run()` read `shared_state`/`settings` as module globals today. Passing them as constructor params would change every call site and risk behavior drift in a "pure refactor." Keep the global pattern via `from state import shared_state` and `from settings import settings`.
+- **Re-exports from `main.py`** — `main.py` does `from display_thread import DisplayThread` and exposes `shared_state`/`settings`/`logger` so `tests/test_finalize_recording_filename.py`'s `import main as main_mod; main_mod.DisplayThread; main_mod.shared_state; main_mod.settings` keeps working unchanged. No test file touched.
+- **`if __name__` stays in `main.py`** — `entrypoint.sh` calls `python3 src/main.py`, so `main.py` must remain the executable entry point. It delegates to `cli.main()`; the `if __name__` guard stays in `main.py`, not in `cli.py`.
+- **`start()` and `stop()` stay in `main.py`** — they are the orchestration glue (instantiate threads, wire history, join on shutdown). They import `InferThread`/`DisplayThread`/`HistoryWriter` from the new modules and read `shared_state`/`settings` from `state`/`settings`.
+- **Drop the dead `InferThread` stub** — main.py:111-123 is an empty `class InferThread` with only a docstring; the real class is at 124+. Removing the stub is safe (it's shadowed at import time) and reduces confusion.
 
 ## Tasks
 
-- [x] **Task 1: ADD `video()` writer + `record_start_count` to heartbeat** `app/src/core/history.py` — Add a `video(self, video_id, filename, duration, count_delta, session_id=None)` method that builds a `{"type":"video","video_id":...,"filename":...,"duration":...,"count_delta":...,"session_id":...,"ts":_utcnow_iso()}` line and appends it via the existing `self._append(line)` (best-effort, guards on `self._stopped`/`self.session_id is None` like `emit_event`). In `heartbeat()`, add `"record_start_count": <int or None>` sourced from `getattr(self.shared_state.display_thread, "record_start_count", None)` alongside the existing `count`/`last_segment`/`status`/`auto_mode` reads, so the companion can compute `live_delta = heartbeat.count - heartbeat.record_start_count`.
-- [x] **Task 2: EMIT `video` entry in `_finalize_recording`** `app/src/main.py` — After the successful `os.rename(self.filename, output_path)` (and before/after the `shared_state.status`/`recording` reset), call the history writer's new `video()` with: `video_id` = the timestamp stem `counting-{time.strftime('%Y%m%d-%H%M%S')}` (strip the `tocompress-` prefix and the `-#{delta}` suffix from `output_path`), `filename` = `os.path.basename(output_path)`, `duration` = `self.record_duration`, `count_delta` = `delta`, `session_id` = the current session id from `shared_state.history.session_id` (best-effort via getattr; None if unavailable). Wrap in try/except so a history write failure never breaks recording finalization (mirrors the "history is best-effort" contract). Do NOT emit on the rename-failure `return` path. Derive the `time.strftime` stem from the SAME `time.strftime('%Y%m%d-%H%M%S')` call already used to build `output_path` (capture it into a local once, reuse for both the filename and the `video_id`), so the id and the on-disk filename stay in lockstep.
-- [x] **Task 3: RENAME companion routes (clean break)** `ansible/playbooks/system/configure_companion.yml` — In the embedded script's `do_GET` dispatch, change `if path == "/api/history":` → `if path == "/api/sessions":` and `if path == "/api/history/summary":` → `if path == "/api/summary":`. Leave the bodies (pagination/daily-aggregate logic) unchanged. Do NOT add any handler for the old paths — they fall through to the existing `GET {} -> 404` line. Update the two endpoint-listing comment blocks (the playbook top-of-file `# What it does:` block and the script-header `# Endpoints:` block) to list `/api/sessions`, `/api/summary`, and the two new routes from Tasks 4-5.
-- [x] **Task 4: ADD `/api/videos` list endpoint** `ansible/playbooks/system/configure_companion.yml` — Extend `HistoryIndex` with a `video` index: in `_build()`, collect `type == "video"` lines into `self._videos` (a dict keyed by `video_id`) and `self._video_order` (newest-first by the line's `ts`). Add a `video_summaries(self, limit=50, offset=0)` method mirroring `session_summaries` that returns `(rows, total)` where each row is `{"video_id","filename","duration","count_delta","session_id","ts","status":"ready"}`. Add a `_running_video_row()` helper that, from `self.latest_count()` (the newest heartbeat), synthesizes a first row when a recording is in progress: `status:"running"`, `video_id` = the `counting-{ts}` stem derived from the heartbeat's `last_segment` filename (parse the `tocompress-counting-{ts}-#N.mp4` / `tmp-counting-{ts}.mp4` stem; if `last_segment` is absent or unparseable, omit the running row), `count_delta` = `hb["count"] - hb["record_start_count"]` (only when `record_start_count` is present and non-None; else omit), `filename` = `counting-{ts}.mp4` (no `#N`), `session_id`/`ts` from the heartbeat. Add a new `if path == "/api/videos":` route that reads `limit`/`offset` via the existing `_int_arg`, calls `video_summaries`, prepends the running row (so it is index 0 and excluded from pagination offset math — i.e. `total` includes it, and `offset=0` returns it first), and returns `{"videos": rows, "limit":..., "offset":..., "total":...}`. Newest-first ordering: the running row is always first, then finalized videos newest-first.
-- [x] **Task 5: ADD `/api/video/<id>` Range-streaming endpoint** `ansible/playbooks/system/configure_companion.yml` — Add a new `if path.startswith("/api/video/"):` route (note: must be checked AFTER `/api/videos` so the plural isn't shadowed — actually `startswith` vs `==` are distinct, but place the `/api/videos` `==` check first for clarity). Extract `vid = path[len("/api/video/"):]`; reject empty/missing with 404. Resolve the file by `glob.glob(os.path.join(FILES_DIR, "counting-" + vid + "-*.mp4"))` (where `FILES_DIR` is the directory of `HISTORY_FILE_HOST`, i.e. `/data/orin/files`); if no match → 404 `{"error":"video not found"}`. If multiple matches (shouldn't happen, but defensively) pick the lexicographically first / newest by mtime. Implement HTTP Range support: read `self.headers.get("Range")`, `os.stat` the file for size, and respond with either 200 (full file, `Content-Length`, `Accept-Ranges: bytes`) when no Range header, or 206 (`Content-Range: bytes {start}-{end}/{size}`, `Content-Length: {end-start+1}`, `Accept-Ranges: bytes`) for a single `bytes=start-end` / `bytes=start-` range. Stream in chunks (e.g. 64 KiB) via `self.wfile.write` to avoid loading large files into memory. On malformed Range, respond 416 `Range Not Satisfiable` with `Content-Range: bytes */{size}`. Set `Content-Type: video/mp4`. Log the request (`GET /api/video/<id> -> 200/206/404/416`). Multi-range is NOT required (single-range resumable download suffices for the Android player).
-- [x] **Task 6: SYNC the doc reference** `docs/11_jetson_companion.md` — If the companion doc lists the endpoint table, update `/api/history`→`/api/sessions`, `/api/history/summary`→`/api/summary`, and add `/api/videos` + `/api/video/<id>` rows so the docs match the implementation. (This is a doc-only touch; if no such table exists, skip.) [Planner note: implementer should grep `docs/` for `/api/history` and update any stale references.]
+- [x] Task 1: CREATE `app/src/state.py` — Move the module-level singletons out of main.py: the `shared_state = SharedState()` instance + its 6 draw_* field assignments (main.py:31-41), `logging.basicConfig(...)` + `logger = logging.getLogger(__name__)` (main.py:28-29), and `_IOU_METRICS` (main.py:38). Expose `shared_state`, `logger`, `_IOU_METRICS` as module attributes. Keep `from settings import Settings` + `settings = Settings()` here so `state.settings` is available (re-exported by main.py for the test).
+- [ ] Task 2: CREATE `app/src/infer_thread.py` — Move the real `class InferThread(threading.Thread)` (main.py:124 through line 224) verbatim. Imports: `from state import shared_state, logger`, `from settings import settings`, plus the runtime deps it already uses (`cv2`, `time`, `numpy`, `Queue`, `Inference`, `FrameSource`, `TimerFps`, `supervision`). Do NOT include the dead stub class at 111-123.
+- [ ] Task 3: CREATE `app/src/display_thread.py` — Move `class DisplayThread(threading.Thread)` (main.py:225 through line 619) verbatim: `__init__`, `_finalize_recording`, `mouse_click`, `has_pig_high_score`, `run()` (the BL-62 stop detection, BL-69/70/71 recording start/finalize, learning toggle, auto-stop). Imports: `from state import shared_state, logger`, `from settings import settings`, plus `cv2`, `time`, `os`, `logging`, `numpy`, `Tracking`, `Counting`, `Rendering`, `TimerFps`, `supervision` as needed. No logic changes — copy the method bodies byte-for-byte.
+- [ ] Task 4: CREATE `app/src/validate.py` — Move `write_result_json(result_path, video_path, shared_state, start_time, error=None)` (main.py:707-728) verbatim. Imports: `time`, `datetime`, `os`, `json`, `logging`, and `from state import logger, shared_state` (note: `shared_state` is passed as a function arg already, but keep the import for `logger`).
+- [ ] Task 5: CREATE `app/src/cli.py` — Define `cli.main()` containing the body of the current `if __name__ == "__main__"` block (main.py:731-840): `handle_sigterm` (closure), `signal.signal(SIGTERM/SIGINT)`, argparse (`-m`/`-f`/`-d`), `start_time`, call `start(input_source, video)`, the `RESULT_JSON_PATH` branch (validate: join infer + `frame_queue.join()` + stop + join display + `write_result_json`) vs serve branch (wait loop + `stop()` + poweroff `subprocess.run(["nsenter", ...])`), and the `except Exception` error-JSON path. Imports: `from state import shared_state, logger, settings`, `from main import start, stop`, `from validate import write_result_json`, plus `sys`, `os`, `time`, `signal`, `subprocess`, `cv2`, `argparse`. Note the `main → cli → main` import: `cli.main` calls `start`/`stop` which live in `main.py`; import them inside `cli.main()` (function-local import) to avoid the circular import at module load time.
+- [ ] Task 6: REWRITE `app/src/main.py` as thin entry point — Imports: `from state import shared_state, settings, logger, _IOU_METRICS`; `from infer_thread import InferThread`; `from display_thread import DisplayThread`; `import cli`. Keep `stop()` (main.py:67-109) and `start()` (main.py:620-705) verbatim, replacing the class instantiations with imports (e.g. `shared_state.infer_thread = InferThread(...)` still references the imported class). Keep the `HistoryWriter`/`HistoryThread` import + wiring verbatim. Add re-export block: `from display_thread import DisplayThread` (already imported); ensure `shared_state`, `settings`, `logger` are module-level names (from the state import). End with `if __name__ == "__main__": cli.main()`. Remove the moved `__main__` block, the moved classes, and the moved `write_result_json`. Final file should be ~120-150 lines.
+- [ ] Task 7: TRANSLATE French comments → English — Any French comments in the moved code (e.g. the BL-62 serve-mode block `# BL-62: Arrêt propre...`, the poweroff comment `# Éteint le Jetson proprement...`, and any other `# d'...`/`# ne pas...` comments throughout `run()`, `_finalize_recording`, and the CLI loop) are translated to English during the copy. Logic unchanged — only the comment text becomes English. This applies to all 5 new modules and the rewritten `main.py`.
+- [ ] Task 8: VERIFY re-exports — Confirm `main.py` exposes `DisplayThread`, `shared_state`, `settings`, `logger` as importable attributes so `tests/test_finalize_recording_filename.py` (`import main as main_mod; main_mod.DisplayThread; main_mod.shared_state; main_mod.settings; main_mod.settings.OUTPUT_VIDEO_PATH`) works unchanged.
 
 ## Validation
 
-- **Syntax (per AGENTS.md, Python only — NEVER bun):**
-  - `python3 -m py_compile app/src/core/history.py app/src/main.py`
-  - The companion script is embedded in a YAML `copy.content` block; extract-check with `python3 - <<'PY'` pulling the block, or simply `python3 -m py_compile` the rendered script on the Jetson after `ansible-playbook` re-runs (idempotent — `changed` only on content change, then the notify handler restarts the service).
-- **Unit/local (no Jetson needed):**
-  - Append a fake `video` line + `heartbeat` (with `record_start_count`) to a scratch JSONL and point the companion's `HistoryIndex` at it; assert `video_summaries()` returns the row and `_running_video_row()` computes the delta. (Best-effort manual check; there is no formal Python test harness in this repo.)
-- **End-to-end on Jetson (STANDARD validation mode, reference video only):**
-  - `scripts/validate_on_jetson.sh` runs the reference video and parses `validation-report.json`. This change is instrumentation + endpoints, NOT counting logic, so the pig count must remain unchanged (no regression). `pass` → ship; `count_mismatch` → HITL pause (do NOT auto-correct).
-  - Manual companion checks over the hotspot after deploy:
-    - `curl http://<jetson>:8090/api/sessions?limit=5` → 200, `{sessions:[...],total}` (old `/api/history` → 404).
-    - `curl http://<jetson>:8090/api/summary?days=7` → 200 (old `/api/history/summary` → 404).
-    - `curl http://<jetson>:8090/api/videos?limit=10` → 200, running recording as first row (`status:"running"`) when a recording is active.
-    - `curl -H "Range: bytes=0-1023" http://<jetson>:8090/api/video/<id> -o /tmp/head.mp4` → 206, `Content-Range: bytes 0-1023/<size>`; full `curl ... -o file.mp4` → 200 playable on Android.
-    - `curl http://<jetson>:8090/api/video/nonexistent` → 404.
+**Static checks (CI / no GPU required):**
+- `python3 -m py_compile app/src/state.py app/src/infer_thread.py app/src/display_thread.py app/src/validate.py app/src/cli.py app/src/main.py` — syntax check all new/changed files.
+- Run `tests/test_finalize_recording_filename.py` — must pass unchanged (it stubs heavy deps and imports `main as main_mod`).
+- Run `tests/test_counting.py`, `tests/test_counting_invariance.py`, `tests/test_tracking.py`, `tests/test_history_writer.py` — must pass unchanged (they don't import main.py, confirming no collateral breakage).
+- `grep -n "class InferThread" app/src/main.py app/src/infer_thread.py` — confirm the dead stub is gone and the real class lives only in `infer_thread.py`.
+- `wc -l app/src/main.py` — confirm it dropped from ~840 to ~120-150 lines.
+- `grep -rn '# .*[éèêàùç]' app/src/state.py app/src/infer_thread.py app/src/display_thread.py app/src/validate.py app/src/cli.py app/src/main.py` — confirm no French comments remain in the new/changed files.
+
+**Standard validation with reference video (on Jetson):**
+- Run the standard validation pipeline exactly as `entrypoint.sh validate` does, with `RESULT_JSON_PATH` set, against the reference video:
+  `VALIDATE_VIDEO=./video/template-validation-9.mp4 RESULT_JSON_PATH=./result.json python3 src/main.py --input=FILE --file=$VALIDATE_VIDEO --drawtracking=True`
+- Confirm the process completes, writes `result.json`, and the `count` matches the expected count for the reference video (the pre-refactor baseline). This proves the split preserved behavior end-to-end through the full serve/validate code path (argparse → start() → InferThread → DisplayThread.run/counting → _finalize_recording → write_result_json).
+- Re-run the same validation command on a second reference video if available to confirm determinism.
 
 ## Risks
-
-- **`video` line vs compaction** — The 1x/day compactor collapses ended sessions into `summary` lines. `video` lines are per-recording facts that must survive compaction. Mitigation: the compactor already re-emits `startup` lines verbatim; do the same for `video` lines (do not fold them into `summary`). If the implementer finds the compactor drops unknown line types, explicitly pass `video` lines through.
-- **video_id ↔ filename drift** — The `video_id` stem is captured at finalize from the same `time.strftime` call that builds the filename, so they cannot drift at write time. The cron later rewrites `tocompress-counting-{ts}-#N.mp4` → `counting-{ts}-#N.mp4` (same `{ts}`), so the glob `counting-{id}-*.mp4` still resolves post-compression. Risk: if two recordings finalize in the same wall-clock second, the stems collide. Mitigation: acceptable for this single-camera, ~2-min-recording use case; the glob would return both and the endpoint picks one (defensive). No counter change needed.
-- **Range parsing edge cases** — Malformed `Range` headers could crash the handler. Mitigation: parse defensively, respond 416 (not 500) on unparseable ranges, and wrap the whole file-serving path in try/except → 500 with a JSON error body so a bad request never kills the companion thread (matches the best-effort logging style of the other handlers).
-- **`/api/video/<id>` shadowing `/api/videos`** — The `startswith("/api/video/")` route must not swallow `/api/videos`. Mitigation: check the exact `== "/api/videos"` route FIRST, then `startswith("/api/video/")` (the trailing slash in the prefix means `/api/videos` — no trailing slash — never matches `startswith("/api/video/")` anyway, but ordering removes all doubt).
-- **Running-row synthesis when no recording is active** — `latest_count()` may return the last heartbeat of an ended session where `record_start_count` is stale/None. Mitigation: only synthesize the running row when `record_start_count` is present and non-None AND the heartbeat is "recent" (the existing `latest_count()` already prefers the running session); otherwise omit the row. This keeps a phantom running row from appearing when the app is idle.
+- **Circular import `main ↔ cli`** — `cli.main()` calls `start()`/`stop()` from `main.py`, and `main.py` imports `cli`. Mitigation: `main.py` imports `cli` at module level (fine), but `cli.py` imports `start`/`stop` **inside `cli.main()`** (function-local), so loading `main.py` never triggers loading `cli.py`'s `start`/`stop` references until `cli.main()` actually runs. Alternatively, move `start`/`stop` into a separate `orchestration.py` leaf — but the user's intent explicitly keeps `start()`/`stop()` in `main.py`, so use the function-local import.
+- **`shared_state` identity** — every module must import the *same* singleton instance from `state.py`, not a fresh one. Since `state.py` is a leaf with no back-imports, all `from state import shared_state` bind to the same object. Verify with a quick identity check in validation.
+- **Test stub assumptions** — `test_finalize_recording_filename.py` stubs `sys.modules` for `pycuda`/`tensorrt`/`torch`/`trackers`/`supervision`/`core.inference` before `import main as main_mod`. After the split, `main.py` still triggers loading `display_thread` (which imports those stubbed modules transitively), so the stubs must still cover them. Since the classes are imported into `main.py`, the import chain is preserved. Mitigation: run the test as-is and confirm it still passes.
+- **Behavior drift in `run()`** — the DisplayThread.run() body (main.py:363-619, ~250 lines) is the most complex piece. Risk: accidental edit during copy. Mitigation: copy byte-for-byte, only changing the `shared_state`/`settings`/`logger` references from "module global in main.py" to "imported from state/settings" — which is a no-op semantically since they're the same objects.
