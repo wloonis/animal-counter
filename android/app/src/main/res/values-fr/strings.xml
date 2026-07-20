@@ -67,6 +67,7 @@
     <string name="filter_status_clean">Propre</string>
     <string name="filter_status_power_loss">Coupure secteur</string>
     <string name="filter_status_unknown">Inconnu</string>
+    <string name="filter_status_ready">Prêt</string>
     <string name="filter_date_label">Date</string>
     <string name="filter_date_none">Toutes les dates</string>
     <string name="filter_clear">Effacer</string>

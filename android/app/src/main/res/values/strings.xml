@@ -67,6 +67,7 @@
     <string name="filter_status_clean">Clean</string>
     <string name="filter_status_power_loss">Power loss</string>
     <string name="filter_status_unknown">Unknown</string>
+    <string name="filter_status_ready">Ready</string>
     <string name="filter_date_label">Date</string>
     <string name="filter_date_none">All dates</string>
     <string name="filter_clear">Clear</string>

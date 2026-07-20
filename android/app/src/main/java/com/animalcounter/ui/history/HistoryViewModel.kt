@@ -9,11 +9,11 @@ import com.animalcounter.data.DEFAULT_JETSON_IP
 import com.animalcounter.data.OfflineCache
 import com.animalcounter.data.SettingsRepository
 import com.animalcounter.net.ApiResult
-import com.animalcounter.net.SessionPage
+import com.animalcounter.net.VideoPage
+import com.animalcounter.net.VideoRow
 import com.animalcounter.net.JetsonClient
-import com.animalcounter.net.SessionSummary
 import com.animalcounter.net.activeWifiNetwork
-import com.animalcounter.net.parseSessions
+import com.animalcounter.net.parseVideos
 import com.animalcounter.ui.timesync.ProbeState
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -25,17 +25,17 @@ import java.time.OffsetDateTime
 import java.time.format.DateTimeFormatter
 import java.time.format.DateTimeParseException
 
-/** Page size for `/api/history` (matches the brief's `limit=50`). */
+/** Page size for `/api/videos` (matches the brief's `limit=50`). */
 private const val HISTORY_LIMIT = 50
-private const val CACHE_KEY = "history"
+private const val CACHE_KEY = "videos"
 
 /**
- * UI state for the Historique tab.
+ * UI state for the Historique (videos) tab.
  *
  * - [Loading]: initial page fetch in flight (no rows yet) — show a
  *   `LinearProgressIndicator`.
  * - [Loaded]: one or more pages loaded; [rows] holds the accumulated
- *   (filter-applied) summaries, [hasMore] is true when `offset < total`.
+ *   (filter-applied) [VideoRow]s, [hasMore] is true when `offset < total`.
  * - [Empty]: a page was fetched successfully but it contained zero rows
  *   (and no filter is active) — show the empty-history card.
  * - [OutOfRange]: the Jetson is unreachable (probe failed) AND no page
@@ -48,14 +48,14 @@ sealed interface HistoryUiState {
     data object Loading : HistoryUiState
     /** Rows available; [hasMore] true when more pages can be appended. */
     data class Loaded(
-        val rows: List<SessionSummary>,
+        val rows: List<VideoRow>,
         val total: Int,
         val hasMore: Boolean,
         val loadingMore: Boolean,
         val offline: Boolean = false,
         val cachedAt: Instant? = null,
     ) : HistoryUiState
-    /** A page was fetched but contained zero sessions (no filter active). */
+    /** A page was fetched but contained zero videos (no filter active). */
     data object Empty : HistoryUiState
     /** Jetson out of reach (probe + fetch both failed). */
     data object OutOfRange : HistoryUiState
@@ -66,18 +66,16 @@ sealed interface HistoryUiState {
 /**
  * Status filter values exposed by the History screen's `FilterChip` group.
  *
- * The clean/power-loss/unknown classification lives in the **separate**
- * `end_reason` field (verified against `tests/companion_history_reader.py`),
- * NOT in `status` (which is only `"ended"` | `"running"`). These filter keys
- * therefore branch on `end_reason` (+ a dedicated `running` chip that
- * matches `status == "running"`), mirroring the pill color mapping.
+ * BL-72: the History tab now lists `/api/videos` rows. A [VideoRow] carries
+ * only the `status` field (`"ready"` | `"running"` | …) — it does NOT carry
+ * the session `end_reason` that the old clean/power-loss/unknown chips
+ * branched on. The chip group is therefore collapsed to All / Running /
+ * Ready (the three meaningful states for a video row).
  */
 enum class HistoryStatusFilter(val key: String) {
     ALL("all"),
     RUNNING("running"),
-    CLEAN("clean"),
-    POWER_LOSS("power-loss"),
-    UNKNOWN("unknown");
+    READY("ready");
 
     companion object {
         fun fromKey(key: String?): HistoryStatusFilter =
@@ -86,14 +84,19 @@ enum class HistoryStatusFilter(val key: String) {
 }
 
 /**
- * ViewModel backing the Historique tab.
+ * ViewModel backing the Historique (videos) tab.
  *
- * Maintains an accumulated, paginated view of `/api/history` with a light
- * in-memory cache (the accumulated [SessionSummary] list). Filtering is
+ * Maintains an accumulated, paginated view of `/api/videos` with a light
+ * in-memory cache (the accumulated [VideoRow] list). Filtering is
  * client-side (the API has no server-side filter params): the selected
- * date ([LocalDate]) compares against a row's `start_at` (parsed to a
- * local date), and the selected status filter branches on `end_reason`
- * (+ `running`) per the verified status mapping.
+ * date ([LocalDate]) compares against a row's `ts` (parsed to a local
+ * date), and the selected status filter branches on the row's `status`
+ * (`ready` / `running`). Running rows are kept first (the companion emits
+ * the synthetic running row at index 0); within the rest, newest `ts`
+ * first.
+ *
+ * The old `matchesFilters` video-only hack (excluding rows with no video
+ * path / zero count) is gone — every `/api/videos` row is already a video.
  *
  * Exposes:
  *  - [state]: the current [HistoryUiState] (drives the screen body).
@@ -126,12 +129,12 @@ class HistoryViewModel(app: Application) : AndroidViewModel(app) {
     /** Whether the initial DataStore IP has been loaded (guards the first fetch). */
     private var loaded = false
 
-    /** Accumulated raw (unfiltered) sessions — the light in-memory cache. */
-    private val cache = ArrayList<SessionSummary>()
+    /** Accumulated raw (unfiltered) videos — the light in-memory cache. */
+    private val cache = ArrayList<VideoRow>()
 
     /** Offline-cache flags — true when the current Loaded state is served from
      * the on-device cache (no Jetson connection). Reset to false on every
-     * successful online fetch; set by [loadCachedHistory]. [publishFiltered]
+     * successful online fetch; set by [loadCachedVideos]. [publishFiltered]
      * reads them so a filter change keeps the offline banner. */
     private var offlineMode = false
     private var lastCachedAt: Instant? = null
@@ -139,7 +142,7 @@ class HistoryViewModel(app: Application) : AndroidViewModel(app) {
     /** Next offset to fetch (== cache.size while loading the first page). */
     private var offset = 0
 
-    /** Total session count reported by the API (drives [HistoryUiState.Loaded.hasMore]). */
+    /** Total video count reported by the API (drives [HistoryUiState.Loaded.hasMore]). */
     private var total = 0
 
     init {
@@ -233,7 +236,7 @@ class HistoryViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /**
-     * One `/api/history?limit=&offset=` fetch mapped onto [state]. On a
+     * One `/api/videos?limit=&offset=` fetch mapped onto [state]. On a
      * network failure we transition to [HistoryUiState.OutOfRange] only
      * when there is no cached snapshot to keep showing (so a transient
      * blip doesn't wipe a perfectly good list); on append failure we keep
@@ -245,18 +248,18 @@ class HistoryViewModel(app: Application) : AndroidViewModel(app) {
             val wifi = if (cm != null) activeWifiNetwork(cm) else null
             when (val result = JetsonClient.fetchRaw(
                 ip = _ip.value,
-                path = "/api/history?limit=$HISTORY_LIMIT&offset=$offset",
+                path = "/api/videos?limit=$HISTORY_LIMIT&offset=$offset",
                 network = wifi,
             )) {
                 is ApiResult.Success -> {
-                    val page: SessionPage = parseSessions(result.data)
+                    val page: VideoPage = parseVideos(result.data)
                     // Cache only the first (non-append) page for offline consult.
                     if (!append) OfflineCache.save(getApplication(), CACHE_KEY, result.data)
                     if (append) {
-                        cache.addAll(page.sessions)
+                        cache.addAll(page.videos)
                     } else {
                         cache.clear()
-                        cache.addAll(page.sessions)
+                        cache.addAll(page.videos)
                     }
                     total = page.total.coerceAtLeast(cache.size)
                     offset = cache.size
@@ -272,14 +275,14 @@ class HistoryViewModel(app: Application) : AndroidViewModel(app) {
                     _state.value = if (previous is HistoryUiState.Loaded) {
                         previous.copy(loadingMore = false)
                     } else {
-                        loadCachedHistory() ?: HistoryUiState.Error("HTTP ${result.code}")
+                        loadCachedVideos() ?: HistoryUiState.Error("HTTP ${result.code}")
                     }
                 }
                 is ApiResult.NetworkError -> {
                     _state.value = if (previous is HistoryUiState.Loaded) {
                         previous.copy(loadingMore = false)
                     } else {
-                        loadCachedHistory() ?: HistoryUiState.OutOfRange
+                        loadCachedVideos() ?: HistoryUiState.OutOfRange
                     }
                 }
             }
@@ -287,24 +290,24 @@ class HistoryViewModel(app: Application) : AndroidViewModel(app) {
             _state.value = if (previous is HistoryUiState.Loaded) {
                 previous.copy(loadingMore = false)
             } else {
-                loadCachedHistory() ?: HistoryUiState.OutOfRange
+                loadCachedVideos() ?: HistoryUiState.OutOfRange
             }
         }
     }
 
     /**
-     * Offline fallback — serve the last cached first page of `/api/history`
+     * Offline fallback — serve the last cached first page of `/api/videos`
      * so the history tab stays consultable with no Jetson connection. Fills
      * [cache]/[total]/[offset], sets [offlineMode]/[lastCachedAt], then
      * publishes via [publishFiltered]. Returns the resulting [HistoryUiState]
      * (Loaded or Empty), or null when there is no cache (caller falls back to
      * Error/OutOfRange).
      */
-    private fun loadCachedHistory(): HistoryUiState? {
+    private fun loadCachedVideos(): HistoryUiState? {
         val cached = OfflineCache.load(getApplication(), CACHE_KEY) ?: return null
-        val page = runCatching { parseSessions(cached.json) }.getOrNull() ?: return null
+        val page = runCatching { parseVideos(cached.json) }.getOrNull() ?: return null
         cache.clear()
-        cache.addAll(page.sessions)
+        cache.addAll(page.videos)
         total = page.total.coerceAtLeast(cache.size)
         offset = cache.size
         offlineMode = true
@@ -333,16 +336,17 @@ class HistoryViewModel(app: Application) : AndroidViewModel(app) {
      * [HistoryUiState.Loaded] (or [HistoryUiState.Empty] when the filtered
      * set is empty AND no filter is active — a filter producing zero rows
      * is still [Loaded] so the user sees their filter took effect).
+     *
+     * Running rows are kept first (the companion emits the synthetic running
+     * row at index 0), then newest `ts` first.
      */
     private fun publishFiltered(hasMore: Boolean, loadingMore: Boolean) {
         val date = _filterDate.value
         val status = _filterStatus.value
         val rows = cache.filter { matchesFilters(it, date, status) }
-            // Running ("en cours") sessions first — they are the most
-            // important visually — then newest start_at.
             .sortedWith(
-                compareByDescending<SessionSummary> { it.status == "running" }
-                    .thenByDescending { it.startAt ?: "" }
+                compareByDescending<VideoRow> { it.status == "running" }
+                    .thenByDescending { it.ts ?: "" }
             )
         _state.value = when {
             rows.isEmpty() && date == null && status == HistoryStatusFilter.ALL ->
@@ -361,45 +365,38 @@ class HistoryViewModel(app: Application) : AndroidViewModel(app) {
     /**
      * Client-side filter predicate.
      *
-     * Date: compares [SessionSummary.startAt] (parsed to a local date) to
-     * [date]. Rows whose `start_at` is absent or unparseable are excluded
-     * when a date filter is active.
+     * Date: compares the row's `ts` (parsed to a local date) to [date].
+     * Rows whose `ts` is absent or unparseable are excluded when a date
+     * filter is active.
      *
-     * Status: branches on `end_reason` (+ a dedicated `running` filter that
-     * matches `status == "running"`) per the verified status mapping — NOT
-     * on the `status` field, which is only `"ended"` | `"running"`.
+     * Status: branches on the row's `status` field — `READY` →
+     * `status == "ready"`, `RUNNING` → `status == "running"`.
+     *
+     * The old video-only hack (excluding rows with no `last_segment` /
+     * zero `count_delta`) is gone — every `/api/videos` row is already a
+     * video.
      */
     private fun matchesFilters(
-        s: SessionSummary,
+        v: VideoRow,
         date: LocalDate?,
         status: HistoryStatusFilter,
     ): Boolean {
-        // History shows only real countings: a session must have a recorded
-        // video (last_segment) or actual counting activity (count/events).
-        // Idle "En cours à 0" sessions (no video, nothing counted) live in
-        // the Sessions view reachable from the Dashboard, not here.
-        if (s.videoPath.isNullOrBlank() && (s.netCount ?: 0) == 0 && s.events == 0) {
-            return false
-        }
         if (date != null) {
-            val rowDate = parseLocalDate(s.startAt)
+            val rowDate = parseLocalDate(v.ts)
             if (rowDate != date) return false
         }
         if (status != HistoryStatusFilter.ALL) {
-            if (!matchesStatusFilter(s, status)) return false
+            if (!matchesStatusFilter(v, status)) return false
         }
         return true
     }
 
-    /** Branch on `end_reason` (+ `running` via `status`) per the verified mapping. */
-    private fun matchesStatusFilter(s: SessionSummary, filter: HistoryStatusFilter): Boolean =
+    /** Branch on the row's `status` field (the only status a [VideoRow] carries). */
+    private fun matchesStatusFilter(v: VideoRow, filter: HistoryStatusFilter): Boolean =
         when (filter) {
             HistoryStatusFilter.ALL -> true
-            HistoryStatusFilter.RUNNING -> s.status == "running"
-            HistoryStatusFilter.CLEAN -> s.endReason == "clean"
-            HistoryStatusFilter.POWER_LOSS -> s.endReason == "power-loss"
-            HistoryStatusFilter.UNKNOWN ->
-                s.endReason == "unknown" || s.endReason == "sigterm" || s.endReason == null
+            HistoryStatusFilter.RUNNING -> v.status == "running"
+            HistoryStatusFilter.READY -> v.status == "ready"
         }
 
     /** Parse an ISO-8601 datetime (or bare date) into a [LocalDate], null on failure. */
