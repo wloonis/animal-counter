@@ -532,14 +532,25 @@ nodes:
           echo "NO_APP_CHANGES: this branch does not touch countingapp (infra/docs/ansible/k3s/companion-only)."
           echo "Skipping counting-video validation — not applicable."
         else
-          # app/ IS touched: pick the mode.
-          #   Full mode ONLY when this branch touches the counting pipeline.
-          if [ -n "$(git diff --name-only main...HEAD -- app/src/counting.py app/src/main.py app/src/core/ app/src/settings.py)" ]; then
-            MODE="--full"
-          else
-            MODE=""
-          fi
-          echo "Running validation in ${MODE:-standard} mode..."
+          # app/ IS touched: ALWAYS run STANDARD mode (reference video only).
+          #
+          # `--full` (full manifest, 4 priority videos) is NEVER selected
+          # automatically by file-list heuristics. A pure refactor that
+          # rewrites `app/src/main.py` (e.g. BL-29) is NOT a counting-logic
+          # change and must not be escalated to --full just because the file
+          # is touched — only the diff *content* (crossing detection, guard
+          # eligibility, tracker params) would justify fuller coverage, and
+          # that decision belongs to the USER, not the workflow.
+          #
+          # The user decides whether to complement with --full. They can:
+          #   - request it in their launch message (parsed below), or
+          #   - run `scripts/validate_on_jetson.sh --full` manually.
+          # Default: standard, always.
+          case "$LOOP_USER_INPUT" in
+            *--full*|*full*validation*|*validation*full*) MODE="--full" ;;
+            *) MODE="" ;;
+          esac
+          echo "Running validation in ${MODE:-standard} mode (user decides --full)..."
           bash scripts/validate_on_jetson.sh $MODE 2>&1
         fi
         ```
@@ -558,13 +569,16 @@ nodes:
         ### Otherwise (app/ IS touched, the script ran validate_on_jetson.sh)
         Proceed to Step 2 to read `validation-report.json`.
 
-        > Mode selection recap (only when app/ is touched):
-        > - **Standard** (no flag) — reference video only. For branches that touch
-        >   `app/` but NOT the counting pipeline (UI, img, entrypoint, settings
-        >   UI fields, etc.).
-        > - **Full** (`--full`) — full manifest. ONLY when the branch touches
-        >   `app/src/counting.py`, `app/src/main.py`, `app/src/core/*`, or
-        >   tracker/guard params.
+        > Mode selection policy (only when app/ is touched):
+        > - **Standard** (no flag) — reference video only. This is the DEFAULT
+        >   for every branch, including those that touch `app/src/main.py`,
+        >   `app/src/counting.py`, or `app/src/core/*`. A file being touched is
+        >   not sufficient grounds for `--full` — a pure refactor of main.py is
+        >   standard.
+        > - **Full** (`--full`) — full manifest. NEVER auto-selected. It is an
+        >   explicit USER decision only (requested in the launch message / relay
+        >   feedback), never a workflow heuristic. The user decides when fuller
+        >   coverage is warranted.
 
         ## Step 2: Read the report
 
