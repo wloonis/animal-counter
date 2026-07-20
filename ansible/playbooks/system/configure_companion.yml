@@ -131,6 +131,7 @@
           #
           # No external dependencies. Uses only the Python standard library.
           import datetime
+          import glob
           import json
           import os
           import re
@@ -148,6 +149,12 @@
           # the HISTORY_FILE_HOST env var (mirroring COMPANION_PORT).
           DEFAULT_HISTORY_FILE = "/data/orin/files/counting-history.jsonl"
           HISTORY_FILE = os.environ.get("HISTORY_FILE_HOST", DEFAULT_HISTORY_FILE)
+          # Directory holding the JSONL and the compressed counting-*.mp4 files
+          # (the compression cron writes counting-{ts}-#N.mp4 here). Used by
+          # /api/video/<id> to resolve a video_id to its on-disk file.
+          FILES_DIR = os.path.dirname(HISTORY_FILE) or "/data/orin/files"
+          # Chunk size for streaming video bytes to the client.
+          _VIDEO_CHUNK = 64 * 1024
 
           # Event types counted as "guard" events in the daily summary.
           _GUARD_EVENT_TYPES = frozenset({
@@ -606,6 +613,135 @@
               handler.wfile.write(body)
 
 
+          def _serve_video_file(handler, vid):
+              """Serve a compressed counting-<vid>-*.mp4 from FILES_DIR with
+              HTTP Range / 206 partial streaming.
+
+              `vid` is the video_id stem (e.g. "counting-20250608-100000")
+              WITHOUT the #N delta suffix. The file is resolved by globbing
+              `counting-<vid>-*.mp4` in FILES_DIR. 404 if absent; 416 on a
+              malformed/unsatisfiable Range; 200 full file or 206 partial
+              otherwise. Streams in _VIDEO_CHUNK chunks to avoid loading
+              large files into memory. Single-range only (sufficient for the
+              Android player's resumable download).
+              """
+              # Resolve the on-disk file via glob.
+              pattern = os.path.join(FILES_DIR, "counting-" + vid + "-*.mp4")
+              matches = glob.glob(pattern)
+              if not matches:
+                  handler._log("GET /api/video/{} -> 404".format(vid))
+                  _send_json(handler, 404, {"error": "video not found"})
+                  return
+              # Defensive: if multiple matches (e.g. same-second double
+              # finalize), pick the newest by mtime.
+              if len(matches) > 1:
+                  matches.sort(
+                      key=lambda p: os.path.getmtime(p), reverse=True)
+              file_path = matches[0]
+
+              try:
+                  st = os.stat(file_path)
+              except OSError:
+                  handler._log("GET /api/video/{} -> 404".format(vid))
+                  _send_json(handler, 404, {"error": "video not found"})
+                  return
+              size = st.st_size
+
+              range_hdr = handler.headers.get("Range")
+              start = 0
+              end = size - 1
+              partial = False
+
+              if range_hdr:
+                  # Parse a single "bytes=start-end" / "bytes=start-" range.
+                  m = re.match(r"^bytes=(\d*)-(\d*)$", range_hdr.strip())
+                  if m is None:
+                      # Malformed Range -> 416 with Content-Range */size.
+                      handler.send_response(416)
+                      handler.send_header("Content-Type", "video/mp4")
+                      handler.send_header("Accept-Ranges", "bytes")
+                      handler.send_header(
+                          "Content-Range", "bytes */{}".format(size))
+                      handler.send_header("Content-Length", "0")
+                      handler.end_headers()
+                      handler._log(
+                          "GET /api/video/{} -> 416 (bad range {!r})".format(
+                              vid, range_hdr))
+                      return
+                  s_str, e_str = m.group(1), m.group(2)
+                  if s_str == "" and e_str == "":
+                      handler.send_response(416)
+                      handler.send_header("Content-Type", "video/mp4")
+                      handler.send_header("Accept-Ranges", "bytes")
+                      handler.send_header(
+                          "Content-Range", "bytes */{}".format(size))
+                      handler.send_header("Content-Length", "0")
+                      handler.end_headers()
+                      handler._log(
+                          "GET /api/video/{} -> 416 (empty range)".format(
+                              vid))
+                      return
+                  if s_str == "":
+                      # Suffix range: last N bytes.
+                      n = int(e_str)
+                      if n <= 0:
+                          handler.send_response(416)
+                          handler.send_header("Content-Type", "video/mp4")
+                          handler.send_header("Accept-Ranges", "bytes")
+                          handler.send_header(
+                              "Content-Range", "bytes */{}".format(size))
+                          handler.send_header("Content-Length", "0")
+                          handler.end_headers()
+                          handler._log(
+                              "GET /api/video/{} -> 416 (bad suffix)".format(
+                                  vid))
+                          return
+                      start = max(0, size - n)
+                      end = size - 1
+                  else:
+                      start = int(s_str)
+                      end = int(e_str) if e_str != "" else size - 1
+                  if start >= size or start > end or end >= size:
+                      handler.send_response(416)
+                      handler.send_header("Content-Type", "video/mp4")
+                      handler.send_header("Accept-Ranges", "bytes")
+                      handler.send_header(
+                          "Content-Range", "bytes */{}".format(size))
+                      handler.send_header("Content-Length", "0")
+                      handler.end_headers()
+                      handler._log(
+                          "GET /api/video/{} -> 416 (out of range)".format(
+                              vid))
+                      return
+                  partial = True
+
+              length = end - start + 1
+              handler.send_response(206 if partial else 200)
+              handler.send_header("Content-Type", "video/mp4")
+              handler.send_header("Accept-Ranges", "bytes")
+              handler.send_header("Content-Length", str(length))
+              if partial:
+                  handler.send_header(
+                      "Content-Range", "bytes {}-{}/{}".format(
+                          start, end, size))
+              handler.end_headers()
+
+              with open(file_path, "rb") as fh:
+                  fh.seek(start)
+                  remaining = length
+                  while remaining > 0:
+                      chunk = fh.read(min(_VIDEO_CHUNK, remaining))
+                      if not chunk:
+                          break
+                      handler.wfile.write(chunk)
+                      remaining -= len(chunk)
+
+              handler._log(
+                  "GET /api/video/{} -> {} ({} bytes, file={})".format(
+                      vid, 206 if partial else 200, length,
+                      os.path.basename(file_path)))
+
+
           def _read_json_body(handler):
               """Read + parse the request body as JSON. Returns (obj, None) on
               success or (None, error_message) on failure."""
@@ -749,6 +885,31 @@
                           "offset": offset,
                           "total": total,
                       })
+                      return
+
+                  if path.startswith("/api/video/"):
+                      # Range-streamed compressed MP4 for a finalized video.
+                      # Must be checked AFTER the exact "/api/videos" match so
+                      # the plural list endpoint is never shadowed (the trailing
+                      # slash in the prefix means "/api/videos" would not match
+                      # startswith("/api/video/") anyway, but ordering removes
+                      # all doubt).
+                      vid = path[len("/api/video/"):]
+                      # Strip any trailing query-like cruft defensively.
+                      if not vid:
+                          self._log("GET {} -> 404".format(path))
+                          _send_json(self, 404, {"error": "missing video id"})
+                          return
+                      try:
+                          _serve_video_file(self, vid)
+                      except Exception as exc:  # best-effort, never kill thread
+                          self._log(
+                              "GET /api/video/{} -> 500 ({})".format(
+                                  vid, exc))
+                          try:
+                              _send_json(self, 500, {"error": str(exc)})
+                          except Exception:
+                              pass
                       return
 
                   if path.startswith("/api/sessions/"):
