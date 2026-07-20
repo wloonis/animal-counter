@@ -69,8 +69,13 @@ data class LiveCount(
 )
 
 // ---------------------------------------------------------------------------
-// /api/history  →  HistoryPage (list of SessionSummary)
+// /api/sessions  →  SessionPage (list of SessionSummary)
 // ---------------------------------------------------------------------------
+//
+// BL-72: the companion renamed `/api/history` → `/api/sessions` (response
+// shape unchanged: `{sessions[], limit, offset, total}`). The Kotlin mirror
+// is renamed in lockstep: `HistoryPage` → `SessionPage`, `parseHistory` →
+// `parseSessions`.
 
 /** One row of `/api/history` (`session_summaries` in the reader). */
 data class SessionSummary(
@@ -88,9 +93,40 @@ data class SessionSummary(
     val videoDuration: Double?,     // video.duration seconds (BL-69); null for old sessions
 )
 
-/** `/api/history` → `{sessions[], limit, offset, total}`. */
-data class HistoryPage(
+/** `/api/sessions` → `{sessions[], limit, offset, total}`. */
+data class SessionPage(
     val sessions: List<SessionSummary>,
+    val limit: Int,
+    val offset: Int,
+    val total: Int,
+)
+
+// ---------------------------------------------------------------------------
+// /api/videos  →  VideoPage (list of VideoRow)
+// ---------------------------------------------------------------------------
+//
+// BL-72: the companion exposes `/api/videos?limit=&offset=` listing every
+// compressed clip plus a synthetic index-0 "running" row while a recording
+// is in progress. Each row carries the full video facts the UI needs (no
+// separate detail endpoint). Field names mirror the deployed BL-71 backend:
+//   {video_id, session_id, filename, duration, count_delta, ts, status}
+// `video_id` is `counting-{YYYYMMDD-HHMMSS}` (no `#N`); the running row has
+// `status:"running"` and `duration:null`.
+
+/** One row of `/api/videos`. */
+data class VideoRow(
+    val videoId: String?,
+    val sessionId: String?,
+    val filename: String?,
+    val duration: Double?,
+    val countDelta: Int?,
+    val ts: String?,
+    val status: String,          // "ready" | "running" | "unknown" | …
+)
+
+/** `/api/videos` → `{videos[], limit, offset, total}`. */
+data class VideoPage(
+    val videos: List<VideoRow>,
     val limit: Int,
     val offset: Int,
     val total: Int,
@@ -315,16 +351,40 @@ internal fun parseSessionSummary(o: JSONObject): SessionSummary = SessionSummary
     videoDuration = o.optDoubleOrNull("video_duration"),
 )
 
-/** Parse `GET /api/history` body into [HistoryPage]. */
-internal fun parseHistory(json: String): HistoryPage {
+/** Parse `GET /api/sessions` body into [SessionPage] (shape identical to the old `/api/history`). */
+internal fun parseSessions(json: String): SessionPage {
     val o = JSONObject(json)
     val arr = o.optJSONArray("sessions") ?: JSONArray()
     val sessions = (0 until arr.length()).map { parseSessionSummary(arr.getJSONObject(it)) }
-    return HistoryPage(
+    return SessionPage(
         sessions = sessions,
         limit = o.optInt("limit", 0),
         offset = o.optInt("offset", 0),
         total = o.optInt("total", sessions.size),
+    )
+}
+
+/** Parse one `videos[]` element of `/api/videos` into [VideoRow] (defensive `optX`). */
+internal fun parseVideoRow(o: JSONObject): VideoRow = VideoRow(
+    videoId = o.optStringOrNull("video_id"),
+    sessionId = o.optStringOrNull("session_id"),
+    filename = o.optStringOrNull("filename"),
+    duration = o.optDoubleOrNull("duration"),
+    countDelta = o.optIntOrNull("count_delta"),
+    ts = o.optStringOrNull("ts"),
+    status = o.optStringOrNull("status") ?: "unknown",
+)
+
+/** Parse `GET /api/videos?limit=&offset=` body into [VideoPage] (mirrors [parseSessions]). */
+internal fun parseVideos(json: String): VideoPage {
+    val o = JSONObject(json)
+    val arr = o.optJSONArray("videos") ?: JSONArray()
+    val videos = (0 until arr.length()).map { parseVideoRow(arr.getJSONObject(it)) }
+    return VideoPage(
+        videos = videos,
+        limit = o.optInt("limit", 0),
+        offset = o.optInt("offset", 0),
+        total = o.optInt("total", videos.size),
     )
 }
 

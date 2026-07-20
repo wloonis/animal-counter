@@ -10,11 +10,11 @@ import com.animalcounter.data.DEFAULT_JETSON_IP
 import com.animalcounter.data.OfflineCache
 import com.animalcounter.data.SettingsRepository
 import com.animalcounter.net.ApiResult
-import com.animalcounter.net.HistoryPage
+import com.animalcounter.net.SessionPage
 import com.animalcounter.net.JetsonClient
 import com.animalcounter.net.SessionSummary
 import com.animalcounter.net.activeWifiNetwork
-import com.animalcounter.net.parseHistory
+import com.animalcounter.net.parseSessions
 import com.animalcounter.ui.timesync.ProbeState
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -146,7 +146,7 @@ class SessionsViewModel(
                 network = wifi,
             )) {
                 is ApiResult.Success -> {
-                    val page: HistoryPage = parseHistory(result.data)
+                    val page: SessionPage = parseSessions(result.data)
                     if (!append) OfflineCache.save(getApplication(), CACHE_KEY, result.data)
                     if (append) cache.addAll(page.sessions)
                     else { cache.clear(); cache.addAll(page.sessions) }
@@ -175,7 +175,7 @@ class SessionsViewModel(
     /** Offline fallback — serve the last cached first page. */
     private fun loadCached(): SessionsUiState? {
         val cached = OfflineCache.load(getApplication(), CACHE_KEY) ?: return null
-        val page = runCatching { parseHistory(cached.json) }.getOrNull() ?: return null
+        val page = runCatching { parseSessions(cached.json) }.getOrNull() ?: return null
         cache.clear(); cache.addAll(page.sessions)
         total = page.total.coerceAtLeast(cache.size)
         offset = cache.size

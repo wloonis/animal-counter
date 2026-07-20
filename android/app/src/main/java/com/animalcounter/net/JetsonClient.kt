@@ -235,14 +235,14 @@ object JetsonClient {
     suspend fun getCount(ip: String, network: Network? = null): ApiResult<LiveCount> =
         getJson(ip, "/api/count", network) { parseLiveCount(it) }
 
-    /** `GET /api/history?limit=&offset=` → [HistoryPage]. */
+    /** `GET /api/sessions?limit=&offset=` → [SessionPage]. */
     suspend fun getHistory(
         ip: String,
         limit: Int = 50,
         offset: Int = 0,
         network: Network? = null,
-    ): ApiResult<HistoryPage> =
-        getJson(ip, "/api/history?limit=$limit&offset=$offset", network) { parseHistory(it) }
+    ): ApiResult<SessionPage> =
+        getJson(ip, "/api/history?limit=$limit&offset=$offset", network) { parseSessions(it) }
 
     /** `GET /api/sessions/<id>` → [SessionDetail] (A–G groups, `end` may be null). */
     suspend fun getSession(
