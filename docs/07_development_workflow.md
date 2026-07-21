@@ -9,15 +9,21 @@ this for the process.
 
 ## Toolchain — what runs the loop
 
-This workflow is built on two local tools, both running **fully on-box** (no
-cloud API keys):
+This workflow is built on three local tools, all running **on-box**:
 
 - **[Pi](https://github.com/earendil-works/pi-coding-agent)** (`@earendil-works/pi-coding-agent`, pinned `0.80.7`) — the AI coding agent you drive
   interactively in a TUI. It does the actual code edits, recon, and commits.
   Its model provider is configured to a **local Ollama** instance.
-- **Ollama + `glm-5.2`** — the local LLM backend. Pi's provider is `ollama`,
-  model `glm-5.2` (pulls the `glm-5.2:cloud` tag). Every phase runs against
-  this local model, so there is nothing to pay for or rate-limit.
+- **Plannotator** (`@plannotator/pi-extension`, installed into Pi) — the
+  plan-review UI. Archon's PLAN phase serves it over HTTP
+  (`http://127.0.0.1:19432`); it is the gate where you approve or deny the plan.
+  **Required** — without it the PLAN phase has no review surface.
+- **Ollama + `glm-5.2`** — the LLM backend. Pi's provider is `ollama`, model
+  `glm-5.2` (pulls the `glm-5.2:cloud` tag) — the project default.
+  > **`glm-5.4` needs an Ollama Pro subscription.** The newer `glm-5.4` model is
+  > gated behind Ollama's **Pro** tier; `ollama pull glm-5.4` fails without a
+  > paid Ollama account. Stay on `glm-5.2` unless you have Pro, and update the
+  > model tier in `.archon/config.yaml` if you switch.
 - **Archon** — the workflow runner (`archon` CLI). It orchestrates the
   6-phase loop below; each phase spawns its **own Pi session** in an isolated
   git worktree. Archon here runs **from source** (branch `archon-dev-0807-v2`,
@@ -34,10 +40,11 @@ cloud API keys):
    ollama list | grep glm-5.2                       # sanity check
    ```
 
-2. **Pi** (the coding agent) + the plan-review extension:
+2. **Pi** (the coding agent) and the **plannotator** plan-review extension
+   (**both required** — the extension is the PLAN phase's review surface):
    ```bash
-   npm install -g @earendil-works/pi-coding-agent  # provides the `pi` command
-   pi install npm:@plannotator/pi-extension         # plan-review HTTP UI
+   npm install -g @earendil-works/pi-coding-agent   # provides the `pi` command
+   pi install npm:@plannotator/pi-extension          # REQUIRED: plan-review HTTP UI
    ```
 
 3. **Archon** (from source, via Bun — this repo uses the Pi provider, not the

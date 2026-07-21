@@ -14,6 +14,37 @@ The production Jetson has no internet access. You've rebuilt the
 `pip`), and need to push that image to the production Jetson to deploy an
 update. The PC can reach both Jetsons over WiFi.
 
+## When you can skip this — online Jetson (company WiFi)
+
+The whole save → PC → load dance below is only needed when the production
+Jetson is **offline** (its own WiFi hotspot, no uplink). If the production
+Jetson is **connected to the company WiFi**, it has internet (for `apt`,
+`pip`, and `docker buildx` base-image pulls) and you can **build the
+`countingapp:local` image directly on it** — no PC relay, no ~20 Go tar
+transfer.
+
+From the repo root (PC), run the build through the deploy playbook — it
+rsyncs `app/` to the Jetson's `/app` hostPath and runs
+`docker buildx build -t countingapp:local .` on the Jetson
+(see [`03_deployment.md`](03_deployment.md)):
+
+```bash
+cd ansible/playbooks/app
+ansible-playbook -i ../../inventory/jetsons.yml deploy_app.yml --tags build
+```
+
+Then redeploy / roll the pod to pick up the new image:
+
+```bash
+ansible-playbook -i ../../inventory/jetsons.yml deploy_app.yml --tags deploy
+```
+
+> **Prefer this whenever the Jetson is online.** The offline transfer that
+> follows is the fallback for the production case where the Jetson runs on
+> its own hotspot with no uplink — see
+> [`12_jetson_network_k3s_boot.md`](12_jetson_network_k3s_boot.md) for why the
+> production network is WiFi-only/hotspot.
+
 ## Prerequisites (PC)
 
 Install these tools on the PC (control machine):

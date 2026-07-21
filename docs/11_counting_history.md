@@ -1,12 +1,14 @@
-# 11 — Persistent counting-session history + companion API (BL-68)
+# 11 — Persistent counting-session history (store) (BL-68)
 
 An **append-only JSONL** counting-session history (`counting-history.jsonl`)
 written read-only from the `countingapp` pod onto the hostPath `/files`, with
 a single in-process history thread (heartbeat + compaction) that is resilient
-to power cuts and bounded to ~200 MB on the small SSD. The existing stdlib
-`jetson-companion` host service (BL-64, port 8090) is extended (v2) with
-read-only history API endpoints backed by a lazy in-memory index over the
-JSONL.
+to power cuts and bounded to ~200 MB on the small SSD. The store is exposed
+**read-only** to the Android app through the `jetson-companion` host service
+(BL-64, port 8090) v2 endpoints — the full HTTP API surface (sessions,
+summary, videos, video streaming) is documented in
+[`09_jetson_companion.md`](09_jetson_companion.md). This doc covers the
+**store** internals: JSONL schema, writer, compaction, disk guard, settings.
 
 This implements [GitHub issue BL-68](https://github.com/wloonis/animal-counter/issues).
 
@@ -279,89 +281,19 @@ startup `main.py` reads `/app/.build-info.json`; if missing it falls back to
 env `IMAGE_TAG`, and `git_commit` defaults to `"unknown"`. This travels with
 the image and is robust to K3s env drift.
 
-## Companion read-only API (host, port 8090)
+## Companion API (HTTP)
 
-The `jetson-companion` service is bumped to **version `"2"`** (see
-`GET /api/identify`). The v1 `/api/identify` and `POST /api/time` endpoints
-are unchanged. New read-only history endpoints (stdlib only; the companion
-**never** mutates the JSONL):
+The store is served **read-only** to the Android app through the
+`jetson-companion` host service (BL-64, port 8090), bumped to **version `"2"`**
+(`GET /api/identify`). The full endpoint table + curl examples live in
+[`09_jetson_companion.md`](09_jetson_companion.md) § Endpoints (v2):
+`/api/sessions`, `/api/sessions/<id>`, `/api/summary`, `/api/startups`,
+`/api/videos`, `/api/video/<id>` (range-streamed).
 
-| Method | Path                          | Query             | Purpose                                              |
-|--------|-------------------------------|-------------------|------------------------------------------------------|
-| `GET`  | `/api/sessions`               | `limit=50&offset=0` | Paginated session summaries (A + net count + last event ts), newest first |
-| `GET`  | `/api/sessions/<id>`          | —                 | Full session detail (A–G): aggregate `session_start` + `heartbeat`s (last = `end_at` if no `session_end`) + `event`s + `session_end` |
-| `GET`  | `/api/summary`                | `days=7`          | Daily aggregates (count per day, sessions, guard events) |
-| `GET`  | `/api/startups`               | `limit=50`        | Startup history lines                                |
-| `GET`  | `/api/videos`                 | `limit=50&offset=0` | Paginated video summaries (one row per recorded video + running recording as synthetic first row), newest first |
-| `GET`  | `/api/video/<id>`             | — (Range supported) | Range-streamed compressed `counting-<id>-*.mp4` (HTTP 200/206/416); 404 if absent or not yet compressed |
-
-The reader uses a lazy `HistoryIndex`: on the first history request it scans
-the JSONL once, builds an in-memory `session_id → {offsets, summary}` map +
-a list of `startup` lines, caches it, and invalidates the cache when
-`os.path.getsize` changes. Partial last lines are tolerated.
-
-## curl examples
-
-Assuming the Jetson is reachable at `192.168.0.180` (its IP on the HotSpot or
-the local WiFi):
-
-**Identify the service (now version 2):**
-```bash
-curl http://192.168.0.180:8090/api/identify
-# {"service":"jetson-companion","version":"2"}
-```
-
-**List recent sessions:**
-```bash
-curl 'http://192.168.0.180:8090/api/sessions?limit=10'
-# {"sessions":[...],"limit":10,"offset":0,"total":N}
-```
-
-**Paginate (next page):**
-```bash
-curl 'http://192.168.0.180:8090/api/sessions?limit=10&offset=10'
-```
-
-**Get full detail for one session:**
-```bash
-curl http://192.168.0.180:8090/api/sessions/<session_id>
-# {"session_id":"...","start_at":"...","end_at":"...","counters":{...},"events":[...],...}
-```
-
-**Daily summary (last 7 days):**
-```bash
-curl 'http://192.168.0.180:8090/api/summary?days=7'
-# {"days":7,"daily":[{"date":"2025-07-15","count":9,"sessions":1,"guard_events":0},...]}
-```
-
-**List recent videos (running recording is the synthetic first row):**
-```bash
-curl 'http://192.168.0.180:8090/api/videos?limit=10'
-# {"videos":[{"video_id":"counting-20250608-100000","filename":"counting-20250608-100000-#9.mp4","duration":120,"count_delta":9,"session_id":"...","ts":"...","status":"ready"},...],"limit":10,"offset":0,"total":N}
-```
-
-**Range-stream a video (resumable/partial download):**
-```bash
-curl -H 'Range: bytes=0-1023' \
-  http://192.168.0.180:8090/api/video/counting-20250608-100000 -o /tmp/head.mp4
-# HTTP 206, Content-Range: bytes 0-1023/<size>
-curl http://192.168.0.180:8090/api/video/counting-20250608-100000 -o file.mp4
-# HTTP 200, full file (playable on Android)
-```
-
-**Startup history:**
-```bash
-curl 'http://192.168.0.180:8090/api/startups?limit=50'
-# {"startups":[{"boot_at":"...","image_tag":"...","git_commit":"...","mode":"serve",...}]}
-```
-
-**Negative test — unknown session (expect 404):**
-```bash
-curl -s -o /dev/null -w "%{http_code}\n" \
-  http://192.168.0.180:8090/api/sessions/does-not-exist
-# 404
-```
-
+The companion **never** mutates the JSONL (the pod is the sole writer); its
+reader builds a lazy in-memory `session_id -> {offsets, summary}` index on
+first request and invalidates it on file-size change (see
+[Architecture](#architecture)). Partial last lines are tolerated.
 ## rsync guard
 
 `scripts/validate_on_jetson.sh` adds
@@ -426,9 +358,9 @@ persisted history on the Jetson. The existing excludes (`model/`, `.env`,
 
 ## Related
 
-- **BL-64** — the `jetson-companion` host service (port 8090) that this
-  extends with read-only history endpoints (see
-  `docs/09_jetson_companion.md`).
+- **BL-64** — the `jetson-companion` host service (port 8090) whose v2
+  endpoints serve this store read-only (see
+  [`09_jetson_companion.md`](09_jetson_companion.md)).
 - **BL-65** — the Android app that connects to the Jetson HotSpot; the
   history endpoints give it a "what happened in the last N sessions?" view.
 - **BL-62** — the clean-shutdown (`stop()` / `arret_requested` / poweroff)
