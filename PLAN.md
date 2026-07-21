@@ -128,7 +128,7 @@ commits.
   `SessionsViewModel`, `SessionDetailViewModel`, `DashboardScreen`,
   `LiveCountScreen`, and `TimeSyncViewModel`. Build green.
 
-- [ ] Task 2: STRICT `identify()` — in
+- [x] Task 2: STRICT `identify()` — in
   `android/app/src/main/java/com/animalcounter/net/JetsonClient.kt`, extract
   `internal fun isValidIdentifyBody(body: String): Boolean` (parses JSON;
   returns true only when `json.optString("service") == "jetson-companion"`).
