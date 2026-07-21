@@ -107,3 +107,4 @@ BL-73 Task 1: RELOCATE ProbeState to net/ package — 2214815
 BL-73 Task 2: STRICT identify() — isValidIdentifyBody + 6 unit tests; fixed 3 pre-existing broken SessionDetail tests (events→videos) — 46c42fd
 BL-73 Task 3: EXTEND SettingsRepository — hotspotIp/lanIp/autoSelect flows+setters, _activeIp/activeIp StateFlow + suspend setActiveIp, DEFAULT_JETSON_IP kept (aliased to DEFAULT_HOTSPOT_IP) — 3b4f420
 BL-73 Task 4: CREATE JetsonConnectionManager — parallel strict probe + WiFi callback + ~30s keep-alive loop + POST /api/time — 02e6df9
+BL-73 Task 5: WIRE JetsonConnectionManager to app lifecycle (DisposableEffect + LifecycleEventObserver ON_START/ON_STOP, drop TimeSyncService start) — ea42e38

@@ -168,7 +168,7 @@ commits.
   for settings, `JetsonClient.postTime`/`identify`, `nowIsoForCompanion()`,
   and logs to `SyncLog`. Not wired to the lifecycle yet. Build green.
 
-- [ ] Task 5: WIRE manager to app lifecycle — in
+- [x] Task 5: WIRE manager to app lifecycle — in
   `android/app/src/main/java/com/animalcounter/ui/nav/AnimalCounterApp.kt`,
   remove the `LaunchedEffect(Unit) { ContextCompat.startForegroundService(...) }`
   block and the `TimeSyncService`/`Intent`/`ContextCompat` imports. Add a
