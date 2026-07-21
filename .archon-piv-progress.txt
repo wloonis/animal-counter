@@ -110,3 +110,4 @@ BL-73 Task 4: CREATE JetsonConnectionManager — parallel strict probe + WiFi ca
 BL-73 Task 5: WIRE JetsonConnectionManager to app lifecycle (DisposableEffect + LifecycleEventObserver ON_START/ON_STOP, drop TimeSyncService start) — ea42e38
 BL-73 Task 6: CONVERT Dashboard + LiveCount ViewModels — activeIp collect + delegated probeState, removed probe()/_probeState/loaded — 1a713d4
 BL-73 Task 7: CONVERT History/Startups/Sessions ViewModels — activeIp collect + delegated probeState, removed probe()/_probeState/loaded/unused imports — 8903ed5
+BL-73 Task 8: CONVERT SessionDetail + VideoDetail ViewModels — activeIp collect + delegated probeState (SessionDetail); activeIp collect + repo.activeIp.value in loadDetail (VideoDetail), removed probe()/_probeState/loaded + unused imports — 170a685
