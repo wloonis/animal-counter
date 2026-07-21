@@ -215,7 +215,7 @@ commits.
   `rescan()`. Use existing Material 3 idioms (`OutlinedTextField`, `Switch`,
   `Scaffold` + `TopAppBar`) and `stringResource` for all labels. Build green.
 
-- [ ] Task 10: WIRE Settings tab + drop Synchro route — in
+- [x] Task 10: WIRE Settings tab + drop Synchro route — in
   `AnimalCounterApp.kt`: remove the `TIME_SYNC` `NavigationBarItem` and the
   `composable(Destinations.TIME_SYNC) { TimeSyncScreen() }` route + the
   `TimeSyncScreen` import. Add `SETTINGS = "settings"` to `Destinations`, a

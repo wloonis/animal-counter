@@ -112,3 +112,5 @@ BL-73 Task 6: CONVERT Dashboard + LiveCount ViewModels — activeIp collect + de
 BL-73 Task 7: CONVERT History/Startups/Sessions ViewModels — activeIp collect + delegated probeState, removed probe()/_probeState/loaded/unused imports — 8903ed5
 BL-73 Task 8: CONVERT SessionDetail + VideoDetail ViewModels — activeIp collect + delegated probeState (SessionDetail); activeIp collect + repo.activeIp.value in loadDetail (VideoDetail), removed probe()/_probeState/loaded + unused imports — 170a685
 BL-73 Task 9: CREATE Settings screen (SettingsViewModel + SettingsScreen, Scaffold/TopAppBar/Switch/OutlinedTextFields, stringResource labels, debounced persist + rescan on toggle/candidate edit) + 5 EN strings — f99313b
+
+BL-73 Task 10: WIRE Settings tab + drop Synchro route (drop TIME_SYNC navitem+route+TimeSyncScreen/Schedule imports, add SETTINGS dest+navitem+SettingsScreen, add tab_settings EN/FR) — a5ef046
