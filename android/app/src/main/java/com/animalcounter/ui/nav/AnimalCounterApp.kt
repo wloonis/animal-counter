@@ -6,7 +6,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.BarChart
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.PowerSettingsNew
-import androidx.compose.material.icons.filled.Schedule
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material3.Icon
 import androidx.compose.material3.NavigationBar
@@ -38,11 +38,10 @@ import com.animalcounter.ui.livecount.LiveCountScreen
 import com.animalcounter.ui.sessiondetail.SessionDetailScreen
 import com.animalcounter.ui.sessiondetail.VideoDetailScreen
 import com.animalcounter.ui.sessions.SessionsScreen
+import com.animalcounter.ui.settings.SettingsScreen
 import com.animalcounter.ui.startups.StartupsScreen
-import com.animalcounter.ui.timesync.TimeSyncScreen
 
 private object Destinations {
-    const val TIME_SYNC = "time-sync"
     const val LIVE_COUNT = "live-count"
     const val HISTORY = "history"
     const val DASHBOARD = "dashboard"
@@ -50,6 +49,7 @@ private object Destinations {
     const val SESSION_DETAIL = "session/{sessionId}"
     const val VIDEO_DETAIL = "video/{videoId}?filename={filename}&countDelta={countDelta}&duration={duration}&fileDuration={fileDuration}&status={status}&sessionId={sessionId}&ts={ts}"
     const val SESSIONS = "sessions?days={days}"
+    const val SETTINGS = "settings"
 }
 
 @Composable
@@ -104,10 +104,10 @@ fun AnimalCounterApp() {
                     label = { Text(stringResource(R.string.tab_startups)) },
                 )
                 NavigationBarItem(
-                    selected = currentRoute == Destinations.TIME_SYNC,
-                    onClick = { navController.navigateTo(Destinations.TIME_SYNC) },
-                    icon = { Icon(Icons.Filled.Schedule, contentDescription = null) },
-                    label = { Text(stringResource(R.string.tab_time_sync)) },
+                    selected = currentRoute == Destinations.SETTINGS,
+                    onClick = { navController.navigateTo(Destinations.SETTINGS) },
+                    icon = { Icon(Icons.Filled.Settings, contentDescription = null) },
+                    label = { Text(stringResource(R.string.tab_settings)) },
                 )
             }
         },
@@ -119,7 +119,7 @@ fun AnimalCounterApp() {
                 .fillMaxSize()
                 .padding(innerPadding),
         ) {
-            composable(Destinations.TIME_SYNC) { TimeSyncScreen() }
+            composable(Destinations.SETTINGS) { SettingsScreen() }
             composable(Destinations.LIVE_COUNT) { LiveCountScreen() }
             composable(Destinations.HISTORY) { HistoryScreen(navController) }
             composable(Destinations.DASHBOARD) {

@@ -5,6 +5,7 @@
 
     <!-- Bottom-nav tabs -->
     <string name="tab_time_sync">Synchro</string>
+    <string name="tab_settings">Réglages</string>
     <string name="tab_live_count">Comptage en direct</string>
     <string name="tab_videos">Vidéos</string>
 

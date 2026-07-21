@@ -5,6 +5,7 @@
 
     <!-- Bottom-nav tabs -->
     <string name="tab_time_sync">Sync</string>
+    <string name="tab_settings">Settings</string>
     <string name="tab_live_count">Live count</string>
     <string name="tab_videos">Videos</string>
 
