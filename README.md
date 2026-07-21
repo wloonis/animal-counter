@@ -39,7 +39,8 @@ starting a new batch).
 | [`docs/09_development_workflow.md`](docs/09_development_workflow.md) | Development workflow with `archon-jetson-dev` (CLARIFY → plan → validate → PR) |
 | [`docs/10_offline_image_transfer.md`](docs/10_offline_image_transfer.md) | Transfer a Docker image from a test Jetson to an offline production Jetson via the PC |
 | [`docs/11_jetson_companion.md`](docs/11_jetson_companion.md) | Jetson companion clock-sync service (BL-64) — offline time set from the Android phone |
-| [`docs/12_android_app.md`](docs/12_android_app.md) | Android time-sync app (BL-65) — pushes time to the Jetson companion over the hotspot |
+| [`docs/12_android_app.md`](docs/12_android_app.md) | Android companion app (BL-65/69/72) — time sync, live count, sessions/history, videos |
+| [`docs/12_counting_history.md`](docs/12_counting_history.md) | Persistent counting history (BL-68/71) — JSONL schema, companion API, heartbeat/compaction |
 | [`docs/13_jetson_network_k3s_boot.md`](docs/13_jetson_network_k3s_boot.md) | Jetson networking & K3s boot (WiFi-only, no RTC, no ethernet cable) — why + how |
 
 ---
@@ -55,7 +56,12 @@ animal-counter/
 │   ├── .env / .env.example  # Runtime config (.env is gitignored; .env.example is versioned)
 │   ├── model/               # my_model.{pt,onnx,engine}  (engine built by trtexec)
 │   └── src/
-│       ├── main.py           # Entry point (Flask web app + InferThread + DisplayThread)
+│       ├── main.py           # Thin entry point: start()/stop() orchestration + re-exports; `if __name__: cli.main()` (BL-29)
+│       ├── state.py          # Module-level singletons: shared_state, logger, _IOU_METRICS (BL-29)
+│       ├── infer_thread.py   # InferThread — capture → TensorRT inference → frame_queue (BL-29)
+│       ├── display_thread.py # DisplayThread — tracking → counting → recording → render (BL-29)
+│       ├── validate.py       # write_result_json (validation mode, RESULT_JSON_PATH) (BL-29)
+│       ├── cli.py            # argparse + signal handlers + serve/validate loop + Jetson poweroff (BL-29)
 │       ├── settings.py       # Config loader (reads app/.env, defaults documented inline)
 │       ├── core/
 │       │   ├── inference.py   # TensorRT inference + pre/post-processing
@@ -113,8 +119,11 @@ The container `entrypoint.sh` takes a **mode** argument:
 In production the pod runs in `serve` mode. `main.py` exposes a small Flask web
 app (port `31501`) that the operator uses to **start/stop** counting and read
 the counter, while two background threads do the work:
-**InferThread** (capture → TensorRT inference → queue) and **DisplayThread**
-(tracking → counting → recording → render). See
+**InferThread** (`infer_thread.py` — capture → TensorRT inference → queue) and
+**DisplayThread** (`display_thread.py` — tracking → counting → recording →
+render). Since BL-29, `main.py` is a thin entry point that imports them and
+delegates the CLI/serve/validate loop to `cli.py` (singletons in `state.py`,
+validation output in `validate.py`). See
 [`docs/05_counting_pipeline.md`](docs/05_counting_pipeline.md).
 
 ---

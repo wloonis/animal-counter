@@ -1,4 +1,4 @@
-# 12 — Android companion app (BL-65)
+# 12 — Android companion app (BL-65/69/72)
 
 The Android app that pushes the phone's current time + IANA timezone to the
 Jetson companion service ([BL-64](./11_jetson_companion.md),
@@ -26,13 +26,12 @@ and pushes time in the background — no app open required.
 - **Multilingual (FR/EN)** — follows the phone's default system locale.
   `res/values/strings.xml` (English fallback) + `res/values-fr/strings.xml`
   (French). Structure ready for more locales via `values-<lang>/`.
-- **3-tab hub** — Time sync (active), Live count + Videos (enabled placeholder
-  screens, « Bientôt disponible » / « Coming soon »), extensible for future
-  BL-66/BL-67.
+- **Multi-tab hub** — Time sync (BL-65), Live count (BL-69), Sessions / per-session detail (BL-69/71), Videos list + download/open (BL-72), Startups log. Built incrementally; see [`12_counting_history.md`](12_counting_history.md) for the Jetson-side history that backs these screens.
 - **Configurable Jetson IP** — persisted via Jetpack DataStore Preferences
   (default `192.168.100.1`).
-- **Material 3** dynamic color (Material You) + dark theme forced. Adaptive pig
-  launcher icon. App name « Animal Counter ».
+- **Material 3** dynamic color (Material You) + dark theme forced. Custom adaptive
+  launcher icon (`animal_counter_v2.png` raster foreground at 72% in the safe
+  zone, teal `#FF00897B` background; PR #80/#84). App name « Animal Counter ».
 
 ---
 
@@ -353,6 +352,8 @@ android/
       values/strings.xml          (English fallback)
       values-fr/strings.xml       (Français)
       values/themes.xml, colors.xml
-      mipmap-anydpi-v26/ic_launcher.xml + ic_launcher_background/foreground
+      mipmap-anydpi-v26/ic_launcher.xml (adaptive: @drawable/ic_launcher_foreground + @color/ic_launcher_background)
+      drawable-{mdpi…xxxhdpi}/ic_launcher_foreground.png  (raster foreground, 108dp; PR #80/#84)
+      mipmap-{mdpi…xxxhdpi}/ic_launcher.png + ic_launcher_round.png  (legacy pre-v26)
   build.gradle.kts, settings.gradle.kts, gradle/wrapper/...
 ```

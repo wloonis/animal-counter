@@ -58,7 +58,7 @@ misleading (e.g. a video named `#24` actually contained 42 pigs); the
   "reference_video": "validation-1-#9.mp4",
   "tolerance": 0,
   "max_iterations": 5,
-  "mode": "full"
+  "mode": "standard"
 }
 ```
 
@@ -67,6 +67,17 @@ misleading (e.g. a video named `#24` actually contained 42 pigs); the
 - `max_iterations` — used by the Archon workflow wrapper (not the script
   itself).
 - `mode` — `standard` (single reference video) or `full` (manifest videos).
+  **MUST stay `"standard"` by default** — a counting-code branch may flip it
+  to `"full"` temporarily for a run, but revert before merge. The CLI `--full`
+  flag is a per-run override only.
+
+> **Archon workflow policy (PR #81):** the `jetson-validate` node runs
+> **standard by default in all cases** — it never auto-selects `--full` from a
+> file-list heuristic. `--full` (full manifest, 4 priority videos) is an
+> **explicit user decision** only, requested in the launch message or relayed
+> feedback. A pure refactor that rewrites `app/src/main.py` (e.g. BL-29) is
+> **not** grounds for `--full` — a file being touched is not a counting-logic
+> change. See [`AGENTS.md`](../AGENTS.md) §7.
 
 ## Running
 

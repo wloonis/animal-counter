@@ -16,11 +16,7 @@ the expected value** before opening a PR. The human stays in the loop at the
 *decisions* (clarifying answers, plan approval, mismatch handling) and out of
 the *busywork* (rsync, kubectl, py_compile, report parsing).
 
-The validation criterion is deliberately strict: 4 priority videos, **4/4
-exact count** (the expected count is derived from the filename,
-`validation-<seq>-#<count>.mp4`). A count mismatch is a **business failure** —
-the workflow pauses for you, it never auto-tweaks the counting logic to match
-a number (anti "metric gaming").
+The validation criterion is deliberately strict: the expected count is derived from the filename (`validation-<seq>-#<count>.mp4`) and must match **exactly** (tolerance 0). **Standard** mode validates the single reference video; **full** mode validates the 4 priority (defect-prone) videos and requires **4/4 exact**. A count mismatch is a **business failure** — the workflow pauses for you, it never auto-tweaks the counting logic to match a number (anti "metric gaming").
 
 ## The 6 phases — what happens, who acts
 
@@ -31,7 +27,7 @@ a number (anti "metric gaming").
 | 3 | **Plan review** (HITL) | you | Open `http://127.0.0.1:19432`, read the plan, **approve** or **deny with feedback**. Denied → the AI revises `PLAN.md` and resubmits. |
 | 4 | **VERIFY-PLAN** | AI | Sanity check that `PLAN.md` exists with tasks. |
 | 5 | **IMPLEMENT** | AI | Edits task-by-task with `python3 -m py_compile` validation + commits. No Jetson calls yet. |
-| 6 | **JETSON-VALIDATE** | AI + you on mismatch | Runs `scripts/validate_on_jetson.sh --full` on the Jetson, reads `validation-report.json`: **pass** → finalize; **count_mismatch** → HITL pause (you guide the fix); **execution_error** → auto-retry/escalate. |
+| 6 | **JETSON-VALIDATE** | AI + you on mismatch | Runs `scripts/validate_on_jetson.sh` in **standard** mode (single reference video) **by default**; `--full` (4 priority videos) only when **you explicitly request it** (PR #81 — never auto-selected from a file-list heuristic). Reads `validation-report.json`: **pass** → finalize; **count_mismatch** → HITL pause (you guide the fix); **execution_error** → auto-retry/escalate. |
 | 7 | **FINALIZE** | AI | Pushes the worktree branch + opens a **draft PR**. |
 
 ## Prerequisites (one-time per machine)
