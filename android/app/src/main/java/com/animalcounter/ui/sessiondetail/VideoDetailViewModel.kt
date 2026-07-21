@@ -23,7 +23,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.InputStream
@@ -118,11 +117,11 @@ class VideoDetailViewModel(
     fun loadDetail() {
         val videoId = _ui.value.row.videoId ?: return
         viewModelScope.launch {
-            // Wait for the DataStore IP before fetching — the seed
-            // DEFAULT_JETSON_IP (hotspot) is wrong when the Jetson is on
-            // internet WiFi (192.168.0.180); fetching too early hits the
-            // wrong host and fails silently.
-            val ip = repo.jetsonIp.first()
+            // Use the resolved active IP (managed by JetsonConnectionManager);
+            // the hotspot default may be wrong when the Jetson is on internet
+            // WiFi (192.168.0.180), so reading the current value avoids hitting
+            // the wrong host before the parallel probe resolves.
+            val ip = repo.activeIp.value
             val cm = cm()
             val wifi = if (cm != null) activeWifiNetwork(cm) else null
             try {
@@ -142,10 +141,11 @@ class VideoDetailViewModel(
     }
 
     init {
-        // Seed the Jetson IP from DataStore (read-only here — edited on the
-        // Time sync tab) so a download routes to the operator's Jetson.
+        // Track the resolved active Jetson IP (owned by
+        // JetsonConnectionManager) so a download routes to the operator's
+        // Jetson regardless of hotspot vs LAN.
         viewModelScope.launch {
-            repo.jetsonIp.collect { saved -> _ip.value = saved }
+            repo.activeIp.collect { ip -> _ip.value = ip }
         }
     }
 
