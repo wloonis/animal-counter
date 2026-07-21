@@ -50,9 +50,9 @@ private const val KEEP_ALIVE_INTERVAL_MS = 30_000L
  * Owns the *single canonical* reachability state for the app and resolves
  * which Jetson IP the rest of the app should talk to. It replaces both the
  * per-ViewModel `probe()` methods and the old background foreground
- * [com.animalcounter.service.TimeSyncService]: there is **no** boot or
- * background time-sync anymore — everything here runs ONLY while the app
- * is in the foreground (the activity `ON_START`→[start], `ON_STOP`→[stop]).
+ * time-sync service: there is **no** boot or background time-sync anymore —
+ * everything here runs ONLY while the app is in the foreground (the activity
+ * `ON_START`→[start], `ON_STOP`→[stop]).
  *
  * Responsibilities:
  *  - Expose [probeState] (the app-wide « Jetson connecté / hors de portée »
