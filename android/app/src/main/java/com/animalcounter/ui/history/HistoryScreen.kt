@@ -72,7 +72,7 @@ import androidx.navigation.NavController
 import com.animalcounter.R
 import com.animalcounter.net.VideoRow
 import com.animalcounter.ui.common.OfflineBanner
-import com.animalcounter.ui.timesync.ProbeState
+import com.animalcounter.net.ProbeState
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive

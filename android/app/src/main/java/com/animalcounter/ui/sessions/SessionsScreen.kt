@@ -41,7 +41,7 @@ import com.animalcounter.net.SessionSummary
 import com.animalcounter.ui.common.OfflineBanner
 import com.animalcounter.ui.sessiondetail.ReachabilityBanner
 import com.animalcounter.ui.sessiondetail.formatIso
-import com.animalcounter.ui.timesync.ProbeState
+import com.animalcounter.net.ProbeState
 
 /**
  * Sessions list — reached from the Dashboard "Sessions: N" entry. Lists

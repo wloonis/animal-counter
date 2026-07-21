@@ -10,6 +10,7 @@ import com.animalcounter.data.SettingsRepository
 import com.animalcounter.data.SyncEvent
 import com.animalcounter.data.SyncLog
 import com.animalcounter.net.JetsonClient
+import com.animalcounter.net.ProbeState
 import com.animalcounter.net.activeWifiNetwork
 import com.animalcounter.net.nowIsoForCompanion
 import kotlinx.coroutines.Job
@@ -37,9 +38,6 @@ private const val IP_PERSIST_DEBOUNCE_MS = 500L
  * Constructed with the default [AndroidViewModel] factory, which wires
  * the [Application] for the [SettingsRepository]'s DataStore.
  */
-/** Probe state for the « Jetson connecté / hors de portée » banner. */
-enum class ProbeState { Idle, Probing, Reachable, OutOfRange }
-
 class TimeSyncViewModel(app: Application) : AndroidViewModel(app) {
 
     private val repo = SettingsRepository(app)

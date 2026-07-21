@@ -52,7 +52,7 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.animalcounter.R
 import com.animalcounter.net.LiveCount
-import com.animalcounter.ui.timesync.ProbeState
+import com.animalcounter.net.ProbeState
 
 /**
  * Comptage live tab.

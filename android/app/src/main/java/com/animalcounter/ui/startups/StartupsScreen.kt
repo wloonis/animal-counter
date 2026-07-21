@@ -57,7 +57,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import com.animalcounter.net.Startup
 import com.animalcounter.ui.common.OfflineBanner
-import com.animalcounter.ui.timesync.ProbeState
+import com.animalcounter.net.ProbeState
 import org.json.JSONObject
 import java.time.Instant
 import java.time.OffsetDateTime

@@ -11,7 +11,7 @@ import com.animalcounter.net.ApiResult
 import com.animalcounter.net.JetsonClient
 import com.animalcounter.net.LiveCount
 import com.animalcounter.net.activeWifiNetwork
-import com.animalcounter.ui.timesync.ProbeState
+import com.animalcounter.net.ProbeState
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow

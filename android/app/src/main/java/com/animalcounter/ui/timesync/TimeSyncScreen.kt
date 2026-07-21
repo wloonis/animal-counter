@@ -37,6 +37,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.animalcounter.R
 import com.animalcounter.data.SyncEvent
 import com.animalcounter.data.SyncLog
+import com.animalcounter.net.ProbeState
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter

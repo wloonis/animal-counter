@@ -12,7 +12,7 @@ import com.animalcounter.net.ApiResult
 import com.animalcounter.net.JetsonClient
 import com.animalcounter.net.SessionDetail
 import com.animalcounter.net.activeWifiNetwork
-import com.animalcounter.ui.timesync.ProbeState
+import com.animalcounter.net.ProbeState
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
