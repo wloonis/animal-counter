@@ -308,7 +308,11 @@ class JetsonClientParsingTest {
     }
 
     @Test
-    fun parseSessionDetail_endedSessionHeartbeatsAndEvents() {
+    fun parseSessionDetail_endedSessionHeartbeats() {
+        // BL-71: per-video counting events moved to the VIDEO entity
+        // (/api/videos/<id>); SessionDetail no longer carries an `events`
+        // list. This test now asserts only the heartbeats (still on the
+        // session) plus the new `videos` list.
         val d = parseSessionDetail(endedSessionDetailJson())
         assertEquals(2, d.heartbeats.size)
         val firstHb = d.heartbeats[0]
@@ -319,13 +323,10 @@ class JetsonClientParsingTest {
         assertEquals(13.0, firstHb.system?.diskFree!!, 0.001)
         assertNotNull(firstHb.thermal)
         assertEquals(42.0, firstHb.thermal?.optDouble("soc_temp", Double.NaN)!!, 0.001)
-
-        assertEquals(2, d.events.size)
-        val firstEv = d.events[0]
-        assertEquals("2025-07-15T16:45:00+02:00", firstEv.ts)
-        assertEquals("id_switch_recovery", firstEv.eventType)
-        assertNotNull(firstEv.detail)
-        assertEquals(12, firstEv.detail?.optInt("track_id"))
+        // The fixture carries an `events[]` array that the parser now IGNORES
+        // (events live on the video entity). Assert it is silently dropped.
+        // `videos` is the session-level list of video_ids (empty in this fixture).
+        assertTrue(d.videos.isEmpty())
     }
 
     @Test
@@ -378,14 +379,15 @@ class JetsonClientParsingTest {
         assertEquals("/files/seg_020.mp4", lastHb.lastSegment)
         assertNotNull(lastHb.system)
         assertEquals(12.0, lastHb.system?.diskFree!!, 0.001)
-        assertEquals(1, d.events.size)
-        assertEquals("resurrection", d.events[0].eventType)
+        // BL-71: `events[]` is now ignored by the session parser (events live
+        // on the video entity); assert it is silently dropped, not surfaced.
+        assertTrue(d.videos.isEmpty())
     }
 
     @Test
     fun parseSessionDetail_missingStartAndEndAreNullSafe() {
         // Minimal payload: only the top-level envelope. The parser must not
-        // throw on absent start/end/heartbeats/events.
+        // throw on absent start/end/heartbeats/videos.
         val json = JSONObject()
             .put("session_id", "sess-x")
             .put("status", "ended")
@@ -395,7 +397,7 @@ class JetsonClientParsingTest {
         assertNull(d.start)
         assertNull(d.end)
         assertTrue(d.heartbeats.isEmpty())
-        assertTrue(d.events.isEmpty())
+        assertTrue(d.videos.isEmpty())
     }
 
     // -------------------------------------------------------------------------
@@ -680,5 +682,77 @@ class JetsonClientParsingTest {
         val path = "/api/sessions/sess-recent-0002"
         assertTrue(path.startsWith("/api/sessions/"))
         assertTrue(path.endsWith("sess-recent-0002"))
+    }
+}
+
+/**
+ * BL-73 Task 2 — strict `GET /api/identify` validation tests for the
+ * pure top-level `internal` [isValidIdentifyBody] validator.
+ *
+ * The Jetson companion answers `GET /api/identify` with
+ * `{"service":"jetson-companion","version":"<v>"}`. The validator must accept
+ * ONLY that exact `service` value (no version check) and reject every other
+ * 200-shaped body (wrong service, missing service, non-JSON) so a stale or
+ * foreign 200 response is never mistaken for the Jetson. No HTTP is exercised —
+ * [isValidIdentifyBody] is the only thing under test.
+ */
+class JetsonClientIdentifyValidationTest {
+
+    @Test
+    fun isValidIdentifyBody_acceptsValidJetsonCompanionService() {
+        val body = JSONObject()
+            .put("service", "jetson-companion")
+            .put("version", "4")
+            .toString()
+        assertTrue(isValidIdentifyBody(body))
+    }
+
+    @Test
+    fun isValidIdentifyBody_rejectsWrongServiceValue() {
+        // A stale backend (or any other HTTP 200 responder) advertising a
+        // different `service` must be rejected.
+        val body = JSONObject()
+            .put("service", "animal-counter-companion") // old/stale name
+            .put("version", "1")
+            .toString()
+        assertFalse(isValidIdentifyBody(body))
+    }
+
+    @Test
+    fun isValidIdentifyBody_rejectsNonJsonBody() {
+        // A 200 with a non-JSON body (HTML error page, plain text, …) must not
+        // crash the validator; it is rejected as a failure.
+        assertFalse(isValidIdentifyBody("<html>Not the Jetson</html>"))
+        assertFalse(isValidIdentifyBody(""))
+        assertFalse(isValidIdentifyBody("not json at all"))
+    }
+
+    @Test
+    fun isValidIdentifyBody_rejectsMissingServiceField() {
+        // A JSON 200 response without a `service` key must be rejected
+        // (`optString` defaults to "", which is not "jetson-companion").
+        val body = JSONObject()
+            .put("version", "4")
+            .toString()
+        assertFalse(isValidIdentifyBody(body))
+    }
+
+    @Test
+    fun isValidIdentifyBody_rejectsEmptyServiceValue() {
+        // An explicit empty `service` must be rejected (exact match only).
+        val body = JSONObject()
+            .put("service", "")
+            .put("version", "4")
+            .toString()
+        assertFalse(isValidIdentifyBody(body))
+    }
+
+    @Test
+    fun isValidIdentifyBody_isCaseSensitive() {
+        // Exact match: a differently-cased `service` is NOT the Jetson.
+        val body = JSONObject()
+            .put("service", "Jetson-Companion")
+            .toString()
+        assertFalse(isValidIdentifyBody(body))
     }
 }
