@@ -1,6 +1,5 @@
 package com.animalcounter.ui.nav
 
-import android.content.Intent
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
@@ -15,12 +14,14 @@ import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
-import androidx.core.content.ContextCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.navigation.NavController
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.NavType
@@ -30,7 +31,7 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.animalcounter.R
-import com.animalcounter.service.TimeSyncService
+import com.animalcounter.net.JetsonConnectionManager
 import com.animalcounter.ui.dashboard.DashboardScreen
 import com.animalcounter.ui.history.HistoryScreen
 import com.animalcounter.ui.livecount.LiveCountScreen
@@ -58,14 +59,20 @@ fun AnimalCounterApp() {
     val currentRoute = backStackEntry?.destination?.route
 
     val context = LocalContext.current
-    // On app open, (re)start the TimeSyncService so it does an immediate
-    // best-effort time sync on the active WiFi network — pushes the phone's
-    // correct time to the Jetson (no RTC; clock may have drifted/reverted).
-    LaunchedEffect(Unit) {
-        ContextCompat.startForegroundService(
-            context,
-            Intent(context, TimeSyncService::class.java),
-        )
+    val lifecycleOwner = LocalLifecycleOwner.current
+    // App-lifecycle-scoped connection management: start the WiFi probe /
+    // ~30s keep-alive / POST /api/time loop on app foreground (ON_START) and
+    // fully stop it on background (ON_STOP) — never runs in the background.
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_START -> JetsonConnectionManager.start(context)
+                Lifecycle.Event.ON_STOP -> JetsonConnectionManager.stop()
+                else -> Unit
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
     Scaffold(
