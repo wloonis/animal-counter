@@ -195,7 +195,7 @@ commits.
   `JetsonConnectionManager.probeState`, remove `probe()` + `_probeState` +
   `loaded` flag + unused imports. Build green.
 
-- [ ] Task 8: CONVERT SessionDetail + VideoDetail ViewModels — in
+- [x] Task 8: CONVERT SessionDetail + VideoDetail ViewModels — in
   `SessionDetailViewModel.kt`: same activeIp + delegated-probeState
   conversion (remove `probe()`, delegate `probeState`). In
   `VideoDetailViewModel.kt`: it has no `probeState`/`probe()`; replace
@@ -203,7 +203,7 @@ commits.
   init with `repo.activeIp` (collect into `_ip`; `loadDetail` uses
   `repo.activeIp.value`). Build green.
 
-- [ ] Task 9: CREATE Settings screen — create
+- [x] Task 9: CREATE Settings screen — create
   `android/app/src/main/java/com/animalcounter/ui/settings/SettingsScreen.kt`
   and `SettingsViewModel.kt`. The screen renders: an auto-select toggle
   (`autoSelect` from repo), a manual-override IP `OutlinedTextField` (enabled
