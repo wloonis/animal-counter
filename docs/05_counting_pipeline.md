@@ -278,7 +278,7 @@ In validation mode (`RESULT_JSON_PATH` set), `main` must write `result.json`
 (joins with `timeout=300` too short for long videos → the `DisplayThread` had
 not drained its last frame → the last pig was lost).
 
-**Fix** (`main.py`, validation mode only):
+**Fix** (`cli.py`, validation mode only — moved out of `main.py` in BL-29):
 ```python
 # 1) Wait for the InferThread to finish (full video read)
 shared_state.infer_thread.join()          # no short timeout
