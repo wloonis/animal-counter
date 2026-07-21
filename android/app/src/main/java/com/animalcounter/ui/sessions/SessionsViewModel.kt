@@ -12,6 +12,7 @@ import com.animalcounter.data.SettingsRepository
 import com.animalcounter.net.ApiResult
 import com.animalcounter.net.SessionPage
 import com.animalcounter.net.JetsonClient
+import com.animalcounter.net.JetsonConnectionManager
 import com.animalcounter.net.SessionSummary
 import com.animalcounter.net.activeWifiNetwork
 import com.animalcounter.net.parseSessions
@@ -76,20 +77,22 @@ class SessionsViewModel(
     private val _state = MutableStateFlow<SessionsUiState>(SessionsUiState.Loading)
     val state: StateFlow<SessionsUiState> = _state.asStateFlow()
 
-    private val _probeState = MutableStateFlow(ProbeState.Idle)
-    val probeState: StateFlow<ProbeState> = _probeState.asStateFlow()
-
-    private var loaded = false
+    /**
+     * Reachability banner state — delegated to the app-wide
+     * [JetsonConnectionManager] (the single canonical probe owner, BL-73).
+     * Screens that read `vm.probeState` are unchanged.
+     */
+    val probeState: StateFlow<ProbeState>
+        get() = JetsonConnectionManager.probeState
 
     init {
+        // Re-seed the IP + refetch whenever the manager resolves a new active
+        // Jetson IP (hotspot/LAN/manual). The first emission is the hotspot
+        // default; a second follows once the parallel probe resolves.
         viewModelScope.launch {
-            repo.jetsonIp.collect { saved ->
-                _ip.value = saved
-                if (!loaded) {
-                    loaded = true
-                    probe()
-                    loadFirstPage()
-                }
+            repo.activeIp.collect { ip ->
+                _ip.value = ip
+                loadFirstPage()
             }
         }
     }
@@ -107,28 +110,11 @@ class SessionsViewModel(
         }
     }
 
+    /** Re-fetch first page (auto-refresh polling + pull-to-refresh).
+     * Reachability probing is owned by [JetsonConnectionManager]. */
     fun refresh() {
         viewModelScope.launch {
             fetchPage(append = false)
-            if (_probeState.value != ProbeState.Probing) probe()
-        }
-    }
-
-    fun probe() {
-        if (_probeState.value == ProbeState.Probing) return
-        _probeState.value = ProbeState.Probing
-        viewModelScope.launch {
-            try {
-                val cm = cm()
-                val wifi = if (cm != null) activeWifiNetwork(cm) else null
-                val event = JetsonClient.identify(ip = _ip.value, network = wifi)
-                _probeState.value =
-                    if (event.outcome == com.animalcounter.data.SyncEvent.Outcome.Success)
-                        ProbeState.Reachable
-                    else ProbeState.OutOfRange
-            } catch (t: Throwable) {
-                _probeState.value = ProbeState.OutOfRange
-            }
         }
     }
 
@@ -155,7 +141,8 @@ class SessionsViewModel(
                     offlineMode = false
                     lastCachedAt = null
                     publish()
-                    if (_probeState.value != ProbeState.Probing) _probeState.value = ProbeState.Reachable
+                    // A successful fetch implies the Jetson is reachable;
+                    // the manager owns the banner so nothing to set here.
                 }
                 is ApiResult.HttpError -> {
                     _state.value = if (previous is SessionsUiState.Loaded) previous
