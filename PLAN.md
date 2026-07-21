@@ -177,7 +177,7 @@ commits.
   `JetsonConnectionManager.stop()` on `ON_STOP` (reuse the pattern from
   `LiveCountScreen`'s polling `DisposableEffect`). Build green.
 
-- [ ] Task 6: CONVERT Dashboard + LiveCount ViewModels — in
+- [x] Task 6: CONVERT Dashboard + LiveCount ViewModels — in
   `DashboardViewModel.kt` and `LiveCountViewModel.kt`: replace the
   `repo.jetsonIp.collect { _ip.value = saved; if(!loaded){loaded=true;probe();refresh()} }`
   init with `repo.activeIp.collect { _ip.value = it; refresh()/load() }`
