@@ -180,4 +180,11 @@
     <string name="video_unavailable">Video no longer available (compression in progress or cleaned up)</string>
     <string name="video_still_recording">Still recording</string>
     <string name="video_download_failed">Download failed</string>
+
+    <!-- BL-73 — settings screen -->
+    <string name="settings_title">Settings</string>
+    <string name="settings_auto_select">Auto-select Jetson IP</string>
+    <string name="settings_manual_ip">Manual Jetson IP</string>
+    <string name="settings_hotspot_ip">Hotspot candidate IP</string>
+    <string name="settings_lan_ip">LAN candidate IP</string>
 </resources>
