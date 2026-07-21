@@ -188,7 +188,7 @@ commits.
   `activeWifiNetwork`/`SyncEvent`/`identify` imports. Screens unchanged (they
   still read `vm.probeState`). Build green.
 
-- [ ] Task 7: CONVERT History + Startups + Sessions ViewModels — apply the
+- [x] Task 7: CONVERT History + Startups + Sessions ViewModels — apply the
   same activeIp + delegated-probeState conversion to `HistoryViewModel.kt`,
   `StartupsViewModel.kt`, `SessionsViewModel.kt`: seed `_ip` from
   `repo.activeIp` (re-fetch on change), delegate `probeState` to

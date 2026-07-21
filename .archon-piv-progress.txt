@@ -109,3 +109,4 @@ BL-73 Task 3: EXTEND SettingsRepository — hotspotIp/lanIp/autoSelect flows+set
 BL-73 Task 4: CREATE JetsonConnectionManager — parallel strict probe + WiFi callback + ~30s keep-alive loop + POST /api/time — 02e6df9
 BL-73 Task 5: WIRE JetsonConnectionManager to app lifecycle (DisposableEffect + LifecycleEventObserver ON_START/ON_STOP, drop TimeSyncService start) — ea42e38
 BL-73 Task 6: CONVERT Dashboard + LiveCount ViewModels — activeIp collect + delegated probeState, removed probe()/_probeState/loaded — 1a713d4
+BL-73 Task 7: CONVERT History/Startups/Sessions ViewModels — activeIp collect + delegated probeState, removed probe()/_probeState/loaded/unused imports — 8903ed5
