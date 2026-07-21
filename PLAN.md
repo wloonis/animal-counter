@@ -240,7 +240,7 @@ commits.
   `FOREGROUND_SERVICE_DATA_SYNC`, `POST_NOTIFICATIONS` `<uses-permission>`
   lines. Keep only `INTERNET` + `ACCESS_NETWORK_STATE`. Build green.
 
-- [ ] Task 13: CLEAN MainActivity — in
+- [x] Task 13: CLEAN MainActivity — in
   `android/app/src/main/java/com/animalcounter/MainActivity.kt`: remove the
   `requestPostNotificationsIfNeeded()` call + method, the
   `requestNotificationPermission` `ActivityResultLauncher` field, and the
