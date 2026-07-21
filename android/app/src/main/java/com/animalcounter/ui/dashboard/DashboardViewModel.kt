@@ -8,10 +8,10 @@ import androidx.lifecycle.viewModelScope
 import com.animalcounter.data.DEFAULT_JETSON_IP
 import com.animalcounter.data.OfflineCache
 import com.animalcounter.data.SettingsRepository
-import com.animalcounter.data.SyncEvent
 import com.animalcounter.net.ApiResult
 import com.animalcounter.net.DailyBucket
 import com.animalcounter.net.JetsonClient
+import com.animalcounter.net.JetsonConnectionManager
 import com.animalcounter.net.Summary
 import com.animalcounter.net.activeWifiNetwork
 import com.animalcounter.net.parseSummary
@@ -100,26 +100,26 @@ class DashboardViewModel(app: Application) : AndroidViewModel(app) {
     private val _state = MutableStateFlow<DashboardUiState>(DashboardUiState.Loading)
     val state: StateFlow<DashboardUiState> = _state.asStateFlow()
 
-    private val _probeState = MutableStateFlow(ProbeState.Idle)
-    val probeState: StateFlow<ProbeState> = _probeState.asStateFlow()
+    /**
+     * Reachability banner state — delegated to the app-wide
+     * [JetsonConnectionManager] (the single canonical probe owner, BL-73).
+     * Screens that read `vm.probeState` are unchanged.
+     */
+    val probeState: StateFlow<ProbeState>
+        get() = JetsonConnectionManager.probeState
 
     /** Active 7/30-day window (drives the segmented button + the fetch). */
     private val _period = MutableStateFlow(DashboardPeriod.DAYS_1)
     val period: StateFlow<DashboardPeriod> = _period.asStateFlow()
 
-    /** Whether the initial DataStore IP has been loaded (guards the first fetch). */
-    private var loaded = false
-
     init {
-        // Seed the IP from DataStore, then probe + load the default window once.
+        // Re-seed the IP + refetch whenever the manager resolves a new active
+        // Jetson IP (hotspot/LAN/manual). The first emission is the hotspot
+        // default; a second follows once the parallel probe resolves.
         viewModelScope.launch {
-            repo.jetsonIp.collect { saved ->
-                _ip.value = saved
-                if (!loaded) {
-                    loaded = true
-                    probe()
-                    load(_period.value)
-                }
+            repo.activeIp.collect { ip ->
+                _ip.value = ip
+                load(_period.value)
             }
         }
     }
@@ -136,35 +136,12 @@ class DashboardViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /**
-     * Refresh the current period — re-runs the probe + summary fetch. Used
-     * by pull-to-refresh and (optionally) a top-app-bar Refresh action.
+     * Refresh the current period — re-runs the summary fetch. Used by
+     * pull-to-refresh and (optionally) a top-app-bar Refresh action.
+     * Reachability probing is owned by [JetsonConnectionManager].
      */
     fun refresh() {
         load(_period.value)
-        if (_probeState.value != ProbeState.Probing) probe()
-    }
-
-    /**
-     * Reachability probe — `GET /api/identify` bound to the active WiFi
-     * network so it reaches the Jetson HotSpot even with mobile data (5G)
-     * as the default internet uplink. Drives [probeState] (the banner).
-     */
-    fun probe() {
-        if (_probeState.value == ProbeState.Probing) return
-        _probeState.value = ProbeState.Probing
-        viewModelScope.launch {
-            try {
-                val cm = cm()
-                val wifi = if (cm != null) activeWifiNetwork(cm) else null
-                val event = JetsonClient.identify(ip = _ip.value, network = wifi)
-                _probeState.value =
-                    if (event.outcome == SyncEvent.Outcome.Success)
-                        ProbeState.Reachable
-                    else ProbeState.OutOfRange
-            } catch (t: Throwable) {
-                _probeState.value = ProbeState.OutOfRange
-            }
-        }
     }
 
     /**
@@ -198,10 +175,8 @@ class DashboardViewModel(app: Application) : AndroidViewModel(app) {
                         } else {
                             _state.value = aggregate(period, summary)
                         }
-                        // A successful fetch implies the Jetson is reachable.
-                        if (_probeState.value != ProbeState.Probing) {
-                            _probeState.value = ProbeState.Reachable
-                        }
+                        // A successful fetch implies the Jetson is reachable;
+                        // the manager owns the banner so nothing to set here.
                     }
                     is ApiResult.HttpError -> {
                         _state.value =

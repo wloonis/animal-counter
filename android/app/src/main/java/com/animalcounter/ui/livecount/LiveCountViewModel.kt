@@ -9,6 +9,7 @@ import com.animalcounter.data.DEFAULT_JETSON_IP
 import com.animalcounter.data.SettingsRepository
 import com.animalcounter.net.ApiResult
 import com.animalcounter.net.JetsonClient
+import com.animalcounter.net.JetsonConnectionManager
 import com.animalcounter.net.LiveCount
 import com.animalcounter.net.activeWifiNetwork
 import com.animalcounter.net.ProbeState
@@ -76,25 +77,25 @@ class LiveCountViewModel(app: Application) : AndroidViewModel(app) {
     private val _state = MutableStateFlow<LiveCountUiState>(LiveCountUiState.Loading)
     val state: StateFlow<LiveCountUiState> = _state.asStateFlow()
 
-    private val _probeState = MutableStateFlow(ProbeState.Idle)
-    val probeState: StateFlow<ProbeState> = _probeState.asStateFlow()
-
-    /** Whether the initial DataStore IP has been loaded (guards the first probe). */
-    private var loaded = false
+    /**
+     * Reachability banner state — delegated to the app-wide
+     * [JetsonConnectionManager] (the single canonical probe owner, BL-73).
+     * Screens that read `vm.probeState` are unchanged.
+     */
+    val probeState: StateFlow<ProbeState>
+        get() = JetsonConnectionManager.probeState
 
     /** Active polling job — cancelled by [stopPolling] and `onCleared`. */
     private var pollJob: Job? = null
 
     init {
-        // Seed the IP from DataStore, then probe + fetch once.
+        // Re-seed the IP + refetch whenever the manager resolves a new active
+        // Jetson IP (hotspot/LAN/manual). The first emission is the hotspot
+        // default; a second follows once the parallel probe resolves.
         viewModelScope.launch {
-            repo.jetsonIp.collect { saved ->
-                _ip.value = saved
-                if (!loaded) {
-                    loaded = true
-                    probe()
-                    refresh()
-                }
+            repo.activeIp.collect { ip ->
+                _ip.value = ip
+                refresh()
             }
         }
     }
@@ -124,36 +125,13 @@ class LiveCountViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /**
-     * Manual refresh (pull-to-refresh): one-shot fetch + probe. Does not
-     * start the polling loop — the screen controls that via lifecycle.
+     * Manual refresh (pull-to-refresh): one-shot fetch. Does not start the
+     * polling loop — the screen controls that via lifecycle. Reachability
+     * probing is owned by [JetsonConnectionManager].
      */
     fun refresh() {
         viewModelScope.launch {
             fetchOnce()
-            if (_probeState.value != ProbeState.Probing) probe()
-        }
-    }
-
-    /**
-     * Reachability probe — `GET /api/identify` bound to the active WiFi
-     * network so it reaches the Jetson HotSpot even with mobile data (5G)
-     * as the default internet uplink. Drives [probeState] (the banner).
-     */
-    fun probe() {
-        if (_probeState.value == ProbeState.Probing) return
-        _probeState.value = ProbeState.Probing
-        viewModelScope.launch {
-            try {
-                val cm = cm()
-                val wifi = if (cm != null) activeWifiNetwork(cm) else null
-                val event = JetsonClient.identify(ip = _ip.value, network = wifi)
-                _probeState.value =
-                    if (event.outcome == com.animalcounter.data.SyncEvent.Outcome.Success)
-                        ProbeState.Reachable
-                    else ProbeState.OutOfRange
-            } catch (t: Throwable) {
-                _probeState.value = ProbeState.OutOfRange
-            }
         }
     }
 
@@ -173,10 +151,8 @@ class LiveCountViewModel(app: Application) : AndroidViewModel(app) {
             when (val result = JetsonClient.getCount(ip = _ip.value, network = wifi)) {
                 is ApiResult.Success -> {
                     _state.value = LiveCountUiState.Loaded(result.data)
-                    // A successful count implies the Jetson is reachable.
-                    if (_probeState.value != ProbeState.Probing) {
-                        _probeState.value = ProbeState.Reachable
-                    }
+                    // A successful count implies the Jetson is reachable; the
+                    // manager owns the banner so nothing to set here.
                 }
                 is ApiResult.HttpError -> {
                     _state.value = LiveCountUiState.Error("HTTP ${result.code}")
