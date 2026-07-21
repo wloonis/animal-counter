@@ -247,7 +247,7 @@ commits.
   `Manifest`/`Build`/`ActivityResultContracts` imports that become unused.
   Build green.
 
-- [ ] Task 14: STRINGS — in `android/app/src/main/res/values/strings.xml` and
+- [x] Task 14: STRINGS — in `android/app/src/main/res/values/strings.xml` and
   `values-fr/strings.xml`: add `tab_settings`, `settings_title`,
   `settings_auto_select`, `settings_manual_ip`, `settings_hotspot_ip`,
   `settings_lan_ip` (English + French). Grep the codebase for usages before
