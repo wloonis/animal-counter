@@ -152,7 +152,7 @@ commits.
   + `suspend fun setActiveIp(ip: String)`. Keep `DEFAULT_JETSON_IP` constant for
   the manual default. Build green.
 
-- [ ] Task 4: CREATE `JetsonConnectionManager` — create
+- [x] Task 4: CREATE `JetsonConnectionManager` — create
   `android/app/src/main/java/com/animalcounter/net/JetsonConnectionManager.kt`
   as a singleton `object`. It exposes `probeState: StateFlow<ProbeState>` and
   `activeIp` (delegated to `SettingsRepository`). Methods `start(context)` /
