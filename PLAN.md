@@ -232,7 +232,7 @@ commits.
   `service/`/`receiver/`/`ui/timesync/` package dirs if empty). Grep for any
   remaining references first; fix them. Build green.
 
-- [ ] Task 12: CLEAN manifest — in
+- [x] Task 12: CLEAN manifest — in
   `android/app/src/main/AndroidManifest.xml`: remove the `<service
   android:name=".service.TimeSyncService" .../>` element, the `<receiver
   android:name=".receiver.BootReceiver" .../>` element, and the

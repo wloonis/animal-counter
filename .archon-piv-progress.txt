@@ -115,3 +115,4 @@ BL-73 Task 9: CREATE Settings screen (SettingsViewModel + SettingsScreen, Scaffo
 
 BL-73 Task 10: WIRE Settings tab + drop Synchro route (drop TIME_SYNC navitem+route+TimeSyncScreen/Schedule imports, add SETTINGS dest+navitem+SettingsScreen, add tab_settings EN/FR) — a5ef046
 BL-73 Task 11: DELETE dead files (TimeSyncService/BootReceiver/TimeSyncScreen/TimeSyncViewModel + empty dirs) + stale KDoc refs fixed — a04cef7
+BL-73 Task 12: CLEAN manifest — dropped TimeSyncService/BootReceiver + RECEIVE_BOOT_COMPLETED/FOREGROUND_SERVICE/FOREGROUND_SERVICE_DATA_SYNC/POST_NOTIFICATIONS perms; only INTERNET+ACCESS_NETWORK_STATE remain; assembleDebug BUILD SUCCESSFUL — fad2996
