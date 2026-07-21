@@ -141,7 +141,7 @@ commits.
   for `isValidIdentifyBody` (valid, wrong service, non-JSON, missing service).
   Run `./gradlew :app:testDebugUnitTest`. Build green.
 
-- [ ] Task 3: EXTEND `SettingsRepository` — in
+- [x] Task 3: EXTEND `SettingsRepository` — in
   `android/app/src/main/java/com/animalcounter/data/SettingsRepository.kt`, add
   DataStore-backed flows + setters: `hotspotIp` (key `jetson_ip_hotspot`,
   default `192.168.100.1`), `lanIp` (key `jetson_ip_lan`, default
