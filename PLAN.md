@@ -224,7 +224,7 @@ commits.
   `Icons.Filled.Schedule` import. Build green (`TimeSyncScreen.kt` remains on
   disk, unreferenced — it compiles; deleted next task).
 
-- [ ] Task 11: DELETE dead files — delete
+- [x] Task 11: DELETE dead files — delete
   `android/app/src/main/java/com/animalcounter/service/TimeSyncService.kt`,
   `receiver/BootReceiver.kt`,
   `ui/timesync/TimeSyncScreen.kt`, and
