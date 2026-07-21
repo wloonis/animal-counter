@@ -258,7 +258,7 @@ commits.
   by banners; keep `jetson_ip_label` if reused by Settings, else replace with
   the new settings labels). Build green.
 
-- [ ] Task 15: FINAL build + APK — run the full Gradle build
+- [x] Task 15: FINAL build + APK — run the full Gradle build
   (`./gradlew :app:assembleDebug --no-daemon --console=plain`) and the unit
   tests (`./gradlew :app:testDebugUnitTest`). Confirm
   `android/app/build/outputs/apk/debug/app-debug.apk` is produced. Optionally
