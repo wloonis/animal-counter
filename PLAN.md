@@ -1,63 +1,305 @@
-# Plan: BL-29 — Refactor main.py into testable modules
+# Plan: BL-73 — Auto-select the Jetson companion IP (Android/Kotlin)
 
 ## Summary
 
-`app/src/main.py` (840 lines) mixes inference thread, display/recording logic, validation output, CLI parsing, signal handling, and orchestration in one file. This refactor splits it into 5 leaf modules (`state.py`, `infer_thread.py`, `display_thread.py`, `validate.py`, `cli.py`) and reduces `main.py` to a thin entry point that imports and orchestrates. **Pure refactor — zero behavior change.** Counting/decision logic (`counting.py`), tracker/guard params, and recording behavior (BL-62/68/69/70/71) are preserved exactly. No test files modified.
+Make the Android app auto-select the Jetson companion IP by probing two
+candidates (hotspot `192.168.100.1` + LAN `192.168.0.180`) in parallel with
+strict `/api/identify` service-name validation, expose the resolved IP as a
+shared `activeIp` consumed by all tabs, re-scope clock sync to the app
+lifecycle (foreground only) via a ~30s keep-alive re-probe loop, add a Settings
+screen for manual override + auto-select toggle, and remove the Synchro tab +
+the foreground `TimeSyncService` + `BootReceiver`. Kotlin-only; no `app/`
+(Jetson) changes, so the `jetson-validate` node auto-skips.
 
 ## In Scope
-- Create `app/src/state.py` — module-level singletons: `shared_state` (SharedState instance + the draw_* field setup currently at main.py:31-41), `logger` + `logging.basicConfig`, `_IOU_METRICS` dict.
-- Create `app/src/infer_thread.py` — `class InferThread` (the real class at main.py:124+). Drop the dead empty `class InferThread` stub at main.py:111-123.
-- Create `app/src/display_thread.py` — `class DisplayThread` incl. `__init__`, `_finalize_recording`, `mouse_click`, `has_pig_high_score`, `run()` (the recording/learning/auto-stop/BL-62 logic). Reads `shared_state`/`settings`/`logger` via import from `state`/`settings`, NOT via constructor params.
-- Create `app/src/validate.py` — `write_result_json()` (main.py:707).
-- Create `app/src/cli.py` — `cli.main()` containing: `handle_sigterm`, `signal.signal` registration, argparse setup (3 args `-m`/`-f`/`-d`), the serve loop (wait `stop_event` + `stop()` + poweroff `nsenter systemctl poweroff` BL-62), the validate branch (join infer + `frame_queue.join()` + `stop_event.set` + join display + `write_result_json`), and the error handler (write error result JSON).
-- Rewrite `app/src/main.py` as thin entry point: imports from new modules, `start()` (main.py:620 — instantiates OCSORTTracker/Tracking/Counting/Rendering/InferThread/DisplayThread/HistoryWriter+Thread, unchanged params), `stop()` (main.py:67 — finalize recording + history end_session + joins), **re-exports** (`from display_thread import DisplayThread`; expose `shared_state`, `settings`, `logger` as module attributes for the test), and `if __name__ == "__main__": cli.main()`.
+
+- Strict `JetsonClient.identify()` validation: HTTP 200 + valid JSON +
+  `json.service == "jetson-companion"` (exact). **No version check.** Reject
+  otherwise. Fix the stale docstring (it says `"animal-counter-companion"`;
+  the real companion returns `{"service":"jetson-companion","version":"4"}`).
+- `SettingsRepository`: two configurable candidate IPs (`jetson_ip_hotspot`
+  default `192.168.100.1`, `jetson_ip_lan` default `192.168.0.180`), an
+  `auto_select` Boolean (default `true`), a manual-override IP, and an
+  `activeIp: StateFlow<String>` resolved by a parallel WiFi-bound probe.
+- App-lifecycle-scoped sync: `POST /api/time` runs ONLY while the app is
+  open (foreground/process alive) — on app open, on WiFi join while the app
+  is open (`NetworkCallback` registered on the app process), and via the
+  keep-alive loop. NOT in the background, NOT at boot. Everything stops when
+  the app is closed.
+- Keep-alive loop (app-scoped, ~30s on WiFi): re-probe active IP; on failure
+  re-run the parallel selection probe; on (re)found Jetson → `POST /api/time`
+  + clear banner; on none → out-of-range banner. Paused off-WiFi. **This loop,
+  the WiFi `NetworkCallback`, and every `POST /api/time` run ONLY while the
+  application is open (foreground/process alive) — they are fully stopped
+  (`stop()` cancels the coroutine loop + unregisters the callback) the moment
+  the app is closed/backgrounded, and NEVER run at boot or in the background.**
+- Remove `TimeSyncService` (foreground service + notification) + `BootReceiver`
+  (+ `RECEIVE_BOOT_COMPLETED`). Drop `FOREGROUND_SERVICE`,
+  `FOREGROUND_SERVICE_DATA_SYNC`, `POST_NOTIFICATIONS`, `RECEIVE_BOOT_COMPLETED`.
+  Keep only `INTERNET` + `ACCESS_NETWORK_STATE`.
+- Remove the Synchro tab (`TIME_SYNC` nav item + route + `TimeSyncScreen`).
+  Surface "Jetson connecté / hors de portée" via the existing reachability
+  banner (Dashboard + Live count). Relocate the `ProbeState` enum (currently in
+  `TimeSyncViewModel`, imported by 6 ViewModels + 2 screens).
+- New Settings bottom-nav tab (replacing Synchro): auto-select toggle + manual
+  override IP field (typing flips `auto_select=false`; toggle re-enables auto)
+  + the two candidate IPs as editable fields.
+- `MainActivity`: drop the `POST_NOTIFICATIONS` runtime request + the
+  `startForegroundService` LaunchedEffect (replaced by manager start/stop).
+- Strings: prune now-unused `tab_time_sync` / notification / sync-log strings;
+  add Settings labels (both `values/` and `values-fr/`).
+- Unit-test the strict identify validation (extract a pure validator, no HTTP).
 
 ## Out of Scope
-- `app/src/core/counting.py` and any counting/decision logic — untouched.
-- Tracker/guard params (`TRACKER_*`, `COUNTING_*`) — moved verbatim within `start()`, not modified.
-- `--full` / multi-video validation — not (validation standard, single reference video).
-- Any test file — **no changes**. `tests/test_finalize_recording_filename.py` keeps `import main as main_mod` + `main_mod.DisplayThread`/`main_mod.shared_state`/`main_mod.settings` working via re-exports.
-- `app/entrypoint.sh`, `k3s/`, `scripts/`, `validation/` — untouched.
-- **No French comments** — any existing French comments in `main.py` (e.g. BL-62 serve-mode comment, poweroff comment) are translated to English when copied into the new modules. Logic unchanged; only comment language changes.
+
+- Any changes under `app/` (Jetson Python). `jetson-validate` auto-detects an
+  empty `git diff --name-only main...HEAD -- app/` and signals VALIDATED.
+- SSID-based selection or `ACCESS_FINE_LOCATION`.
+- Version validation (explicitly dropped per user).
+- Background / boot time sync.
+- Changing the read-only history/count ViewModels' fetch/state-machine logic
+  beyond swapping the IP source and the probe/banner source.
 
 ## Architecture Decisions
 
-- **Singletons in a leaf `state.py`** — `shared_state`, `logger` (+ `logging.basicConfig`), `_IOU_METRICS` live in one leaf module that every split module imports. This breaks the circular dependency that would arise if modules imported from `main.py` (main → display_thread → main). `settings` stays imported from the existing `settings` module.
-- **No constructor injection of `shared_state`** — `_finalize_recording` and `run()` read `shared_state`/`settings` as module globals today. Passing them as constructor params would change every call site and risk behavior drift in a "pure refactor." Keep the global pattern via `from state import shared_state` and `from settings import settings`.
-- **Re-exports from `main.py`** — `main.py` does `from display_thread import DisplayThread` and exposes `shared_state`/`settings`/`logger` so `tests/test_finalize_recording_filename.py`'s `import main as main_mod; main_mod.DisplayThread; main_mod.shared_state; main_mod.settings` keeps working unchanged. No test file touched.
-- **`if __name__` stays in `main.py`** — `entrypoint.sh` calls `python3 src/main.py`, so `main.py` must remain the executable entry point. It delegates to `cli.main()`; the `if __name__` guard stays in `main.py`, not in `cli.py`.
-- **`start()` and `stop()` stay in `main.py`** — they are the orchestration glue (instantiate threads, wire history, join on shutdown). They import `InferThread`/`DisplayThread`/`HistoryWriter` from the new modules and read `shared_state`/`settings` from `state`/`settings`.
-- **Drop the dead `InferThread` stub** — main.py:111-123 is an empty `class InferThread` with only a docstring; the real class is at 124+. Removing the stub is safe (it's shadowed at import time) and reduces confusion.
+- **ProbeState relocation**: move the `ProbeState` enum out of `TimeSyncViewModel`
+  into `net/ProbeState.kt` (shared, no Android deps) so it survives the
+  TimeSyncScreen deletion. All 6 history/count ViewModels + Dashboard/LiveCount
+  screens import it from there.
+- **Shared connection state**: a new singleton `JetsonConnectionManager`
+  (`net/JetsonConnectionManager.kt`) owns the WiFi `NetworkCallback`, the ~30s
+  keep-alive coroutine loop, the parallel selection probe, and `POST /api/time`.
+  It exposes `probeState: StateFlow<ProbeState>` (the app-wide banner) and
+  writes the resolved IP into `SettingsRepository.activeIp` via
+  `setActiveIp(...)`. This replaces the per-ViewModel `probe()` methods and the
+  foreground service. Rationale: one canonical reachability state, no
+  background service, no new permissions.
+- **activeIp ownership**: `SettingsRepository` owns `_activeIp:
+  MutableStateFlow<String>` (default = hotspot default) and exposes
+  `activeIp: StateFlow<String>`; `JetsonConnectionManager` is its only writer.
+  ViewModels read `repo.activeIp` (drop the old `repo.jetsonIp` seeding).
+  This honors the decision that the repository exposes `activeIp`.
+- **ViewModel probeState delegation**: each ViewModel keeps its
+  `probeState: StateFlow<ProbeState>` property but now returns
+  `JetsonConnectionManager.probeState` directly (one-line delegate), so screens
+  that read `vm.probeState` need no changes. The ViewModels' `probe()` methods
+  and init-probe calls are removed.
+- **Re-fetch on activeIp change**: ViewModels observe `repo.activeIp` and
+  re-fetch when it changes (the manager resolves it shortly after app open).
+  Initial activeIp is the hotspot default; a fetch may run with the default
+  before resolution then re-fetch on the resolved IP — acceptable, since
+  fetch failures already degrade gracefully.
+- **App lifecycle scoping without a new dependency**: tie
+  `JetsonConnectionManager.start/stop` to the `MainActivity` lifecycle via a
+  `DisposableEffect` + `LifecycleEventObserver` (`ON_START`→start,
+  `ON_STOP`→stop) in `AnimalCounterApp`, reusing the existing pattern from
+  `LiveCountScreen`. No `lifecycle-process`/`ProcessLifecycleOwner` dependency
+  is added (activity ON_STOP ≈ app backgrounded).
+- **Strict identify, testable**: extract `internal fun isValidIdentifyBody(body:
+  String): Boolean` (parses JSON, checks `service == "jetson-companion"` exact)
+  so the unit test can validate it without HTTP. `identify()` returns
+  `Outcome.Success` only when HTTP 200 AND `isValidIdentifyBody(body)`.
+- **Settings screen placement (implementer's call → decided)**: a new
+  bottom-nav **Settings tab replacing Synchro** (5 tabs: Dashboard / Live /
+  History / Startups / Settings). Rationale: keeps IP editing one tap away and
+  preserves the 5-tab layout users already know.
+- **Candidate-IP exposure (implementer's call → decided)**: expose both
+  candidate IPs (hotspot/lan) as editable fields in Settings (they are
+  "configurable" per decision 3) alongside the auto-select toggle and the
+  single manual-override IP field. Typing the manual IP flips
+  `auto_select=false`; toggling re-enables auto.
+- **Per-task compile check** is the Gradle build (NOT `python3 -m py_compile`):
+  `cd android && export JAVA_HOME=$HOME/.local/jdk/jdk-17.0.19+10 && export
+  ANDROID_HOME=$HOME/Android/Sdk && ./gradlew :app:assembleDebug --no-daemon
+  --console=plain`. Commit per task. Toolchain already installed (AGENTS.md §9).
 
 ## Tasks
 
-- [x] Task 1: CREATE `app/src/state.py` — Move the module-level singletons out of main.py: the `shared_state = SharedState()` instance + its 6 draw_* field assignments (main.py:31-41), `logging.basicConfig(...)` + `logger = logging.getLogger(__name__)` (main.py:28-29), and `_IOU_METRICS` (main.py:38). Expose `shared_state`, `logger`, `_IOU_METRICS` as module attributes. Keep `from settings import Settings` + `settings = Settings()` here so `state.settings` is available (re-exported by main.py for the test).
-- [x] Task 2: CREATE `app/src/infer_thread.py` — Move the real `class InferThread(threading.Thread)` (main.py:124 through line 224) verbatim. Imports: `from state import shared_state, logger`, `from settings import settings`, plus the runtime deps it already uses (`cv2`, `time`, `numpy`, `Queue`, `Inference`, `FrameSource`, `TimerFps`, `supervision`). Do NOT include the dead stub class at 111-123.
-- [x] Task 3: CREATE `app/src/display_thread.py` — Move `class DisplayThread(threading.Thread)` (main.py:225 through line 619) verbatim: `__init__`, `_finalize_recording`, `mouse_click`, `has_pig_high_score`, `run()` (the BL-62 stop detection, BL-69/70/71 recording start/finalize, learning toggle, auto-stop). Imports: `from state import shared_state, logger`, `from settings import settings`, plus `cv2`, `time`, `os`, `logging`, `numpy`, `Tracking`, `Counting`, `Rendering`, `TimerFps`, `supervision` as needed. No logic changes — copy the method bodies byte-for-byte.
-- [x] Task 4: CREATE `app/src/validate.py` — Move `write_result_json(result_path, video_path, shared_state, start_time, error=None)` (main.py:707-728) verbatim. Imports: `time`, `datetime`, `os`, `json`, `logging`, and `from state import logger, shared_state` (note: `shared_state` is passed as a function arg already, but keep the import for `logger`).
-- [x] Task 5: CREATE `app/src/cli.py` — Define `cli.main()` containing the body of the current `if __name__ == "__main__"` block (main.py:731-840): `handle_sigterm` (closure), `signal.signal(SIGTERM/SIGINT)`, argparse (`-m`/`-f`/`-d`), `start_time`, call `start(input_source, video)`, the `RESULT_JSON_PATH` branch (validate: join infer + `frame_queue.join()` + stop + join display + `write_result_json`) vs serve branch (wait loop + `stop()` + poweroff `subprocess.run(["nsenter", ...])`), and the `except Exception` error-JSON path. Imports: `from state import shared_state, logger, settings`, `from main import start, stop`, `from validate import write_result_json`, plus `sys`, `os`, `time`, `signal`, `subprocess`, `cv2`, `argparse`. Note the `main → cli → main` import: `cli.main` calls `start`/`stop` which live in `main.py`; import them inside `cli.main()` (function-local import) to avoid the circular import at module load time.
-- [x] Task 6: REWRITE `app/src/main.py` as thin entry point — Imports: `from state import shared_state, settings, logger, _IOU_METRICS`; `from infer_thread import InferThread`; `from display_thread import DisplayThread`; `import cli`. Keep `stop()` (main.py:67-109) and `start()` (main.py:620-705) verbatim, replacing the class instantiations with imports (e.g. `shared_state.infer_thread = InferThread(...)` still references the imported class). Keep the `HistoryWriter`/`HistoryThread` import + wiring verbatim. Add re-export block: `from display_thread import DisplayThread` (already imported); ensure `shared_state`, `settings`, `logger` are module-level names (from the state import). End with `if __name__ == "__main__": cli.main()`. Remove the moved `__main__` block, the moved classes, and the moved `write_result_json`. Final file should be ~120-150 lines.
-- [x] Task 7: TRANSLATE French comments → English — Any French comments in the moved code (e.g. the BL-62 serve-mode block `# BL-62: Arrêt propre...`, the poweroff comment `# Éteint le Jetson proprement...`, and any other `# d'...`/`# ne pas...` comments throughout `run()`, `_finalize_recording`, and the CLI loop) are translated to English during the copy. Logic unchanged — only the comment text becomes English. This applies to all 5 new modules and the rewritten `main.py`.
-- [x] Task 8: VERIFY re-exports — Confirm `main.py` exposes `DisplayThread`, `shared_state`, `settings`, `logger` as importable attributes so `tests/test_finalize_recording_filename.py` (`import main as main_mod; main_mod.DisplayThread; main_mod.shared_state; main_mod.settings; main_mod.settings.OUTPUT_VIDEO_PATH`) works unchanged.
+Tasks are ordered so the Gradle build is green after every commit. The
+implement node does ONE task per fresh session, runs the Gradle build, and
+commits.
+
+- [x] Task 1: RELOCATE `ProbeState` — create
+  `android/app/src/main/java/com/animalcounter/net/ProbeState.kt` containing the
+  `enum class ProbeState { Idle, Probing, Reachable, OutOfRange }`. Remove the
+  enum from `ui/timesync/TimeSyncViewModel.kt`. Update the `import` in all
+  consumers to `com.animalcounter.net.ProbeState`: `DashboardViewModel`,
+  `LiveCountViewModel`, `HistoryViewModel`, `StartupsViewModel`,
+  `SessionsViewModel`, `SessionDetailViewModel`, `DashboardScreen`,
+  `LiveCountScreen`, and `TimeSyncViewModel`. Build green.
+
+- [ ] Task 2: STRICT `identify()` — in
+  `android/app/src/main/java/com/animalcounter/net/JetsonClient.kt`, extract
+  `internal fun isValidIdentifyBody(body: String): Boolean` (parses JSON;
+  returns true only when `json.optString("service") == "jetson-companion"`).
+  Change `identify()` so the `code == 200` branch returns
+  `SyncEvent.Outcome.Success` only when `isValidIdentifyBody(body)` is true,
+  else a `Network`/failure outcome with the raw body. Fix the class docstring:
+  the companion returns `{"service":"jetson-companion","version":"<v>"}` (not
+  `animal-counter-companion`). Add unit tests in
+  `android/app/src/test/java/com/animalcounter/net/JetsonClientParsingTest.kt`
+  for `isValidIdentifyBody` (valid, wrong service, non-JSON, missing service).
+  Run `./gradlew :app:testDebugUnitTest`. Build green.
+
+- [ ] Task 3: EXTEND `SettingsRepository` — in
+  `android/app/src/main/java/com/animalcounter/data/SettingsRepository.kt`, add
+  DataStore-backed flows + setters: `hotspotIp` (key `jetson_ip_hotspot`,
+  default `192.168.100.1`), `lanIp` (key `jetson_ip_lan`, default
+  `192.168.0.180`), `autoSelect` (key `auto_select`, Boolean, default `true`),
+  and keep `jetsonIp`/`setJetsonIp` as the manual-override IP (key `jetson_ip`).
+  Add `booleanPreferencesKey` import. Add `_activeIp:
+  MutableStateFlow<String>(DEFAULT_HOTSPOT_IP)` + `activeIp: StateFlow<String>`
+  + `suspend fun setActiveIp(ip: String)`. Keep `DEFAULT_JETSON_IP` constant for
+  the manual default. Build green.
+
+- [ ] Task 4: CREATE `JetsonConnectionManager` — create
+  `android/app/src/main/java/com/animalcounter/net/JetsonConnectionManager.kt`
+  as a singleton `object`. It exposes `probeState: StateFlow<ProbeState>` and
+  `activeIp` (delegated to `SettingsRepository`). Methods `start(context)` /
+  `stop()`: register a `TRANSPORT_WIFI` `NetworkCallback` (onAvailable →
+  rescan + POST time; onLost → out-of-range banner, pause keep-alive);
+  `rescan()` runs a PARALLEL probe of both candidate IPs (or the manual IP when
+  `autoSelect=false`) bound via `activeWifiNetwork(cm)`, ~1500ms timeout,
+  `JetsonClient.identify(ip, network=...)`, picks the first strict-valid hit →
+  `repo.setActiveIp(ip)` + `probeState=Reachable` + `POST /api/time`; none →
+  `probeState=OutOfRange`. A ~30s keep-alive coroutine loop (only while on
+  WiFi) re-probes the active IP; on failure calls `rescan()`; on found → POST
+  time + Reachable; on none → OutOfRange. Uses `SettingsRepository(appContext)`
+  for settings, `JetsonClient.postTime`/`identify`, `nowIsoForCompanion()`,
+  and logs to `SyncLog`. Not wired to the lifecycle yet. Build green.
+
+- [ ] Task 5: WIRE manager to app lifecycle — in
+  `android/app/src/main/java/com/animalcounter/ui/nav/AnimalCounterApp.kt`,
+  remove the `LaunchedEffect(Unit) { ContextCompat.startForegroundService(...) }`
+  block and the `TimeSyncService`/`Intent`/`ContextCompat` imports. Add a
+  `DisposableEffect(lifecycleOwner)` with a `LifecycleEventObserver` that calls
+  `JetsonConnectionManager.start(context)` on `ON_START` and
+  `JetsonConnectionManager.stop()` on `ON_STOP` (reuse the pattern from
+  `LiveCountScreen`'s polling `DisposableEffect`). Build green.
+
+- [ ] Task 6: CONVERT Dashboard + LiveCount ViewModels — in
+  `DashboardViewModel.kt` and `LiveCountViewModel.kt`: replace the
+  `repo.jetsonIp.collect { _ip.value = saved; if(!loaded){loaded=true;probe();refresh()} }`
+  init with `repo.activeIp.collect { _ip.value = it; refresh()/load() }`
+  (re-fetch on each activeIp change). Replace `_probeState`/`probeState` with a
+  delegate to `JetsonConnectionManager.probeState` (`val probeState =
+  JetsonConnectionManager.probeState`). Remove the `probe()` method, the
+  `_probeState` MutableStateFlow, the `loaded` flag, and the now-unused
+  `activeWifiNetwork`/`SyncEvent`/`identify` imports. Screens unchanged (they
+  still read `vm.probeState`). Build green.
+
+- [ ] Task 7: CONVERT History + Startups + Sessions ViewModels — apply the
+  same activeIp + delegated-probeState conversion to `HistoryViewModel.kt`,
+  `StartupsViewModel.kt`, `SessionsViewModel.kt`: seed `_ip` from
+  `repo.activeIp` (re-fetch on change), delegate `probeState` to
+  `JetsonConnectionManager.probeState`, remove `probe()` + `_probeState` +
+  `loaded` flag + unused imports. Build green.
+
+- [ ] Task 8: CONVERT SessionDetail + VideoDetail ViewModels — in
+  `SessionDetailViewModel.kt`: same activeIp + delegated-probeState
+  conversion (remove `probe()`, delegate `probeState`). In
+  `VideoDetailViewModel.kt`: it has no `probeState`/`probe()`; replace
+  `repo.jetsonIp.first()` (in `loadDetail`) and the `repo.jetsonIp.collect`
+  init with `repo.activeIp` (collect into `_ip`; `loadDetail` uses
+  `repo.activeIp.value`). Build green.
+
+- [ ] Task 9: CREATE Settings screen — create
+  `android/app/src/main/java/com/animalcounter/ui/settings/SettingsScreen.kt`
+  and `SettingsViewModel.kt`. The screen renders: an auto-select toggle
+  (`autoSelect` from repo), a manual-override IP `OutlinedTextField` (enabled
+  when `autoSelect=false`; typing flips `autoSelect=false` via
+  `setAutoSelect(false)` + `setJetsonIp(value)`), and two candidate IP fields
+  (`hotspotIp`, `lanIp`) persisted via `setHotspotIp`/`setLanIp`. Toggling
+  auto-select back to true re-enables auto and triggers
+  `JetsonConnectionManager.rescan()`; editing a candidate IP also triggers
+  `rescan()`. Use existing Material 3 idioms (`OutlinedTextField`, `Switch`,
+  `Scaffold` + `TopAppBar`) and `stringResource` for all labels. Build green.
+
+- [ ] Task 10: WIRE Settings tab + drop Synchro route — in
+  `AnimalCounterApp.kt`: remove the `TIME_SYNC` `NavigationBarItem` and the
+  `composable(Destinations.TIME_SYNC) { TimeSyncScreen() }` route + the
+  `TimeSyncScreen` import. Add `SETTINGS = "settings"` to `Destinations`, a
+  `NavigationBarItem` (Settings, `Icons.Filled.Settings`) and
+  `composable(Destinations.SETTINGS) { SettingsScreen() }`. Remove the
+  `Icons.Filled.Schedule` import. Build green (`TimeSyncScreen.kt` remains on
+  disk, unreferenced — it compiles; deleted next task).
+
+- [ ] Task 11: DELETE dead files — delete
+  `android/app/src/main/java/com/animalcounter/service/TimeSyncService.kt`,
+  `receiver/BootReceiver.kt`,
+  `ui/timesync/TimeSyncScreen.kt`, and
+  `ui/timesync/TimeSyncViewModel.kt` (and the now-empty
+  `service/`/`receiver/`/`ui/timesync/` package dirs if empty). Grep for any
+  remaining references first; fix them. Build green.
+
+- [ ] Task 12: CLEAN manifest — in
+  `android/app/src/main/AndroidManifest.xml`: remove the `<service
+  android:name=".service.TimeSyncService" .../>` element, the `<receiver
+  android:name=".receiver.BootReceiver" .../>` element, and the
+  `RECEIVE_BOOT_COMPLETED`, `FOREGROUND_SERVICE`,
+  `FOREGROUND_SERVICE_DATA_SYNC`, `POST_NOTIFICATIONS` `<uses-permission>`
+  lines. Keep only `INTERNET` + `ACCESS_NETWORK_STATE`. Build green.
+
+- [ ] Task 13: CLEAN MainActivity — in
+  `android/app/src/main/java/com/animalcounter/MainActivity.kt`: remove the
+  `requestPostNotificationsIfNeeded()` call + method, the
+  `requestNotificationPermission` `ActivityResultLauncher` field, and the
+  `Manifest`/`Build`/`ActivityResultContracts` imports that become unused.
+  Build green.
+
+- [ ] Task 14: STRINGS — in `android/app/src/main/res/values/strings.xml` and
+  `values-fr/strings.xml`: add `tab_settings`, `settings_title`,
+  `settings_auto_select`, `settings_manual_ip`, `settings_hotspot_ip`,
+  `settings_lan_ip` (English + French). Grep the codebase for usages before
+  removing; prune now-unused strings: `tab_time_sync`,
+  `notification_channel_*`, `foreground_notification_*`, `time_sync_placeholder`,
+  `sync_now`, `refresh`, `log_empty`, `type_probe`, `type_sync`, `outcome_*`
+  (keep `jetson_connected`/`jetson_out_of_range`/`jetson_checking` — still used
+  by banners; keep `jetson_ip_label` if reused by Settings, else replace with
+  the new settings labels). Build green.
+
+- [ ] Task 15: FINAL build + APK — run the full Gradle build
+  (`./gradlew :app:assembleDebug --no-daemon --console=plain`) and the unit
+  tests (`./gradlew :app:testDebugUnitTest`). Confirm
+  `android/app/build/outputs/apk/debug/app-debug.apk` is produced. Optionally
+  copy it to the Desktop as `animal-counter-bl73-debug.apk` per the AGENTS.md §9
+  convention (do NOT commit the APK or `local.properties`).
 
 ## Validation
 
-**Static checks (CI / no GPU required):**
-- `python3 -m py_compile app/src/state.py app/src/infer_thread.py app/src/display_thread.py app/src/validate.py app/src/cli.py app/src/main.py` — syntax check all new/changed files.
-- Run `tests/test_finalize_recording_filename.py` — must pass unchanged (it stubs heavy deps and imports `main as main_mod`).
-- Run `tests/test_counting.py`, `tests/test_counting_invariance.py`, `tests/test_tracking.py`, `tests/test_history_writer.py` — must pass unchanged (they don't import main.py, confirming no collateral breakage).
-- `grep -n "class InferThread" app/src/main.py app/src/infer_thread.py` — confirm the dead stub is gone and the real class lives only in `infer_thread.py`.
-- `wc -l app/src/main.py` — confirm it dropped from ~840 to ~120-150 lines.
-- `grep -rn '# .*[éèêàùç]' app/src/state.py app/src/infer_thread.py app/src/display_thread.py app/src/validate.py app/src/cli.py app/src/main.py` — confirm no French comments remain in the new/changed files.
-
-**Standard validation with reference video (on Jetson):**
-- Run the standard validation pipeline exactly as `entrypoint.sh validate` does, with `RESULT_JSON_PATH` set, against the reference video:
-  `VALIDATE_VIDEO=./video/template-validation-9.mp4 RESULT_JSON_PATH=./result.json python3 src/main.py --input=FILE --file=$VALIDATE_VIDEO --drawtracking=True`
-- Confirm the process completes, writes `result.json`, and the `count` matches the expected count for the reference video (the pre-refactor baseline). This proves the split preserved behavior end-to-end through the full serve/validate code path (argparse → start() → InferThread → DisplayThread.run/counting → _finalize_recording → write_result_json).
-- Re-run the same validation command on a second reference video if available to confirm determinism.
+- Per-task: `cd android && export JAVA_HOME=$HOME/.local/jdk/jdk-17.0.19+10
+  && export ANDROID_HOME=$HOME/Android/Sdk && ./gradlew :app:assembleDebug
+  --no-daemon --console=plain` (must succeed after every task commit).
+- Unit tests: `./gradlew :app:testDebugUnitTest` (Task 2 adds
+  `isValidIdentifyBody` cases; existing parsing tests must still pass).
+- No `app/` diff: `git diff --name-only main...HEAD -- app/` is empty →
+  `jetson-validate` auto-signals VALIDATED (no `scripts/validate_on_jetson.sh`
+  run).
+- Manual/functional (post-build, on-phone): with the phone on the Jetson
+  hotspot, the Dashboard/Live reachability banner shows "Jetson connecté" and
+  data loads without manually setting an IP; switching to the LAN WiFi
+  re-selects `192.168.0.180` within ~30s; leaving WiFi shows "hors de portée";
+  the Settings tab lets the operator toggle auto-select off and type a manual
+  IP; the Synchro tab is gone; no foreground-service notification appears.
 
 ## Risks
-- **Circular import `main ↔ cli`** — `cli.main()` calls `start()`/`stop()` from `main.py`, and `main.py` imports `cli`. Mitigation: `main.py` imports `cli` at module level (fine), but `cli.py` imports `start`/`stop` **inside `cli.main()`** (function-local), so loading `main.py` never triggers loading `cli.py`'s `start`/`stop` references until `cli.main()` actually runs. Alternatively, move `start`/`stop` into a separate `orchestration.py` leaf — but the user's intent explicitly keeps `start()`/`stop()` in `main.py`, so use the function-local import.
-- **`shared_state` identity** — every module must import the *same* singleton instance from `state.py`, not a fresh one. Since `state.py` is a leaf with no back-imports, all `from state import shared_state` bind to the same object. Verify with a quick identity check in validation.
-- **Test stub assumptions** — `test_finalize_recording_filename.py` stubs `sys.modules` for `pycuda`/`tensorrt`/`torch`/`trackers`/`supervision`/`core.inference` before `import main as main_mod`. After the split, `main.py` still triggers loading `display_thread` (which imports those stubbed modules transitively), so the stubs must still cover them. Since the classes are imported into `main.py`, the import chain is preserved. Mitigation: run the test as-is and confirm it still passes.
-- **Behavior drift in `run()`** — the DisplayThread.run() body (main.py:363-619, ~250 lines) is the most complex piece. Risk: accidental edit during copy. Mitigation: copy byte-for-byte, only changing the `shared_state`/`settings`/`logger` references from "module global in main.py" to "imported from state/settings" — which is a no-op semantically since they're the same objects.
+
+- **Parallel-probe timing vs. first fetch**: ViewModels may fetch once with the
+  default hotspot IP before the manager resolves `activeIp`, then re-fetch on
+  the resolved IP. Mitigation: ViewModels re-fetch on every `activeIp` change;
+  fetch failures already degrade to cached/out-of-range gracefully, so a
+  transient wrong-IP fetch is invisible to the user.
+- **`ProbeState` import breakage on deletion**: deleting `TimeSyncViewModel`
+  would break 6+ importers. Mitigation: Task 1 relocates `ProbeState` first;
+  Task 11 deletes the TimeSync files only after the route/import is removed
+  (Task 10), so the build is green at every step.
+- **Stale string references**: removing strings still referenced by code would
+  break the build. Mitigation: Task 14 greps for each string's `R.string.<name>`
+  usage before removing it.
+- **`local.properties` / APK committed by mistake**: both are machine-local.
+  Mitigation: Task 15 stages only source files; `local.properties` is already
+  documented as never-committed in AGENTS.md §9.
+- **Manual-override + keep-alive interaction**: when `autoSelect=false`, the
+  manager must still probe the manual IP for reachability and POST time, not
+  skip the loop. Mitigation: Task 4 specifies the manual-override path probes
+  the single manual IP (no parallel selection) and still POSTs time on found.
