@@ -55,15 +55,17 @@ What it does, in order:
    ansible/playbooks/app/deploy_app.yml` — renders the K3s templates and
    applies them (namespace, DaemonSet, service, filebrowser, video-compress)
 
-On success the app is reachable at `http://$JETSON_IP:31501` and the live
-camera feed + counting line are shown.
+On success the app runs and displays the live camera feed + counting line on
+the Jetson's attached screen (the on-screen X11/cv2 window). There is no web
+UI; the `countingapp-svc` port `31501` is declared but the app does not serve
+HTTP.
 
 ## 4. Operate
 
-Open `http://<jetson-ip>:31501` (or look at the local screen). Use the web app
-to **start** counting, move pigs past the camera, and **read the counter**.
-A video clip is recorded automatically while pigs are detected (stops ~2 min
-after the last detection). Power off when done.
+Open the app on the Jetson's attached screen (the on-screen X11/cv2 window).
+Use the on-screen buttons to **start** counting, move pigs past the camera, and
+**read the counter**. A video clip is recorded automatically while pigs are
+detected (stops ~2 min after the last detection). Power off when done.
 
 ## 5. Validate counting (developer loop)
 

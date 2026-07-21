@@ -13,7 +13,7 @@ entrypoint (`app/entrypoint.sh`) takes a **mode**:
 | Mode | Purpose |
 |------|---------|
 | `build-engine` | `trtexec` compiles `model/my_model.onnx` → `my_model.engine` |
-| `serve` | Run `python3 src/main.py` (Flask web app + inference/display threads) — production |
+| `serve` | Run `python3 src/main.py` (on-screen X11/cv2 UI + inference/display threads) — production |
 | `validate` | Run `main.py --input=FILE --file=$VALIDATE_VIDEO` and emit `result.json` (validation job) |
 | `test` / `debug` | Local test video / keep-alive for `kubectl exec` |
 
@@ -84,7 +84,7 @@ on Roboflow** — the repo does not ship a model. `ansible/playbooks/model/build
 |----------|------|------|
 | `countingapp-ns.j2` | Namespace | `countingapp-dev` |
 | `countingapp-dep.j2` | **DaemonSet** | The app pod (`countingapp:local`, `serve`), hostPaths for `/dev/video0`, `/app` (code), `/files` (videos), `/tmp/.X11-unix` (X11), `/var/run/docker.sock` |
-| `countingapp-svc.j2` | Service (ClusterIP) | `:31501` (web app) — no externalIP |
+| `countingapp-svc.j2` | Service (ClusterIP) | `:31501` (declared containerPort named `web`; the operator UI is the on-screen X11/cv2 window, **not** HTTP — the app does not serve HTTP) — no externalIP |
 | `filebrowser-dep.j2` / `filebrowser-svc.j2` / `filebrowser-cmap.j2` / `filebrowser-sct.j2` | Deployment + Service + ConfigMap + Secret | Web file manager for recorded videos (image `ghcr.io/gtsteffaniak/filebrowser:stable`) |
 | `cronvideo-dep.j2` | Deployment | Rolling ffmpeg compression (`tocompress-*` → `count*`, keep 50, delete `.mp4` > 2 GiB) |
 | `countingapp-validate.j2` | Job | One-shot validation run (used by `validate_on_jetson.sh`) |

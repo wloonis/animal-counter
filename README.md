@@ -111,14 +111,17 @@ The container `entrypoint.sh` takes a **mode** argument:
 | Mode | What it does |
 |------|--------------|
 | `build-engine` | Compile `model/my_model.onnx` → `my_model.engine` via `trtexec` |
-| `serve` | Run `python3 src/main.py` — the Flask web app + inference/display threads (production) |
+| `serve` | Run `python3 src/main.py` — on-screen X11/cv2 UI + inference/display threads (production) |
 | `validate` | Run `main.py --input=FILE --file=$VALIDATE_VIDEO` and write `result.json` (used by the validation job) |
 | `test` | Run `main.py` on a local test video with tracking drawn |
 | `debug` | `tail -f /dev/null` — keep the container alive for `kubectl exec` |
 
-In production the pod runs in `serve` mode. `main.py` exposes a small Flask web
-app (port `31501`) that the operator uses to **start/stop** counting and read
-the counter, while two background threads do the work:
+In production the pod runs in `serve` mode. The operator controls the app via
+the **on-screen X11/cv2 window** ("Counter") on the Jetson's attached display
+— clickable buttons (play/pause/stop, learning, auto, reset, Arrêt) drive
+**start/stop** counting, and the live net counter is drawn over the feed. There
+is no web UI; the `countingapp-svc` port `31501` is declared in the manifest but
+the app does not serve HTTP. Two background threads do the work:
 **InferThread** (`infer_thread.py` — capture → TensorRT inference → queue) and
 **DisplayThread** (`display_thread.py` — tracking → counting → recording →
 render). Since BL-29, `main.py` is a thin entry point that imports them and
@@ -132,7 +135,8 @@ validation output in `validate.py`). See
 
 1. **Power on** the Jetson in the morning → K3s starts → the `countingapp`
    DaemonSet pod boots → the web app is ready (counter = 0).
-2. Open the app (local screen / `http://<jetson-ip>:31501`), confirm the camera
+2. Open the app on the Jetson's attached screen (the on-screen X11/cv2 window),
+   confirm the camera
    feed and the counting line are visible.
 3. Move a series of pigs (typically 15–25) past the camera; the counter
    increments for each pig that crosses the line right→left (+1) and
