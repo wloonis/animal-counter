@@ -5,7 +5,7 @@ Add a stdlib-only Python HTTP service (`jetson-companion`) running as a root
 systemd unit on the Jetson host, exposing `POST /api/time` (applies
 `timedatectl set-ntp false` → `set-time` → `set-timezone`) and `GET /api/identify`,
 deployed via an Ansible playbook mirroring BL-63's `configure_boot_cleanup.yml`,
-plus `docs/11_jetson_companion.md`. This is the Jetson-side foundation for BL-65
+plus `docs/09_jetson_companion.md`. This is the Jetson-side foundation for BL-65
 (Android phone pushing the clock over the Jetson HotSpot), fixing the wrong-clock
 problem on offline boot (no RTC → 1970 / build date).
 
@@ -26,7 +26,7 @@ problem on offline boot (no RTC → 1970 / build date).
   - `GET /api/identify` → `{"service":"jetson-companion","version":"1"}`.
 - systemd unit: `Type=simple`, `User=root`, `Restart=always`,
   `WantedBy=multi-user.target`.
-- New `docs/11_jetson_companion.md` — numbered doc convention: service role,
+- New `docs/09_jetson_companion.md` — numbered doc convention: service role,
   endpoints, ansible deploy command, curl examples, HotSpot/Android context
   (link to BL-65), NTP handling, and why port 8090 (8080 taken by filebrowser).
 - Live deploy during implement: run the playbook against 192.168.0.180, then
@@ -97,7 +97,7 @@ problem on offline boot (no RTC → 1970 / build date).
   `Wants=network-online.target`; `[Service]` `Type=simple`,
   `ExecStart={{ companion_script }}`, `User=root`, `Restart=always`,
   `RestartSec=3`; `[Install]` `WantedBy=multi-user.target`.
-- [ ] Task 4: CREATE `docs/11_jetson_companion.md` following the numbered doc
+- [ ] Task 4: CREATE `docs/09_jetson_companion.md` following the numbered doc
   convention (`# 11 — Jetson Companion Clock-Sync Service`). Cover: role of the
   service (offline clock sync via Android phone, BL-65 link), the two endpoints
   with curl examples, the ansible deploy command
@@ -106,7 +106,7 @@ problem on offline boot (no RTC → 1970 / build date).
   NTP handling (`set-ntp false` before `set-time`), why port 8090 (8080 taken by
   filebrowser), and a link to issue #64.
 - [ ] Task 5: (Optional) UPDATE `README.md` table of contents to list
-  `docs/11_jetson_companion.md` (and `docs/10_offline_image_transfer.md` if
+  `docs/09_jetson_companion.md` (and `docs/08_offline_image_transfer.md` if
   still missing) so the docs index stays current.
 - [ ] Task 6: DEPLOY live — `set -a; source .env.local; set +a;
   ansible-playbook -i ansible/inventory/jetsons.yml
@@ -135,7 +135,7 @@ problem on offline boot (no RTC → 1970 / build date).
 - Playbook idempotent: re-running it reports no unexpected changes.
 - `python3 -m py_compile` on the script passes; no third-party imports.
 - `scripts/validate_on_jetson.sh` (standard) passes — counting unaffected.
-- `docs/11_jetson_companion.md` exists and documents the service/endpoints.
+- `docs/09_jetson_companion.md` exists and documents the service/endpoints.
 
 ## Risks
 - **`timedatectl set-time` fails without root** — mitigated by `User=root` in

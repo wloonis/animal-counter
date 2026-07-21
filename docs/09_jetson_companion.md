@@ -1,4 +1,4 @@
-# 11 — Jetson companion clock-sync service (BL-64)
+# 09 — Jetson companion clock-sync service (BL-64)
 
 A stdlib-only Python HTTP service (`jetson-companion`) running on the Jetson
 **host** (not k3s) on port **8090** that receives the current time + timezone

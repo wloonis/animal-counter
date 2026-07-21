@@ -1,4 +1,4 @@
-# 10 — Development workflow (`archon-jetson-dev`)
+# 07 — Development workflow (`archon-jetson-dev`)
 
 How a feature goes from "I want X" to "validated on the Jetson + draft PR",
 driven by the **`archon-jetson-dev`** workflow
@@ -6,6 +6,64 @@ driven by the **`archon-jetson-dev`** workflow
 guide; the agent-facing relay internals (beacon file formats, CLI flags,
 pitfalls) live in [`AGENTS.md`](../AGENTS.md) — read that for the mechanics,
 this for the process.
+
+## Toolchain — what runs the loop
+
+This workflow is built on two local tools, both running **fully on-box** (no
+cloud API keys):
+
+- **[Pi](https://github.com/earendil-works/pi-coding-agent)** (`@earendil-works/pi-coding-agent`, pinned `0.80.7`) — the AI coding agent you drive
+  interactively in a TUI. It does the actual code edits, recon, and commits.
+  Its model provider is configured to a **local Ollama** instance.
+- **Ollama + `glm-5.2`** — the local LLM backend. Pi's provider is `ollama`,
+  model `glm-5.2` (pulls the `glm-5.2:cloud` tag). Every phase runs against
+  this local model, so there is nothing to pay for or rate-limit.
+- **Archon** — the workflow runner (`archon` CLI). It orchestrates the
+  6-phase loop below; each phase spawns its **own Pi session** in an isolated
+  git worktree. Archon here runs **from source** (branch `archon-dev-0807-v2`,
+  provider `pi`, model tier `ollama/glm-5.2`) rather than the upstream
+  Claude-Code binary — see [`AGENTS.md`](../AGENTS.md) §1 and §8 for the exact
+  branch, the `pi` pin, and the local pi-6501 patch.
+
+### One-time install (per machine)
+
+1. **Ollama + the model** (the LLM backend Pi talks to):
+   ```bash
+   curl -fsSL https://ollama.com/install.sh | sh   # installs + starts the daemon
+   ollama pull glm-5.2                              # resolves to the glm-5.2:cloud tag
+   ollama list | grep glm-5.2                       # sanity check
+   ```
+
+2. **Pi** (the coding agent) + the plan-review extension:
+   ```bash
+   npm install -g @earendil-works/pi-coding-agent  # provides the `pi` command
+   pi install npm:@plannotator/pi-extension         # plan-review HTTP UI
+   ```
+
+3. **Archon** (from source, via Bun — this repo uses the Pi provider, not the
+   upstream Claude-Code binary):
+   ```bash
+   curl -fsSL https://bun.sh/install | bash         # Bun runtime → ~/.bun/bin
+   git clone <archon-source-checkout> ~/repository/Archon
+   cd ~/repository/Archon
+   git checkout archon-dev-0807-v2
+   bun install
+   bun link                                         # registers ~/.bun/bin/archon
+   ```
+   > After **any** `bun install` that touches `@earendil-works/pi-coding-agent`,
+   > re-apply the local pi-6501 patch (`bash
+   > ~/repository/Archon/patches/pi-6501-embedded-runtime-theme.sh`) — `bun
+   > install` wipes the patched `node_modules` files. See [`AGENTS.md`](../AGENTS.md) §8.
+
+4. **Verify the setup**:
+   ```bash
+   archon doctor
+   archon validate workflows archon-jetson-dev
+   ```
+
+Then finish the repo-local config in `.archon/config.yaml`
+(`extensionFlags.plan: true`, `PLANNOTATOR_REMOTE: "1"`) and the per-run
+secrets in `.env.local` — see [Prerequisites](#prerequisites-one-time-per-machine) below.
 
 ## What it is
 

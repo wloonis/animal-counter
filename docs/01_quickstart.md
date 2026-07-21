@@ -103,4 +103,4 @@ See [`04_configuration.md`](04_configuration.md) for the full parameter list.
 - App not reachable → `kubectl get pod,svc -n countingapp-dev` on the Jetson;
   the DaemonSet may be paused (`nodeSelector: validate-paused=true`) — remove
   the node label to resume.
-- More in [`07_troubleshooting.md`](07_troubleshooting.md).
+- More in [`13_troubleshooting.md`](13_troubleshooting.md).

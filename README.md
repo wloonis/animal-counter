@@ -34,14 +34,14 @@ starting a new batch).
 | [`docs/04_configuration.md`](docs/04_configuration.md) | App configuration (`.env`, `settings.py`, parameter table) |
 | [`docs/05_counting_pipeline.md`](docs/05_counting_pipeline.md) | Counting pipeline internals & anti-ID-switch guards |
 | [`docs/06_validation.md`](docs/06_validation.md) | Validation workflow (`validate_on_jetson.sh`, manifest, reports) |
-| [`docs/07_troubleshooting.md`](docs/07_troubleshooting.md) | Troubleshooting |
-| [`docs/08_reset.md`](docs/08_reset.md) | Reset procedures |
-| [`docs/09_development_workflow.md`](docs/09_development_workflow.md) | Development workflow with `archon-jetson-dev` (CLARIFY → plan → validate → PR) |
-| [`docs/10_offline_image_transfer.md`](docs/10_offline_image_transfer.md) | Transfer a Docker image from a test Jetson to an offline production Jetson via the PC |
-| [`docs/11_jetson_companion.md`](docs/11_jetson_companion.md) | Jetson companion clock-sync service (BL-64) — offline time set from the Android phone |
-| [`docs/12_android_app.md`](docs/12_android_app.md) | Android companion app (BL-65/69/72) — time sync, live count, sessions/history, videos |
-| [`docs/12_counting_history.md`](docs/12_counting_history.md) | Persistent counting history (BL-68/71) — JSONL schema, companion API, heartbeat/compaction |
-| [`docs/13_jetson_network_k3s_boot.md`](docs/13_jetson_network_k3s_boot.md) | Jetson networking & K3s boot (WiFi-only, no RTC, no ethernet cable) — why + how |
+| [`docs/07_development_workflow.md`](docs/07_development_workflow.md) | Development workflow with `archon-jetson-dev` (CLARIFY → plan → validate → PR) |
+| [`docs/08_offline_image_transfer.md`](docs/08_offline_image_transfer.md) | Transfer a Docker image from a test Jetson to an offline production Jetson via the PC |
+| [`docs/09_jetson_companion.md`](docs/09_jetson_companion.md) | Jetson companion clock-sync service (BL-64) — offline time set from the Android phone |
+| [`docs/10_android_app.md`](docs/10_android_app.md) | Android companion app (BL-65/69/72) — time sync, live count, sessions/history, videos |
+| [`docs/11_counting_history.md`](docs/11_counting_history.md) | Persistent counting history (BL-68/71) — JSONL schema, companion API, heartbeat/compaction |
+| [`docs/12_jetson_network_k3s_boot.md`](docs/12_jetson_network_k3s_boot.md) | Jetson networking & K3s boot (WiFi-only, no RTC, no ethernet cable) — why + how |
+| [`docs/13_troubleshooting.md`](docs/13_troubleshooting.md) | Troubleshooting |
+| [`docs/14_reset.md`](docs/14_reset.md) | Reset procedures |
 
 ---
 
@@ -157,7 +157,45 @@ restarts.)
 
 ## Onboarding for a new developer
 
-The `scripts/` directory is the central hub. Two flows cover everything:
+The `scripts/` directory is the central hub. Two flows cover everything.
+
+### ⚠️ Prepare first — do NOT run the scripts cold
+
+Every script below assumes the environment is already prepared. Running them
+without this preparation fails fast (missing credentials, no model to infer
+with). Complete these **before** launching any command:
+
+1. **Create `.env.local`** (repo root) — it holds the secrets and parameters
+   the scripts + Ansible read, and it is **gitignored** (never commit real
+   values). Start from the versioned example and fill in the real values:
+   ```bash
+   cp .env.local.example .env.local   # then edit: JETSON_USER, JETSON_PASSWORD,
+                                       # WIFI_NETWORK, FILEBROWSER_ADMIN_PASSWORD,
+                                       # GITHUB_TOKEN, and TRAINING_ROBOFLOW_*
+   ```
+   `.env.local` is consumed by `scripts/*.sh` (sourced) and by
+   `ansible/inventory/jetsons.yml` + `ansible/group_vars/all.yml` (via
+   `lookup('env', ...)`). Without it, discovery, SSH, and deployment all fail.
+
+2. **Flash + prepare the Jetson** — JetPack 6.2 flashed, the device booted and
+   reachable on your LAN (or its WiFi hotspot). See
+   [`docs/02_setup.md`](docs/02_setup.md).
+
+3. **Prepare a model on Roboflow FIRST** (mandatory before any deploy that
+   counts) — the detection model is trained from **a dataset version the
+   operator creates and versions on Roboflow**; `scripts/training_model.sh`
+   fetches that version and trains YOLO → `my_model.pt` → ONNX. Without a
+   versioned Roboflow dataset there is no model, and the app has nothing to
+   infer. Put the Roboflow coordinates in `.env.local`:
+   `TRAINING_ROBOFLOW_WORKSPACE`, `TRAINING_ROBOFLOW_PROJECT`,
+   `TRAINING_ROBOFLOW_VERSION`, `TRAINING_ROBOFLOW_FORMAT`, and
+   `TRAINING_ROBOFLOW_API_KEY`. Then build the model and compile the TensorRT
+   engine (`build-engine` mode / `trtexec`) **on the Jetson** before `serve`.
+   See [`docs/02_setup.md`](docs/02_setup.md#before-you-deploy--train--version-a-model-on-roboflow)
+   and [`docs/03_deployment.md`](docs/03_deployment.md#model-build--roboflow-dataset--yolo--onnx--tensorrt-engine).
+
+With `.env.local` in place, the Jetson reachable, and a model versioned on
+Roboflow, you can run the flows below.
 
 ### A. Provision a Jetson and deploy the app
 ```bash

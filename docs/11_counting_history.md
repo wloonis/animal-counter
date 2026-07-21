@@ -1,4 +1,4 @@
-# 12 — Persistent counting-session history + companion API (BL-68)
+# 11 — Persistent counting-session history + companion API (BL-68)
 
 An **append-only JSONL** counting-session history (`counting-history.jsonl`)
 written read-only from the `countingapp` pod onto the hostPath `/files`, with
@@ -428,7 +428,7 @@ persisted history on the Jetson. The existing excludes (`model/`, `.env`,
 
 - **BL-64** — the `jetson-companion` host service (port 8090) that this
   extends with read-only history endpoints (see
-  `docs/11_jetson_companion.md`).
+  `docs/09_jetson_companion.md`).
 - **BL-65** — the Android app that connects to the Jetson HotSpot; the
   history endpoints give it a "what happened in the last N sessions?" view.
 - **BL-62** — the clean-shutdown (`stop()` / `arret_requested` / poweroff)

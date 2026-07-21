@@ -1,4 +1,4 @@
-# 13 — Jetson networking & K3s boot (WiFi-only, no RTC, no ethernet cable)
+# 12 — Jetson networking & K3s boot (WiFi-only, no RTC, no ethernet cable)
 
 How the Jetson Orin Nano boots a stable single-node K3s cluster **over WiFi
 only** (no ethernet cable), with a **stable SSH access IP**, despite having
@@ -288,7 +288,7 @@ node `Ready`, countingapp `Running` — all without any manual action.
 |---------|-------|-----|
 | K3s `activating` / crash-loop after boot | `date` → is it `1970`? | `ExecStartPre=/sbin/fake-hwclock load` missing from the k3s override, or `/etc/fake-hwclock.data` is empty/stale → `sudo fake-hwclock save` once the clock is sane |
 | K3s can't bind `.50.10` | `ip -o addr show dummy0` | `dummy0-net.service` not enabled/started → `sudo systemctl enable --now dummy0-net` |
-| K3s `Ready` but countingapp not scheduled | `get pods -A` | GPU/manifest issue, not this fix — see `docs/07_troubleshooting.md` |
+| K3s `Ready` but countingapp not scheduled | `get pods -A` | GPU/manifest issue, not this fix — see `docs/13_troubleshooting.md` |
 | SSH can't find the Jetson | which WiFi mode? | hotspot = `192.168.100.1`; internet = `192.168.0.180` (static). If drifted, `scripts/jetson_discover.sh` |
 | `configure_static_wifi.yml` fails "no active infrastructure WiFi" | Jetson is in hotspot mode | cut the hotspot first so TP-Link reconnects, then re-run |
 

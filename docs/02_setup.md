@@ -9,8 +9,20 @@ JetPack, first boot, system preparation, and K3s installation.
 
 - NVIDIA Jetson Orin (tested on **Orin Nano 8 GB "Super"** dev kit)
 - microSD card ≥ 64 GB (or NVMe)
+- **7″ 1024×600 touchscreen** — the operator UI is the on-screen X11/cv2 window
+  ("Counter") with clickable buttons; the touchscreen is the production display
+- **NVMe SSD 128 GB** *(optional)* — recommended over the microSD card for
+  reliability and speed; see [§2.1](#21-optional-migrate-to-nvme-ssd--drop-the-sd-card)
+  (the Jetson then boots from the NVMe SSD and the SD card can be removed)
+- **DS3231 RTC module** *(optional)* — a hardware real-time clock to keep the
+  system date/time across power cycles. Without it the Jetson has no RTC
+  battery and falls back to `fake-hwclock` + the Android phone time-sync
+  companion (BL-64/65); a DS3231 removes that dependency
 - USB webcam (the app reads `/dev/video0`)
-- Keyboard / mouse / HDMI monitor for first boot (X11 display is used by the app)
+- **Keyboard / mouse** — only needed **during setup** (first boot, flashing,
+  Wi-Fi config); not required in production, where the touchscreen drives the
+  on-screen UI
+- HDMI monitor — for first boot / setup if you don't use the touchscreen yet
 - Network: same LAN as your control machine, or the Jetson's own WiFi hotspot
 
 ## 1. Flash JetPack
@@ -138,7 +150,7 @@ It calls these playbooks in sequence (do not invoke them individually):
 |------|----------|---------|
 | 3 | `prepare_system.yml` | Base packages, user, sudoers, timezone |
 | 3 | `network_ssh.yml` | Network + SSH hardening |
-| 3 | `install_k3s_with_docker_tasks.yml` | Install Docker + K3s (single-node, WiFi-only — dummy0 node-ip + fake-hwclock, see [`13_jetson_network_k3s_boot.md`](13_jetson_network_k3s_boot.md)) |
+| 3 | `install_k3s_with_docker_tasks.yml` | Install Docker + K3s (single-node, WiFi-only — dummy0 node-ip + fake-hwclock, see [`12_jetson_network_k3s_boot.md`](12_jetson_network_k3s_boot.md)) |
 | 4 | `deploy_app.yml` | Build + deploy the countingapp |
 | 4.5 | `configure_static_wifi.yml` | Pin the internet WiFi to a static IP (`192.168.0.180`) |
 | 5 | `hotspot_setup.yml` | WiFi hotspot for offline operation |

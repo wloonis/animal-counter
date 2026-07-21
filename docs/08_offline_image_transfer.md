@@ -1,4 +1,4 @@
-# 10 — Offline Jetson Docker Image Transfer
+# 08 — Offline Jetson Docker Image Transfer
 
 Transfer a `countingapp:local` Docker image (~20 Go) from a **test Jetson** to
 the **PC**, then from the PC to an **offline production Jetson** — no internet,

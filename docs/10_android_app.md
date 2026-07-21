@@ -1,7 +1,7 @@
-# 12 — Android companion app (BL-65/69/72)
+# 10 — Android companion app (BL-65/69/72)
 
 The Android app that pushes the phone's current time + IANA timezone to the
-Jetson companion service ([BL-64](./11_jetson_companion.md),
+Jetson companion service ([BL-64](./09_jetson_companion.md),
 `POST http://<jetson_ip>:8090/api/time`) whenever the phone joins the Jetson
 WiFi hotspot. The Jetson has no RTC and no internet (offline hotspot), so it
 relies on the phone to set its clock.
@@ -26,7 +26,7 @@ and pushes time in the background — no app open required.
 - **Multilingual (FR/EN)** — follows the phone's default system locale.
   `res/values/strings.xml` (English fallback) + `res/values-fr/strings.xml`
   (French). Structure ready for more locales via `values-<lang>/`.
-- **Multi-tab hub** — Time sync (BL-65), Live count (BL-69), Sessions / per-session detail (BL-69/71), Videos list + download/open (BL-72), Startups log. Built incrementally; see [`12_counting_history.md`](12_counting_history.md) for the Jetson-side history that backs these screens.
+- **Multi-tab hub** — Time sync (BL-65), Live count (BL-69), Sessions / per-session detail (BL-69/71), Videos list + download/open (BL-72), Startups log. Built incrementally; see [`11_counting_history.md`](11_counting_history.md) for the Jetson-side history that backs these screens.
 - **Configurable Jetson IP** — persisted via Jetpack DataStore Preferences
   (default `192.168.100.1`).
 - **Material 3** dynamic color (Material You) + dark theme forced. Custom adaptive
@@ -38,7 +38,7 @@ and pushes time in the background — no app open required.
 ## Prerequisites
 
 1. **Jetson companion service running** (BL-64) on port `8090`
-   (`/api/identify` + `/api/time`). See [11_jetson_companion.md](./11_jetson_companion.md).
+   (`/api/identify` + `/api/time`). See [09_jetson_companion.md](./09_jetson_companion.md).
 2. **Jetson WiFi hotspot active** — SSID + password from `.env.local`
    (`JETSON_HOTSPOT_SSID` / `JETSON_HOTSPOT_PASSWORD`), gateway IP
    `192.168.100.1`. Activated via `ansible/playbooks/system/hotspot_setup.yml`.
@@ -127,7 +127,7 @@ JETSON_HOTSPOT_PASSWORD=********     # hotspot password
 Once `/api/identify` returns the JSON above, the Android app's « Jetson
 connecté » banner will go green and the background push will work. Full
 companion reference (endpoints, NTP note, why port 8090, raw-ansible deploy,
-curl examples): [11_jetson_companion.md](./11_jetson_companion.md).
+curl examples): [09_jetson_companion.md](./09_jetson_companion.md).
 
 ---
 

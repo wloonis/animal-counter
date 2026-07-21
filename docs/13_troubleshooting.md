@@ -1,4 +1,4 @@
-# Troubleshooting Guide
+# 13 — Troubleshooting
 
 ## Overview
 
@@ -748,4 +748,4 @@ For additional information, refer to:
 - [Jetson Setup](02_setup.md)
 - [Deployment](03_deployment.md)
 - [Configuration](04_configuration.md)
-- [Reset Procedure](08_reset.md)
+- [Reset Procedure](14_reset.md)

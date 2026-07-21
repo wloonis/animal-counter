@@ -66,7 +66,7 @@ Add an append-only JSONL counting-session history (sessions, heartbeats, events,
 
 ### Phase 5 — Rsync guard + docs
 - [ ] Task 11: EDIT `scripts/validate_on_jetson.sh` — add `--exclude='counting-history*.jsonl*'` (covers the live file + gz archives) to the rsync `--delete` command in step 3, so a code rsync never wipes the persisted history on the Jetson. Keep the existing excludes (`model/`, `.env`, `video/`, `img/old/`).
-- [ ] Task 12: ADD `docs/12_counting_history.md` — document BL-68: the JSONL schema (line types + A–G fields), the hostPath layout (pod `/files` → host `/data/orin/files`), the heartbeat/compaction/disk-guard behavior, the `HISTORY_*` settings, the build-info baking, and the companion API endpoints (with curl examples). Follow the existing `docs/11_jetson_companion.md` style.
+- [ ] Task 12: ADD `docs/11_counting_history.md` — document BL-68: the JSONL schema (line types + A–G fields), the hostPath layout (pod `/files` → host `/data/orin/files`), the heartbeat/compaction/disk-guard behavior, the `HISTORY_*` settings, the build-info baking, and the companion API endpoints (with curl examples). Follow the existing `docs/09_jetson_companion.md` style.
 
 ### Phase 6 — Tests
 - [ ] Task 13: ADD `tests/test_history_writer.py` — unit tests for `HistoryWriter` (stdlib only): append+fsync, partial-line tolerance on reopen, recovery writes a synthetic `session_end` for an unterminated last session (power-loss vs `unknown` staleness), compaction drops heartbeats for cold sessions and keeps a summary line, bounded size ≤ `HISTORY_MAX_BYTES` after compaction, rotation creates a gz archive and bounds the count, disk guard suspends writes below the crit threshold. Use a temp dir for the JSONL.
