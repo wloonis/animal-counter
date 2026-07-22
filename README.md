@@ -40,8 +40,9 @@ starting a new batch).
 | [`docs/10_android_app.md`](docs/10_android_app.md) | Android companion app (BL-65/69/72) — time sync, live count, sessions/history, videos |
 | [`docs/11_counting_history.md`](docs/11_counting_history.md) | Persistent counting-session history (store) (BL-68/71) — JSONL schema, compaction, disk guard (HTTP API in 09) |
 | [`docs/12_jetson_network_k3s_boot.md`](docs/12_jetson_network_k3s_boot.md) | Jetson networking & K3s boot (WiFi-only, no RTC, no ethernet cable) — why + how |
-| [`docs/13_troubleshooting.md`](docs/13_troubleshooting.md) | Troubleshooting |
-| [`docs/14_reset.md`](docs/14_reset.md) | Reset procedures |
+| [`docs/13_rtc_install.md`](docs/13_rtc_install.md) | DS3231 RTC (HW-084) install + on-demand Android time sync (BL-74) |
+| [`docs/14_troubleshooting.md`](docs/14_troubleshooting.md) | Troubleshooting |
+| [`docs/15_reset.md`](docs/15_reset.md) | Reset procedures |
 
 ---
 
