@@ -8,6 +8,7 @@ import com.animalcounter.data.DEFAULT_JETSON_IP
 import com.animalcounter.data.DEFAULT_LAN_IP
 import com.animalcounter.data.SettingsRepository
 import com.animalcounter.net.JetsonConnectionManager
+import com.animalcounter.net.SyncResult
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -39,6 +40,11 @@ private const val IP_PERSIST_DEBOUNCE_MS = 500L
  *  - **Candidate IP fields** (hotspot/lan): a debounced persist followed by
  *    [JetsonConnectionManager.rescan] so the parallel selection uses the new
  *    candidates on the next probe.
+ *  - **On-demand clock sync** (BL-74): [syncTime] delegates to
+ *    [JetsonConnectionManager.syncTime] and exposes the outcome via the
+ *    [syncResult] state flow. Success auto-resets to `Idle` after ~5s so the
+ *    green confirmation clears; Failure persists until the user retries or
+ *    clears it with [clearSyncResult].
  *
  * Constructed with the default [AndroidViewModel] factory, which wires the
  * [Application] for the [SettingsRepository]'s DataStore.
@@ -63,7 +69,27 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
     /** LAN candidate IP probed by the auto-select parallel probe. */
     val lanIp: StateFlow<String> = _lanIp.asStateFlow()
 
+    /** State of an on-demand clock sync, surfaced to the Settings UI. */
+    sealed interface SyncState {
+        /** No sync pending/done (default + auto-cleared a few seconds after success). */
+        data object Idle : SyncState
+        /** A sync request is in flight. */
+        data object Syncing : SyncState
+        /** Last sync succeeded. */
+        data object Success : SyncState
+        /** Last sync failed; [message] carries a detail string when available. */
+        data class Failure(val message: String?) : SyncState
+    }
+
+    private val _syncResult = MutableStateFlow<SyncState>(SyncState.Idle)
+    /** Observable on-demand clock-sync outcome for the "Synchroniser l'heure" button. */
+    val syncResult: StateFlow<SyncState> = _syncResult.asStateFlow()
+
+    /** Auto-clear delay after a successful sync (ms). */
+    private val syncSuccessClearDelayMs = 5000L
+
     /** Whether the initial DataStore values have been loaded. */
+    @Suppress("unused")
     private var loaded = false
 
     /** Pending debounced persist jobs, one per field (so cross-field edits don't cancel each other). */
@@ -80,6 +106,43 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
             _lanIp.value = repo.lanIp.first()
             loaded = true
         }
+    }
+
+    /**
+     * Trigger an on-demand clock push ("Synchroniser l'heure"). Sets state
+     * to [SyncState.Syncing], delegates to [JetsonConnectionManager.syncTime],
+     * then sets [SyncState.Success] (auto-cleared after ~5s) or
+     * [SyncState.Failure] (persists until the next user action).
+     */
+    fun syncTime() {
+        _syncResult.value = SyncState.Syncing
+        viewModelScope.launch {
+            val outcome = JetsonConnectionManager.syncTime()
+            when (outcome) {
+                is SyncResult.Success -> {
+                    _syncResult.value = SyncState.Success
+                    // Auto-clear the green confirmation after a short delay.
+                    viewModelScope.launch {
+                        delay(syncSuccessClearDelayMs)
+                        // Only reset if still Success (user may have triggered a retry).
+                        if (_syncResult.value is SyncState.Success) {
+                            _syncResult.value = SyncState.Idle
+                        }
+                    }
+                }
+                is SyncResult.Failure -> {
+                    _syncResult.value = SyncState.Failure(outcome.message)
+                }
+            }
+        }
+    }
+
+    /**
+     * Manually reset [syncResult] to [SyncState.Idle] (e.g. before retrying
+     * after a persistent Failure).
+     */
+    fun clearSyncResult() {
+        _syncResult.value = SyncState.Idle
     }
 
     /**
