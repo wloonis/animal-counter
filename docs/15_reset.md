@@ -410,4 +410,4 @@ For additional information, refer to:
 - [Jetson Setup](02_setup.md)
 - [Deployment](03_deployment.md)
 - [Configuration](04_configuration.md)
-- [Troubleshooting Guide](13_troubleshooting.md)
+- [Troubleshooting Guide](14_troubleshooting.md)
