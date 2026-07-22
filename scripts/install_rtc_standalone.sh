@@ -131,7 +131,7 @@ ansible-playbook -i ansible/inventory/jetsons.yml \
 
 echo
 echo "✅ RTC configured. Verify on the Jetson:"
-echo "   sudo i2cdetect -y 7            # should show '68' at row 0x60, col 8"
-echo "   systemctl is-active rtc-ds3231 # 'active' (RemainAfterExit=oneshot)"
-echo "   ls /dev/rtc1                    # the registered DS3231 RTC device"
-echo "   sudo hwclock -r --rtc=/dev/rtc1 # reads a sane date/time"
+echo "   sudo i2cget -y 7 0x68 0x00         # reads a register (DS3231 does not ACK i2cdetect quick-writes)"
+echo "   systemctl is-active rtc-ds3231  # 'active' (RemainAfterExit=oneshot)"
+echo "   ls /dev/rtc*                    # the DS3231 registers as the rtc-ds1307 device (e.g. /dev/rtc2)"
+echo "   sudo hwclock -r --rtc=/dev/rtc2 # reads a sane date/time (after hwclock --systohc --rtc=/dev/rtc2 once)"

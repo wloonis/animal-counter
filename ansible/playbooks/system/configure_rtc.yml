@@ -52,6 +52,7 @@
 
   vars:
     rtc_detect_script: /usr/local/bin/detect-ds3231.sh
+    rtc_init_script: /usr/local/bin/rtc-ds3231-init.sh
     rtc_service: rtc-ds3231.service
     # The Orin Nano exposes the 40-pin header I2C on bus 7. The DS3231 has a
     # fixed 7-bit address of 0x68.
@@ -107,19 +108,65 @@
           #!/bin/sh
           # detect-ds3231.sh — probe I2C bus {{ i2c_bus }} for the DS3231
           # (address {{ i2c_addr }}). Exits 0 if present, 1 if absent.
+          # Pure detection — no side effects.
           #
-          # i2cdetect prints a grid; the DS3231 shows up as "{{ i2c_addr }}" in
-          # the cell (a "--" means something is at that address but it did
-          # not ACK a quick write, which can happen with some RTCs; "UU"
-          # means the address is already in use by a kernel driver, i.e. the
-          # RTC is already registered). Accept "68" OR "UU" at the DS3231
-          # address as "present".
+          # The DS3231 does NOT ACK i2cdetect quick-write probes (it shows
+          # "--", not "68"), so probe with a real register read (i2cget
+          # reg 0x00). Once the rtc-ds1307 driver is bound, i2cget returns
+          # EBUSY; in that state the sysfs device node (bus-<addr4hex>) exists,
+          # which also proves presence.
           set -eu
-          out=$(/usr/sbin/i2cdetect -y {{ i2c_bus }} 2>/dev/null || true)
-          if printf '%s\n' "$out" | grep -Eq '{{ i2c_addr }}|UU'; then
-            exit 0
-          fi
+          BUS={{ i2c_bus }}
+          ADDR={{ i2c_addr }}
+          ADDRHEX=$(printf '%04x' $((ADDR)))
+          if /usr/sbin/i2cget -y "$BUS" "$ADDR" 0x00 >/dev/null 2>&1; then exit 0; fi
+          if [ -e "/sys/bus/i2c/devices/${BUS}-${ADDRHEX}" ]; then exit 0; fi
           exit 1
+      notify: Reload systemd + restart rtc-ds3231
+
+    # -------------------------------------------------------------------
+    # 2b. rtc-ds3231-init.sh — the boot action run by the service:
+    #     detect -> register as rtc-ds1307 if needed -> find the bound rtc
+    #     char device -> hctosys ONLY if the RTC year is sane (>=2024). An
+    #     uninitialized RTC (OSF set, year 2000) never resets the system clock;
+    #     it is left to fake-hwclock / the companion push until initialized
+    #     once (hwclock --systohc --rtc=/dev/rtcN).
+    # -------------------------------------------------------------------
+    - name: Install rtc-ds3231-init.sh boot action
+      copy:
+        dest: "{{ rtc_init_script }}"
+        owner: root
+        group: root
+        mode: '0755'
+        content: |
+          #!/bin/sh
+          # rtc-ds3231-init.sh — BL-74 boot action for the DS3231 on
+          # bus {{ i2c_bus }} @ {{ i2c_addr }}.
+          set -eu
+          BUS={{ i2c_bus }}
+          ADDR={{ i2c_addr }}
+          ADDRHEX=$(printf '%04x' $((ADDR)))
+          SYSDEV="/sys/bus/i2c/devices/${BUS}-${ADDRHEX}"
+
+          /usr/local/bin/detect-ds3231.sh || exit 0          # absent -> clean no-op
+
+          if [ ! -e "$SYSDEV" ]; then
+            echo "ds1307 $ADDR" > "/sys/class/i2c-adapter/i2c-${BUS}/new_device" 2>/dev/null || exit 0
+          fi
+
+          RTC=""
+          for d in "$SYSDEV"/rtc/rtc*; do
+            [ -e "$d" ] || continue
+            RTC="/dev/$(basename "$d")"
+            break
+          done
+          [ -n "$RTC" ] && [ -e "$RTC" ] || exit 0
+
+          year=$(hwclock -r --rtc="$RTC" 2>/dev/null | awk '{print $1}' | cut -d- -f1)
+          if [ -n "$year" ] && [ "$year" -ge 2024 ] 2>/dev/null; then
+            hwclock --hctosys --rtc="$RTC" || true
+          fi
+          exit 0
       notify: Reload systemd + restart rtc-ds3231
 
     # -------------------------------------------------------------------
@@ -128,12 +175,12 @@
     #    and stays "active" after. Runs Before=k3s-clock-ready.service so
     #    the clock is sane before the k3s sanity gate runs.
     #
-    #    ExecStart: run detect-ds3231.sh. If the RTC is absent, exit 0
-    #    (clean no-op — the k3s stack falls back to fake-hwclock). If
-    #    present: guard the `new_device` write with `[ -e /dev/rtc1 ]`
-    #    (skip registration if already registered, so the service is
-    #    idempotent on re-runs/restarts), then copy the RTC time into the
-    #    system clock with hwclock --hctosys.
+    #    ExecStart: run rtc-ds3231-init.sh (detect -> register if needed ->
+    #    find the bound rtc char device -> hctosys only if the RTC year is
+    #    sane, so an uninitialized RTC never resets the system clock). If the
+    #    DS3231 is absent, the init script exits 0 (clean no-op; k3s falls
+    #    back to fake-hwclock). Runs Before=k3s-clock-ready.service so the
+    #    clock is sane before the k3s sanity gate runs.
     # -------------------------------------------------------------------
     - name: Install rtc-ds3231.service
       copy:
@@ -144,21 +191,13 @@
         content: |
           [Unit]
           Description=DS3231 RTC detection + hwclock --hctosys at boot (BL-74)
-          # Run after the modules-load service so the i2c bus adapter driver
-          # is ready, and before the k3s clock sanity gate so the clock is
-          # sane before k3s starts.
           After=systemd-modules-load.service
           Before=k3s-clock-ready.service
-          # i2c-tools (i2cdetect) must be installed; the playbook installs it
-          # but the unit itself does not depend on a dedicated service.
 
           [Service]
           Type=oneshot
           RemainAfterExit=yes
-          # Probe for the DS3231. If absent, exit 0 (clean no-op). If present,
-          # register it as rtc-ds1307 (guarded by /dev/rtc1 so the write is
-          # idempotent) and copy the RTC time into the system clock.
-          ExecStart=/bin/sh -c '/usr/local/bin/detect-ds3231.sh || exit 0; if [ ! -e /dev/rtc1 ]; then echo ds1307 {{ i2c_addr }} > /sys/class/i2c-adapter/i2c-{{ i2c_bus }}/new_device; fi; hwclock --hctosys --rtc=/dev/rtc1'
+          ExecStart=/usr/local/bin/rtc-ds3231-init.sh
 
           [Install]
           WantedBy=multi-user.target
