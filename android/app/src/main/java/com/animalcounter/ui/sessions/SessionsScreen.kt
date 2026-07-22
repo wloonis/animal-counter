@@ -172,7 +172,10 @@ private fun SessionListRow(session: SessionSummary, onClick: () -> Unit) {
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            val endStr = formatIso(session.endAt)
+            // A running session's end_at is the companion's last-heartbeat
+            // fill (~ now), not a real end — don't show it as a "Fin:" date.
+            val endStr =
+                if (session.status == "running") null else formatIso(session.endAt)
             if (endStr != null) {
                 Text(
                     text = stringResource(R.string.detail_end) + ": " + endStr,

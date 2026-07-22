@@ -96,10 +96,21 @@ class SettingsRepository(private val context: Context) {
      * the hotspot default ([DEFAULT_HOTSPOT_IP]) until
      * [JetsonConnectionManager][com.animalcounter.net.JetsonConnectionManager]
      * resolves a reachable IP shortly after the app opens.
+     *
+     * **Process-shared** (held in the [companion object][Shared]):
+     * [SettingsRepository] is instantiated separately by
+     * [JetsonConnectionManager] (the sole writer, via [setActiveIp]) AND by
+     * every screen ViewModel (readers). If `activeIp` were a per-instance
+     * field, the manager would resolve the LAN IP (e.g. `192.168.0.180`)
+     * into ITS instance while each ViewModel's instance stayed stuck at the
+     * hotspot default (`192.168.100.1`) — on the home WiFi that default is
+     * unreachable, so every `/api/...` data fetch failed and the screens fell
+     * back to the offline cache even though the reachability banner said
+     * « Jetson connecté » (BL-74 follow-up). Sharing the StateFlow across
+     * instances via the companion makes the manager's resolution visible to
+     * every ViewModel immediately.
      */
-    private val _activeIp: MutableStateFlow<String> =
-        MutableStateFlow(DEFAULT_HOTSPOT_IP)
-    val activeIp: StateFlow<String> = _activeIp.asStateFlow()
+    val activeIp: StateFlow<String> = sharedActiveIp.asStateFlow()
 
     /**
      * Persist [ip] as the manual-override Jetson IP. Empty/blank values
@@ -150,10 +161,12 @@ class SettingsRepository(private val context: Context) {
      * ViewModels read [activeIp].
      */
     suspend fun setActiveIp(ip: String) {
-        _activeIp.value = ip
+        sharedActiveIp.value = ip
     }
 
     private companion object {
+        /** Process-wide holder for the resolved active Jetson IP (BL-74 fix). */
+        private val sharedActiveIp = MutableStateFlow(DEFAULT_HOTSPOT_IP)
         const val JETSON_IP_KEY = "jetson_ip"
         const val HOTSPOT_IP_KEY = "jetson_ip_hotspot"
         const val LAN_IP_KEY = "jetson_ip_lan"

@@ -169,8 +169,12 @@ private fun HeaderCard(d: SessionDetail) {
     val start = d.start
     val end = d.end
     val startStr = formatIso(start?.startAt)
-    val endStr = formatIso(d.endAt ?: end?.endAt)
-    val dur = durationBetween(start?.startAt, d.endAt ?: end?.endAt)
+    // A running session's end_at is the companion's last-heartbeat fill
+    // (~ now), not a real end — show "—" instead of a misleading end date,
+    // and skip the duration row (it would be a moving last-heartbeat span).
+    val isRunning = d.status == "running"
+    val endStr = if (isRunning) "—" else formatIso(d.endAt ?: end?.endAt)
+    val dur = if (isRunning) null else durationBetween(start?.startAt, d.endAt ?: end?.endAt)
     GroupCard(
         icon = Icons.Filled.PlayCircle,
         title = stringResource(R.string.group_header),
