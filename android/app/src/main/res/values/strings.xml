@@ -166,4 +166,8 @@
     <string name="settings_manual_ip">Manual Jetson IP</string>
     <string name="settings_hotspot_ip">Hotspot candidate IP</string>
     <string name="settings_lan_ip">LAN candidate IP</string>
+    <string name="settings_sync_time">Synchronize clock</string>
+    <string name="settings_sync_success">Clock synchronized ✓</string>
+    <string name="settings_sync_failure">Sync failed</string>
+    <string name="settings_syncing">Synchronizing…</string>
 </resources>
