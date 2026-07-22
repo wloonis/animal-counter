@@ -2,7 +2,9 @@ package com.animalcounter.ui.nav
 
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.BarChart
 import androidx.compose.material.icons.filled.History
@@ -17,10 +19,13 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -84,61 +89,31 @@ fun AnimalCounterApp() {
                     selected = currentRoute == Destinations.DASHBOARD,
                     onClick = { navController.navigateTo(Destinations.DASHBOARD) },
                     icon = { Icon(Icons.Filled.BarChart, contentDescription = null) },
-                    label = {
-                        Text(
-                            stringResource(R.string.tab_dashboard),
-                            modifier = Modifier.fillMaxWidth(),
-                            textAlign = TextAlign.Center,
-                        )
-                    },
+                    label = { TabLabel(R.string.tab_dashboard) },
                 )
                 NavigationBarItem(
                     selected = currentRoute == Destinations.LIVE_COUNT,
                     onClick = { navController.navigateTo(Destinations.LIVE_COUNT) },
                     icon = { Icon(Icons.Filled.Visibility, contentDescription = null) },
-                    label = {
-                        Text(
-                            stringResource(R.string.tab_live_count),
-                            modifier = Modifier.fillMaxWidth(),
-                            textAlign = TextAlign.Center,
-                        )
-                    },
+                    label = { TabLabel(R.string.tab_live_count) },
                 )
                 NavigationBarItem(
                     selected = currentRoute == Destinations.HISTORY,
                     onClick = { navController.navigateTo(Destinations.HISTORY) },
                     icon = { Icon(Icons.Filled.History, contentDescription = null) },
-                    label = {
-                        Text(
-                            stringResource(R.string.tab_history),
-                            modifier = Modifier.fillMaxWidth(),
-                            textAlign = TextAlign.Center,
-                        )
-                    },
+                    label = { TabLabel(R.string.tab_history) },
                 )
                 NavigationBarItem(
                     selected = currentRoute?.startsWith("sessions") == true,
                     onClick = { navController.navigateTo(Destinations.SESSIONS_TAB) },
                     icon = { Icon(Icons.Filled.PlayCircle, contentDescription = null) },
-                    label = {
-                        Text(
-                            stringResource(R.string.tab_sessions),
-                            modifier = Modifier.fillMaxWidth(),
-                            textAlign = TextAlign.Center,
-                        )
-                    },
+                    label = { TabLabel(R.string.tab_sessions) },
                 )
                 NavigationBarItem(
                     selected = currentRoute == Destinations.SETTINGS,
                     onClick = { navController.navigateTo(Destinations.SETTINGS) },
                     icon = { Icon(Icons.Filled.Settings, contentDescription = null) },
-                    label = {
-                        Text(
-                            stringResource(R.string.tab_settings),
-                            modifier = Modifier.fillMaxWidth(),
-                            textAlign = TextAlign.Center,
-                        )
-                    },
+                    label = { TabLabel(R.string.tab_settings) },
                 )
             }
         },
@@ -225,6 +200,20 @@ fun AnimalCounterApp() {
             }
         }
     }
+}
+
+@Composable
+private fun TabLabel(resId: Int) {
+    Text(
+        stringResource(resId),
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(32.dp)
+            .wrapContentHeight(Alignment.CenterVertically),
+        textAlign = TextAlign.Center,
+        maxLines = 2,
+        overflow = TextOverflow.Ellipsis,
+    )
 }
 
 private fun NavController.navigateTo(route: String) {
