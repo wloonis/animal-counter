@@ -53,6 +53,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.animalcounter.R
 import com.animalcounter.net.LiveCount
 import com.animalcounter.net.ProbeState
+import com.animalcounter.ui.common.AppNavIcon
 
 /**
  * Comptage live tab.
@@ -101,6 +102,7 @@ fun LiveCountScreen() {
         topBar = {
             LargeTopAppBar(
                 title = { Text(stringResource(R.string.tab_live_count)) },
+                navigationIcon = { AppNavIcon() },
                 scrollBehavior = scrollBehavior,
             )
         },

@@ -140,8 +140,8 @@
     <string name="dashboard_avg_per_day">Avg / day</string>
     <string name="empty_dashboard">No data for this period</string>
 
-    <!-- BL-69 — startups screen -->
-    <string name="tab_startups">Startup</string>
+    <!-- BL-69 — sessions tab (was startups) -->
+    <string name="tab_sessions">Sessions</string>
     <string name="empty_startups">No startups recorded</string>
     <string name="startup_boot_at">Boot at</string>
     <string name="startup_image_tag">Image tag</string>

@@ -32,6 +32,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.animalcounter.R
+import com.animalcounter.ui.common.AppNavIcon
 
 /**
  * Settings tab (BL-73) — operator configuration for Jetson IP selection.
@@ -66,6 +67,7 @@ fun SettingsScreen() {
         topBar = {
             TopAppBar(
                 title = { Text(stringResource(R.string.settings_title)) },
+                navigationIcon = { AppNavIcon() },
             )
         },
     ) { innerPadding ->
