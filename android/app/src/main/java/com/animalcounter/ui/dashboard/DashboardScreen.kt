@@ -59,7 +59,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.animalcounter.R
 import com.animalcounter.net.DailyBucket
 import com.animalcounter.ui.common.OfflineBanner
-import com.animalcounter.ui.timesync.ProbeState
+import com.animalcounter.net.ProbeState
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import java.util.Locale

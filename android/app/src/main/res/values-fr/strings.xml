@@ -4,39 +4,18 @@
     <string name="app_name">Animal Counter</string>
 
     <!-- Bottom-nav tabs -->
-    <string name="tab_time_sync">Synchro</string>
+    <string name="tab_settings">Réglages</string>
     <string name="tab_live_count">Comptage en direct</string>
     <string name="tab_videos">Vidéos</string>
 
-    <!-- Time sync screen -->
-    <string name="jetson_ip_label">Adresse IP du Jetson</string>
-    <string name="sync_now">Synchroniser</string>
+    <!-- Reachability banner (Dashboard / Live count) -->
     <string name="refresh">Actualiser</string>
     <string name="jetson_connected">Jetson connecté</string>
     <string name="jetson_out_of_range">Jetson hors de portée</string>
     <string name="jetson_checking">Vérification…</string>
-    <string name="time_sync_placeholder">Écran de synchronisation — à venir</string>
 
     <!-- Placeholder screens -->
     <string name="coming_soon">Bientôt disponible</string>
-
-    <!-- Foreground service / notifications -->
-    <string name="notification_channel_id">time_sync</string>
-    <string name="notification_channel_title">Synchronisation</string>
-    <string name="notification_channel_desc">Maintient l\'horloge du Jetson synchronisée via le hotspot.</string>
-    <string name="foreground_notification_title">Animal Counter</string>
-    <string name="foreground_notification_text">Synchronisation de l\'horloge du Jetson…</string>
-
-    <!-- Sync log outcome labels -->
-    <string name="outcome_success">Succès</string>
-    <string name="outcome_bad_request">Requête invalide</string>
-    <string name="outcome_server_error">Erreur serveur</string>
-    <string name="outcome_network">Erreur réseau</string>
-    <string name="log_empty">Aucun événement</string>
-
-    <!-- Sync event type labels -->
-    <string name="type_probe">Sonde</string>
-    <string name="type_sync">Sync</string>
 
     <!-- BL-69 — status labels (live count / history / detail) -->
     <string name="status_running">En cours</string>
@@ -180,4 +159,11 @@
     <string name="video_unavailable">Vidéo indisponible (compression en cours ou nettoyée)</string>
     <string name="video_still_recording">Enregistrement en cours</string>
     <string name="video_download_failed">Échec du téléchargement</string>
+
+    <!-- BL-73 — settings screen -->
+    <string name="settings_title">Réglages</string>
+    <string name="settings_auto_select">Sélection auto de l\'IP Jetson</string>
+    <string name="settings_manual_ip">IP Jetson manuelle</string>
+    <string name="settings_hotspot_ip">IP candidate hotspot</string>
+    <string name="settings_lan_ip">IP candidate LAN</string>
 </resources>

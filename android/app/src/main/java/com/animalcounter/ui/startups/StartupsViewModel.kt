@@ -8,13 +8,13 @@ import androidx.lifecycle.viewModelScope
 import com.animalcounter.data.DEFAULT_JETSON_IP
 import com.animalcounter.data.OfflineCache
 import com.animalcounter.data.SettingsRepository
-import com.animalcounter.data.SyncEvent
 import com.animalcounter.net.ApiResult
 import com.animalcounter.net.JetsonClient
+import com.animalcounter.net.JetsonConnectionManager
 import com.animalcounter.net.Startup
 import com.animalcounter.net.activeWifiNetwork
 import com.animalcounter.net.parseStartups
-import com.animalcounter.ui.timesync.ProbeState
+import com.animalcounter.net.ProbeState
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -82,22 +82,22 @@ class StartupsViewModel(app: Application) : AndroidViewModel(app) {
     private val _state = MutableStateFlow<StartupsUiState>(StartupsUiState.Loading)
     val state: StateFlow<StartupsUiState> = _state.asStateFlow()
 
-    private val _probeState = MutableStateFlow(ProbeState.Idle)
-    val probeState: StateFlow<ProbeState> = _probeState.asStateFlow()
-
-    /** Whether the initial DataStore IP has been loaded (guards the first fetch). */
-    private var loaded = false
+    /**
+     * Reachability banner state — delegated to the app-wide
+     * [JetsonConnectionManager] (the single canonical probe owner, BL-73).
+     * Screens that read `vm.probeState` are unchanged.
+     */
+    val probeState: StateFlow<ProbeState>
+        get() = JetsonConnectionManager.probeState
 
     init {
-        // Seed the IP from DataStore, then probe + load the first page once.
+        // Re-seed the IP + refetch whenever the manager resolves a new active
+        // Jetson IP (hotspot/LAN/manual). The first emission is the hotspot
+        // default; a second follows once the parallel probe resolves.
         viewModelScope.launch {
-            repo.jetsonIp.collect { saved ->
-                _ip.value = saved
-                if (!loaded) {
-                    loaded = true
-                    probe()
-                    load()
-                }
+            repo.activeIp.collect { ip ->
+                _ip.value = ip
+                load()
             }
         }
     }
@@ -128,10 +128,8 @@ class StartupsViewModel(app: Application) : AndroidViewModel(app) {
                         } else {
                             StartupsUiState.Loaded(sorted)
                         }
-                        // A successful fetch implies the Jetson is reachable.
-                        if (_probeState.value != ProbeState.Probing) {
-                            _probeState.value = ProbeState.Reachable
-                        }
+                        // A successful fetch implies the Jetson is reachable;
+                        // the manager owns the banner so nothing to set here.
                     }
                     is ApiResult.HttpError -> {
                         _state.value =
@@ -150,16 +148,15 @@ class StartupsViewModel(app: Application) : AndroidViewModel(app) {
                     else loadCachedStartups() ?: StartupsUiState.OutOfRange
             }
         }
-        if (_probeState.value != ProbeState.Probing) probe()
     }
 
     /** Offline fallback — serve the last cached `/api/startups` response
      * so the user can consult the startups history with no Jetson connection.
      * Returns null when there is no cache (caller falls back to Error/OutOfRange). */
-    /** Re-fetch + re-probe (auto-refresh polling + pull-to-refresh). */
+    /** Re-fetch (auto-refresh polling + pull-to-refresh).
+     * Reachability probing is owned by [JetsonConnectionManager]. */
     fun refresh() {
         load()
-        probe()
     }
 
     private fun loadCachedStartups(): StartupsUiState.Loaded? {
@@ -168,29 +165,6 @@ class StartupsViewModel(app: Application) : AndroidViewModel(app) {
             .getOrNull() ?: return null
         return if (sorted.isEmpty()) null
         else StartupsUiState.Loaded(sorted, offline = true, cachedAt = cached.savedAt)
-    }
-
-    /**
-     * Reachability probe — `GET /api/identify` bound to the active WiFi
-     * network so it reaches the Jetson HotSpot even with mobile data (5G)
-     * as the default internet uplink. Drives [probeState] (the banner).
-     */
-    fun probe() {
-        if (_probeState.value == ProbeState.Probing) return
-        _probeState.value = ProbeState.Probing
-        viewModelScope.launch {
-            try {
-                val cm = cm()
-                val wifi = if (cm != null) activeWifiNetwork(cm) else null
-                val event = JetsonClient.identify(ip = _ip.value, network = wifi)
-                _probeState.value =
-                    if (event.outcome == SyncEvent.Outcome.Success)
-                        ProbeState.Reachable
-                    else ProbeState.OutOfRange
-            } catch (t: Throwable) {
-                _probeState.value = ProbeState.OutOfRange
-            }
-        }
     }
 
     /**

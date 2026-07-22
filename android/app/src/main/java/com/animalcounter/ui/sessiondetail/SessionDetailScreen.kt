@@ -65,7 +65,7 @@ import com.animalcounter.net.SessionStart
 import com.animalcounter.net.SystemHealth
 import com.animalcounter.net.VideoMeta
 import com.animalcounter.net.optStringOrNull
-import com.animalcounter.ui.timesync.ProbeState
+import com.animalcounter.net.ProbeState
 import org.json.JSONObject
 import java.time.Instant
 import java.time.OffsetDateTime

@@ -12,9 +12,10 @@ import com.animalcounter.net.ApiResult
 import com.animalcounter.net.VideoPage
 import com.animalcounter.net.VideoRow
 import com.animalcounter.net.JetsonClient
+import com.animalcounter.net.JetsonConnectionManager
 import com.animalcounter.net.activeWifiNetwork
 import com.animalcounter.net.parseVideos
-import com.animalcounter.ui.timesync.ProbeState
+import com.animalcounter.net.ProbeState
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -115,8 +116,13 @@ class HistoryViewModel(app: Application) : AndroidViewModel(app) {
     private val _state = MutableStateFlow<HistoryUiState>(HistoryUiState.Loading)
     val state: StateFlow<HistoryUiState> = _state.asStateFlow()
 
-    private val _probeState = MutableStateFlow(ProbeState.Idle)
-    val probeState: StateFlow<ProbeState> = _probeState.asStateFlow()
+    /**
+     * Reachability banner state — delegated to the app-wide
+     * [JetsonConnectionManager] (the single canonical probe owner, BL-73).
+     * Screens that read `vm.probeState` are unchanged.
+     */
+    val probeState: StateFlow<ProbeState>
+        get() = JetsonConnectionManager.probeState
 
     /** Selected date filter (null = no date filter). */
     private val _filterDate = MutableStateFlow<LocalDate?>(null)
@@ -125,9 +131,6 @@ class HistoryViewModel(app: Application) : AndroidViewModel(app) {
     /** Selected status filter (ALL = no status filter). */
     private val _filterStatus = MutableStateFlow(HistoryStatusFilter.ALL)
     val filterStatus: StateFlow<HistoryStatusFilter> = _filterStatus.asStateFlow()
-
-    /** Whether the initial DataStore IP has been loaded (guards the first fetch). */
-    private var loaded = false
 
     /** Accumulated raw (unfiltered) videos — the light in-memory cache. */
     private val cache = ArrayList<VideoRow>()
@@ -146,15 +149,13 @@ class HistoryViewModel(app: Application) : AndroidViewModel(app) {
     private var total = 0
 
     init {
-        // Seed the IP from DataStore, then probe + load the first page once.
+        // Re-seed the IP + refetch whenever the manager resolves a new active
+        // Jetson IP (hotspot/LAN/manual). The first emission is the hotspot
+        // default; a second follows once the parallel probe resolves.
         viewModelScope.launch {
-            repo.jetsonIp.collect { saved ->
-                _ip.value = saved
-                if (!loaded) {
-                    loaded = true
-                    probe()
-                    loadFirstPage()
-                }
+            repo.activeIp.collect { ip ->
+                _ip.value = ip
+                loadFirstPage()
             }
         }
     }
@@ -174,7 +175,6 @@ class HistoryViewModel(app: Application) : AndroidViewModel(app) {
             offset = 0
             total = 0
             fetchPage(append = false, previous = previous)
-            if (_probeState.value != ProbeState.Probing) probe()
         }
     }
 
@@ -195,10 +195,10 @@ class HistoryViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /** Set the date filter (null clears it) and re-apply the filter client-side. */
-    /** Re-fetch first page + re-probe (auto-refresh polling + pull-to-refresh). */
+    /** Re-fetch first page (auto-refresh polling + pull-to-refresh).
+     * Reachability probing is owned by [JetsonConnectionManager]. */
     fun refresh() {
         loadFirstPage()
-        probe()
     }
 
     fun setFilterDate(date: LocalDate?) {
@@ -210,29 +210,6 @@ class HistoryViewModel(app: Application) : AndroidViewModel(app) {
     fun setFilterStatus(filter: HistoryStatusFilter) {
         _filterStatus.value = filter
         reapplyFilter()
-    }
-
-    /**
-     * Reachability probe — `GET /api/identify` bound to the active WiFi
-     * network so it reaches the Jetson HotSpot even with mobile data (5G)
-     * as the default internet uplink. Drives [probeState] (the banner).
-     */
-    fun probe() {
-        if (_probeState.value == ProbeState.Probing) return
-        _probeState.value = ProbeState.Probing
-        viewModelScope.launch {
-            try {
-                val cm = cm()
-                val wifi = if (cm != null) activeWifiNetwork(cm) else null
-                val event = JetsonClient.identify(ip = _ip.value, network = wifi)
-                _probeState.value =
-                    if (event.outcome == com.animalcounter.data.SyncEvent.Outcome.Success)
-                        ProbeState.Reachable
-                    else ProbeState.OutOfRange
-            } catch (t: Throwable) {
-                _probeState.value = ProbeState.OutOfRange
-            }
-        }
     }
 
     /**
@@ -266,10 +243,8 @@ class HistoryViewModel(app: Application) : AndroidViewModel(app) {
                     offlineMode = false
                     lastCachedAt = null
                     publishFiltered(hasMore = offset < total, loadingMore = false)
-                    // A successful fetch implies the Jetson is reachable.
-                    if (_probeState.value != ProbeState.Probing) {
-                        _probeState.value = ProbeState.Reachable
-                    }
+                    // A successful fetch implies the Jetson is reachable;
+                    // the manager owns the banner so nothing to set here.
                 }
                 is ApiResult.HttpError -> {
                     _state.value = if (previous is HistoryUiState.Loaded) {
