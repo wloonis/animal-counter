@@ -130,3 +130,4 @@ BL-74 Task 6: ADD syncResult StateFlow (Idle/Syncing/Success/Failure) + syncTime
 BL-74 Task 7: ADD Synchroniser l heure button to SettingsScreen.kt (syncResult obs, disabled-while-syncing, green Success auto-clear, red Failure persists) + 4 EN string keys (build dep); compileDebugKotlin BUILD SUCCESSFUL — 32288a0
 BL-74 Task 8: EN sync-time strings already present in values/strings.xml (added in Task 7 as build dep, values match spec exactly) — de0d5db (bookkeeping only)
 Task 9: FR sync-time strings — a84a508
+Task 10: CREATE docs/13_rtc_install.md (DS3231 HW-084 wiring, 3.3V/CR2032 safety, detection, standalone setup, how-it-works fallback chain, on-demand Android sync, verification, cross-refs to docs/12 + docs/14) — 4e5936f
