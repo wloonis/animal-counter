@@ -6,13 +6,15 @@ set -euo pipefail
 # (BL-74) on an already-prepared Jetson, without re-running the full
 # prepare_system.yml stack.
 #
-# Mirrors install_companion_standalone.sh's offline-friendly pattern: the
-# Jetson can be reached either via its WiFi hotspot (JETSON_HOTSPOT_IP) or its
-# regular LAN/WAN IP (JETSON_IP). The hotspot IP is fixed and known, so no
-# nmap scan is needed. The RTC playbook itself only touches files + a systemd
-# unit + installs i2c-tools — the i2c-tools apt install needs internet, so if
-# the Jetson is offline you must already have i2c-tools installed (or run this
-# over a connection with uplink).
+# Unlike install_companion_standalone.sh (which targets the fixed hotspot IP),
+# this script finds the Jetson via scripts/jetson_discover.sh (nmap scan of
+# WIFI_NETWORK, SSH probe) so it works when the Jetson is on its regular LAN/
+# WAN IP, not just the hotspot. An explicit JETSON_IP in .env.local short-
+# circuits discovery; JETSON_HOTSPOT_IP is a last-resort fallback. The RTC
+# playbook itself only touches files + a systemd unit + installs i2c-tools —
+# the i2c-tools apt install needs internet, so if the Jetson is offline you
+# must already have i2c-tools installed (or run this over a connection with
+# uplink).
 #
 # Prereq (MANUAL): the Jetson must be reachable over SSH from this PC, and the
 # DS3231 module must be wired to the 40-pin header (see docs/13_rtc_install.md).
@@ -26,9 +28,12 @@ set -euo pipefail
 #
 # Required .env.local vars:
 #   JETSON_PASSWORD     — sudo/SSH password on the Jetson
-#   JETSON_HOTSPOT_IP   — Jetson hotspot IP with CIDR (e.g. 192.168.100.1/24)
-#                         OR JETSON_IP (plain IP, no CIDR) for a LAN/WAN deploy
+#   WIFI_NETWORK       — CIDR to nmap-scan for the Jetson (e.g. 192.168.0.0/24)
+#                         used by jetson_discover.sh when JETSON_IP is not set
 #   JETSON_USER         — SSH user (default: nano-counter)
+# Optional .env.local vars (override discovery):
+#   JETSON_IP          — plain IP, no CIDR — skip discovery, deploy here
+#   JETSON_HOTSPOT_IP  — hotspot IP with CIDR — last-resort fallback target
 #
 # Exit codes:
 #   0 — RTC configured (playbook succeeded)
@@ -51,15 +56,35 @@ if [ -z "${JETSON_PASSWORD:-}" ]; then
   exit 1
 fi
 
-# Prefer the explicit JETSON_IP if set; otherwise fall back to the hotspot IP.
-# JETSON_HOTSPOT_IP carries a CIDR suffix that we strip for the inventory lookup.
+# Resolve the Jetson target IP:
+#   1. Explicit JETSON_IP in .env.local → use it directly (fast path, no scan).
+#   2. Else run scripts/jetson_discover.sh (nmap WIFI_NETWORK + SSH probe) →
+#      it writes JETSON_IP to /tmp/jetson_env.sh; source that.
+#   3. Else fall back to JETSON_HOTSPOT_IP (CIDR stripped) as a last resort.
+DISCOVER_SCRIPT="$(dirname "$0")/jetson_discover.sh"
 if [ -n "${JETSON_IP:-}" ]; then
+  JETSON_IP="${JETSON_IP%%/*}"
+  echo "→ Using explicit JETSON_IP=${JETSON_IP} from .env.local (discovery skipped)"
+elif [ -x "$DISCOVER_SCRIPT" ] && [ -n "${WIFI_NETWORK:-}" ]; then
+  echo "→ JETSON_IP not set — discovering the Jetson on WIFI_NETWORK=${WIFI_NETWORK}..."
+  # jetson_discover.sh sources .env.local itself, scans WIFI_NETWORK, probes SSH,
+  # and writes 'JETSON_IP=<ip>' to /tmp/jetson_env.sh on success (exit 0).
+  if bash "$DISCOVER_SCRIPT"; then
+    # shellcheck disable=SC1091
+    source /tmp/jetson_env.sh
+  else
+    echo "❌ Error: jetson_discover.sh did not find a reachable Jetson."
+    echo "   Check WIFI_NETWORK in .env.local and that the Jetson is on the LAN,"
+    echo "   or set JETSON_IP / JETSON_HOTSPOT_IP explicitly in .env.local."
+    exit 1
+  fi
   JETSON_IP="${JETSON_IP%%/*}"
 elif [ -n "${JETSON_HOTSPOT_IP:-}" ]; then
   JETSON_IP="${JETSON_HOTSPOT_IP%%/*}"
+  echo "→ No discover script / WIFI_NETWORK — falling back to JETSON_HOTSPOT_IP=${JETSON_IP}"
 else
-  echo "❌ Error: neither JETSON_IP nor JETSON_HOTSPOT_IP is set"
-  echo "   Set JETSON_HOTSPOT_IP (e.g. 192.168.100.1/24) or JETSON_IP in .env.local"
+  echo "❌ Error: cannot resolve the Jetson IP."
+  echo "   Set WIFI_NETWORK (for discovery) or JETSON_IP / JETSON_HOTSPOT_IP in .env.local."
   exit 1
 fi
 
@@ -77,9 +102,6 @@ echo "Prereq: the DS3231 (HW-084) module is wired to the 40-pin header"
 echo "        (VCC→pin1 3.3V, GND→pin6, SDA→pin3, SCL→pin5)."
 echo "        See docs/13_rtc_install.md for wiring + safety notes."
 echo "Target: ${JETSON_USER}@${JETSON_IP}"
-if [ -n "${JETSON_HOTSPOT_IP:-}" ] && [ "${JETSON_IP}" = "${JETSON_HOTSPOT_IP%%/*}" ]; then
-  echo "        (from JETSON_HOTSPOT_IP=${JETSON_HOTSPOT_IP})"
-fi
 echo
 read -r -p "Confirm the Jetson is reachable and the DS3231 is wired? [y/N] " ans
 case "$ans" in
