@@ -122,3 +122,5 @@ BL-73 Task 15: FINAL build + APK — assembleDebug BUILD SUCCESSFUL (35 up-to-da
 Task 1: CREATE configure_rtc.yml (i2c-tools + detect-ds3231.sh + rtc-ds3231.service) — 7cd5af8
 BL-74 Task 2: IMPORT configure_rtc.yml into prepare_system before k3s (used import_playbook, not import_tasks — configure_rtc.yml is a full standalone playbook with header; import_tasks failed syntax-check with "conflicting action statements"; split prepare_system into two plays around the import_playbook; both syntax-checks PASS) — 412f017
 BL-74 Task 3: REWORK k3s clock stack — k3s-clock-load.sh wrapper (RTC-preferred/fake-hwclock fallback) + rtc-ds3231.service in After=; ExecStartPre -> wrapper; fake-hwclock in Requires= kept; k3s-clock-ready untouched — df0c755
+
+BL-74 Task 4: CREATE install_rtc_standalone.sh (mirrors companion standalone: JETSON_HOTSPOT_IP or JETSON_IP, CIDR strip, manual checkpoint, SSH check, ansible-playbook configure_rtc.yml, --check/--tags passthrough, verify cmds) — d4fe048
