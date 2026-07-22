@@ -50,7 +50,7 @@ Add a DS3231 hardware real-time clock to the Jetson with runtime I2C detection a
 
 - [x] **Task 7: EDIT** `android/app/src/main/java/com/animalcounter/ui/settings/SettingsScreen.kt` — Add a "Synchroniser l'heure" button (Button composable) below the existing IP fields. Observe `vm.syncResult` state. Show: Idle → button enabled with label; Syncing → button disabled with loading indicator; Success → green "Synchronisé ✓" text (auto-clears via VM); Failure → red "Échec de synchronisation" text (persists). Button onClick → `vm.syncTime()`.
 
-- [ ] **Task 8: EDIT** `android/app/src/main/res/values/strings.xml` — Add: `settings_sync_time` ("Synchronize clock"), `settings_sync_success` ("Clock synchronized ✓"), `settings_sync_failure` ("Sync failed"), `settings_syncing` ("Synchronizing…").
+- [x] **Task 8: EDIT** `android/app/src/main/res/values/strings.xml` — Add: `settings_sync_time` ("Synchronize clock"), `settings_sync_success` ("Clock synchronized ✓"), `settings_sync_failure` ("Sync failed"), `settings_syncing` ("Synchronizing…").
 
 - [ ] **Task 9: EDIT** `android/app/src/main/res/values-fr/strings.xml` — Add FR translations: `settings_sync_time` ("Synchroniser l'heure"), `settings_sync_success` ("Heure synchronisée ✓"), `settings_sync_failure` ("Échec de la synchronisation"), `settings_syncing` ("Synchronisation…").
 
