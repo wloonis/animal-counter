@@ -53,6 +53,7 @@
   vars:
     rtc_detect_script: /usr/local/bin/detect-ds3231.sh
     rtc_init_script: /usr/local/bin/rtc-ds3231-init.sh
+    rtc_ntp_init_script: /usr/local/bin/init-ds3231-from-ntp.sh
     rtc_service: rtc-ds3231.service
     # The Orin Nano exposes the 40-pin header I2C on bus 7. The DS3231 has a
     # fixed 7-bit address of 0x68.
@@ -224,24 +225,42 @@
     #    it later. NTP daemon is left DISABLED after (production is offline;
     #    the DS3231 is the boot source and the Android button is the corrector).
     # -------------------------------------------------------------------
+    - name: Install init-ds3231-from-ntp.sh (install-time one-shot)
+      copy:
+        dest: "{{ rtc_ntp_init_script }}"
+        owner: root
+        group: root
+        mode: '0755'
+        content: |
+          #!/bin/sh
+          # init-ds3231-from-ntp.sh — BL-74 install-time one-shot: NTP-sync the
+          # system clock then persist it into the DS3231 so it starts accurate.
+          # Best-effort; offline -> no-op (the Android companion sync button
+          # initializes it later). NTP daemon is left DISABLED after (production
+          # is offline; DS3231 is the boot source, Android button is corrector).
+          set -eu
+          timedatectl set-ntp true
+          synced=no
+          i=0
+          while [ "$i" -lt 12 ]; do
+            if timedatectl show -p NTPSynchronized --value 2>/dev/null | grep -q yes; then synced=yes; break; fi
+            i=$((i+1)); sleep 2
+          done
+          timedatectl set-ntp false
+          if [ "$synced" = no ]; then
+            echo "offline — DS3231 left as-is (Android sync will initialize it)"
+            exit 0
+          fi
+          for name_path in /sys/class/rtc/*/device/name; do
+            [ -e "$name_path" ] || continue
+            [ "$(cat "$name_path" 2>/dev/null)" = ds1307 ] || continue
+            parent=$(dirname "$(dirname "$name_path")")
+            rtc_dev="/dev/$(basename "$parent")"
+            hwclock --systohc --rtc="$rtc_dev" && echo "DS3231 initialized from NTP -> $rtc_dev"
+          done
+
     - name: Initialize DS3231 from NTP if online (best-effort, install-time)
-      shell: |
-        set -e
-        timedatectl set-ntp true
-        synced=no
-        for i in $(seq 1 12); do
-          if timedatectl show -p NTPSynchronized --value 2>/dev/null | grep -q yes; then synced=yes; break; fi
-          sleep 2
-        done
-        timedatectl set-ntp false
-        if [ "$synced" = no ]; then echo "offline — DS3231 left as-is (Android sync will initialize it)"; exit 0; fi
-        for name_path in /sys/class/rtc/*/device/name; do
-          [ -e "$name_path" ] || continue
-          [ "$(cat "$name_path" 2>/dev/null)" = ds1307 ] || continue
-          rtc_dev="/dev/$(basename "$(dirname "$(dirname "$name_path")")")
-          hwclock --systohc --rtc="$rtc_dev" && echo "DS3231 initialized from NTP -> $rtc_dev"
-        done
-      args:
-        executable: /bin/bash
-      changed_when: "'DS3231 initialized from NTP' in stdout"
+      command: "{{ rtc_ntp_init_script }}"
+      register: ntp_init_result
+      changed_when: "'DS3231 initialized from NTP' in ntp_init_result.stdout"
       failed_when: false
