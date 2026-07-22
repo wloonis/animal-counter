@@ -137,3 +137,5 @@ Task 13: EDIT docs/02_setup.md — DS3231 cross-ref to docs/13_rtc_install.md + 
 BL-74 Task 14: EDIT docs/12_jetson_network_k3s_boot.md — TL;DR row notes DS3231 RTC option (→ docs/13_rtc_install.md) + §5 RTC-upgrade blockquote cross-ref (supersedes fake-hwclock as primary, kept as tertiary fallback) — d125c62
 
 Task 15: README.md TOC renumbered + 13_rtc_install.md row inserted — 03b87ab
+
+Task 16: UPDATE cross-refs in docs/01_quickstart.md, docs/12, docs/14, docs/15 (troubleshooting→14, reset→15) — c63fea8
