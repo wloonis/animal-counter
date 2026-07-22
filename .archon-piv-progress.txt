@@ -127,3 +127,4 @@ BL-74 Task 4: CREATE install_rtc_standalone.sh (mirrors companion standalone: JE
 
 BL-74 Task 5: REMOVE keep-alive loop + time push from JetsonConnectionManager; ADD public suspend syncTime(): SyncResult (activeIp-or-probe then POST /api/time); postTime() now returns SyncEvent; compileDebugKotlin BUILD SUCCESSFUL — 5751137
 BL-74 Task 6: ADD syncResult StateFlow (Idle/Syncing/Success/Failure) + syncTime() (delegates to JetsonConnectionManager.syncTime, auto-clears Success after 5s, Failure persists) + clearSyncResult(); compileDebugKotlin BUILD SUCCESSFUL — cfa9040
+BL-74 Task 7: ADD Synchroniser l heure button to SettingsScreen.kt (syncResult obs, disabled-while-syncing, green Success auto-clear, red Failure persists) + 4 EN string keys (build dep); compileDebugKotlin BUILD SUCCESSFUL — 32288a0
