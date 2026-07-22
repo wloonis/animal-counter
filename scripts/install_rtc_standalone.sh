@@ -65,7 +65,7 @@ DISCOVER_SCRIPT="$(dirname "$0")/jetson_discover.sh"
 if [ -n "${JETSON_IP:-}" ]; then
   JETSON_IP="${JETSON_IP%%/*}"
   echo "→ Using explicit JETSON_IP=${JETSON_IP} from .env.local (discovery skipped)"
-elif [ -x "$DISCOVER_SCRIPT" ] && [ -n "${WIFI_NETWORK:-}" ]; then
+elif [ -f "$DISCOVER_SCRIPT" ] && [ -n "${WIFI_NETWORK:-}" ]; then
   echo "→ JETSON_IP not set — discovering the Jetson on WIFI_NETWORK=${WIFI_NETWORK}..."
   # jetson_discover.sh sources .env.local itself, scans WIFI_NETWORK, probes SSH,
   # and writes 'JETSON_IP=<ip>' to /tmp/jetson_env.sh on success (exit 0).
