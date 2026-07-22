@@ -56,32 +56,35 @@ if [ -z "${JETSON_PASSWORD:-}" ]; then
   exit 1
 fi
 
-# Resolve the Jetson target IP:
+# Resolve the Jetson target IP (works in BOTH modes):
 #   1. Explicit JETSON_IP in .env.local → use it directly (fast path, no scan).
-#   2. Else run scripts/jetson_discover.sh (nmap WIFI_NETWORK + SSH probe) →
-#      it writes JETSON_IP to /tmp/jetson_env.sh; source that.
-#   3. Else fall back to JETSON_HOTSPOT_IP (CIDR stripped) as a last resort.
+#   2. Else a quick SSH reachability probe of JETSON_HOTSPOT_IP (4s, no nmap) →
+#      if the PC is on the Jetson WiFi hotspot, the Jetson is right there at the
+#      fixed hotspot IP, so use it immediately (hotspot mode, no internet).
+#   3. Else run scripts/jetson_discover.sh (nmap WIFI_NETWORK + SSH probe) →
+#      LAN mode; it writes JETSON_IP to /tmp/jetson_env.sh; source that.
+#   4. Else fall back to JETSON_HOTSPOT_IP (CIDR stripped) as a last resort.
 DISCOVER_SCRIPT="$(dirname "$0")/jetson_discover.sh"
+HOTSPOT_IP="${JETSON_HOTSPOT_IP%%/*}"
 if [ -n "${JETSON_IP:-}" ]; then
   JETSON_IP="${JETSON_IP%%/*}"
   echo "→ Using explicit JETSON_IP=${JETSON_IP} from .env.local (discovery skipped)"
-elif [ -f "$DISCOVER_SCRIPT" ] && [ -n "${WIFI_NETWORK:-}" ]; then
-  echo "→ JETSON_IP not set — discovering the Jetson on WIFI_NETWORK=${WIFI_NETWORK}..."
-  # jetson_discover.sh sources .env.local itself, scans WIFI_NETWORK, probes SSH,
-  # and writes 'JETSON_IP=<ip>' to /tmp/jetson_env.sh on success (exit 0).
-  if bash "$DISCOVER_SCRIPT"; then
-    # shellcheck disable=SC1091
-    source /tmp/jetson_env.sh
-  else
-    echo "❌ Error: jetson_discover.sh did not find a reachable Jetson."
-    echo "   Check WIFI_NETWORK in .env.local and that the Jetson is on the LAN,"
-    echo "   or set JETSON_IP / JETSON_HOTSPOT_IP explicitly in .env.local."
-    exit 1
-  fi
+elif [ -n "${HOTSPOT_IP:-}" ] && sshpass -p "$JETSON_PASSWORD" ssh -n \
+     -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=4 \
+     "${JETSON_USER}@${HOTSPOT_IP}" 'echo reachable' >/dev/null 2>&1; then
+  JETSON_IP="$HOTSPOT_IP"
+  echo "→ Jetson reachable on the WiFi hotspot: JETSON_HOTSPOT_IP=${JETSON_IP} (hotspot mode)"
+elif [ -f "$DISCOVER_SCRIPT" ] && [ -n "${WIFI_NETWORK:-}" ] && bash "$DISCOVER_SCRIPT" >/tmp/jetson_discover.log 2>&1; then
+  # LAN mode: discover found the Jetson on WIFI_NETWORK. (In hotspot mode the
+  # PC has no route to WIFI_NETWORK, so discover finds nothing and we fall
+  # through to the JETSON_HOTSPOT_IP fallback below.)
+  # shellcheck disable=SC1091
+  source /tmp/jetson_env.sh
   JETSON_IP="${JETSON_IP%%/*}"
-elif [ -n "${JETSON_HOTSPOT_IP:-}" ]; then
-  JETSON_IP="${JETSON_HOTSPOT_IP%%/*}"
-  echo "→ No discover script / WIFI_NETWORK — falling back to JETSON_HOTSPOT_IP=${JETSON_IP}"
+  echo "→ Discovered Jetson on WIFI_NETWORK=${WIFI_NETWORK}: ${JETSON_IP}"
+elif [ -n "${HOTSPOT_IP:-}" ]; then
+  JETSON_IP="$HOTSPOT_IP"
+  echo "→ Discover found nothing — falling back to JETSON_HOTSPOT_IP=${JETSON_IP}"
 else
   echo "❌ Error: cannot resolve the Jetson IP."
   echo "   Set WIFI_NETWORK (for discovery) or JETSON_IP / JETSON_HOTSPOT_IP in .env.local."
