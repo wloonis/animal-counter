@@ -213,3 +213,35 @@
         enabled: yes
         daemon_reload: yes
         state: started
+
+    # -------------------------------------------------------------------
+    # 5. Initialize the DS3231 from NTP at install time (best-effort).
+    #    The DS3231 ships unset (OSF flag, year 2000); if the Jetson is online
+    #    at install (prepare_jetson.sh runs from an online PC), do a one-shot
+    #    NTP sync then persist the corrected system clock into the DS3231 so it
+    #    starts accurate and survives reboots. Offline at install -> skip; the
+    #    Android companion sync button (which persists to the DS3231) initializes
+    #    it later. NTP daemon is left DISABLED after (production is offline;
+    #    the DS3231 is the boot source and the Android button is the corrector).
+    # -------------------------------------------------------------------
+    - name: Initialize DS3231 from NTP if online (best-effort, install-time)
+      shell: |
+        set -e
+        timedatectl set-ntp true
+        synced=no
+        for i in $(seq 1 12); do
+          if timedatectl show -p NTPSynchronized --value 2>/dev/null | grep -q yes; then synced=yes; break; fi
+          sleep 2
+        done
+        timedatectl set-ntp false
+        if [ "$synced" = no ]; then echo "offline — DS3231 left as-is (Android sync will initialize it)"; exit 0; fi
+        for name_path in /sys/class/rtc/*/device/name; do
+          [ -e "$name_path" ] || continue
+          [ "$(cat "$name_path" 2>/dev/null)" = ds1307 ] || continue
+          rtc_dev="/dev/$(basename "$(dirname "$(dirname "$name_path")")")
+          hwclock --systohc --rtc="$rtc_dev" && echo "DS3231 initialized from NTP -> $rtc_dev"
+        done
+      args:
+        executable: /bin/bash
+      changed_when: "'DS3231 initialized from NTP' in stdout"
+      failed_when: false
