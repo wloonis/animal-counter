@@ -64,7 +64,7 @@ Add a DS3231 hardware real-time clock to the Jetson with runtime I2C detection a
 
 - [x] **Task 14: EDIT** `docs/12_jetson_network_k3s_boot.md` — Add a cross-ref/note in §5 (the fake-hwclock / k3s-clock-ready section) pointing to `docs/13_rtc_install.md` for the RTC-based clock source that supersedes fake-hwclock when a DS3231 is installed. Update the TL;DR table row about "no RTC battery" to note the DS3231 option.
 
-- [ ] **Task 15: EDIT** `README.md` — Update the Table of contents table: insert `docs/13_rtc_install.md` row, renumber troubleshooting to 14, reset to 15. Update all internal cross-references that link to `docs/13_troubleshooting.md` → `docs/14_troubleshooting.md` and `docs/14_reset.md` → `docs/15_reset.md`.
+- [x] **Task 15: EDIT** `README.md` — Update the Table of contents table: insert `docs/13_rtc_install.md` row, renumber troubleshooting to 14, reset to 15. Update all internal cross-references that link to `docs/13_troubleshooting.md` → `docs/14_troubleshooting.md` and `docs/14_reset.md` → `docs/15_reset.md`.
 
 - [ ] **Task 16: EDIT** all other docs/files with cross-references to renumbered docs — grep for `13_troubleshooting` and `14_reset` across all docs and update links to the new numbers (`14_troubleshooting`, `15_reset`). This includes any cross-refs in `docs/01_quickstart.md`, `docs/02_setup.md`, `docs/03_deployment.md`, etc.
 

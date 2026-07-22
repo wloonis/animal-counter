@@ -135,3 +135,5 @@ BL-74 Task 11: RENAME docs/13_troubleshooting.md → docs/14_troubleshooting.md 
 BL-74 Task 12: RENAME docs/14_reset.md → docs/15_reset.md (git mv + title #15 — Reset Procedure) — 4f3e069
 Task 13: EDIT docs/02_setup.md — DS3231 cross-ref to docs/13_rtc_install.md + configure_rtc.yml row in §5 playbook table — 246064c
 BL-74 Task 14: EDIT docs/12_jetson_network_k3s_boot.md — TL;DR row notes DS3231 RTC option (→ docs/13_rtc_install.md) + §5 RTC-upgrade blockquote cross-ref (supersedes fake-hwclock as primary, kept as tertiary fallback) — d125c62
+
+Task 15: README.md TOC renumbered + 13_rtc_install.md row inserted — 03b87ab
