@@ -110,7 +110,7 @@ case "$ans" in
 esac
 
 # Quick reachability check (ssh port) before invoking ansible.
-if ! sshpass -p "$JETSON_PASSWORD" ssh \
+if ! sshpass -p "$JETSON_PASSWORD" ssh -n \
      -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
      -o ConnectTimeout=5 \
      "$JETSON_USER@$JETSON_IP" 'echo reachable' >/dev/null 2>&1; then

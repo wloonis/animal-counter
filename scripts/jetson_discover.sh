@@ -65,7 +65,7 @@ for ip in $IPS; do
     # Augmenter le timeout et ajouter des tentatives
     for ((try=1; try<=3; try++)); do
         echo "  Tentative $try/3..."
-        if sshpass -p "$JETSON_PASSWORD" ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 $JETSON_USER@$ip "echo '✅ CONNECTÉ à $ip'" 2>/dev/null; then
+        if sshpass -p "$JETSON_PASSWORD" ssh -n -o StrictHostKeyChecking=no -o ConnectTimeout=10 $JETSON_USER@$ip "echo '✅ CONNECTÉ à $ip'" 2>/dev/null; then
             echo "🎯 Jetson trouvé : $ip"
             export JETSON_IP="$ip"
             echo "JETSON_IP=$JETSON_IP" > /tmp/jetson_env.sh
