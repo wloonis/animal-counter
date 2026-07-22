@@ -79,7 +79,7 @@
     #    and on stale local CUDA repos) when the binary is already there.
     # -------------------------------------------------------------------
     - name: Check if i2cdetect is already installed
-      command: command -v i2cdetect
+      shell: command -v i2cdetect
       register: i2cdetect_check
       changed_when: false
       failed_when: false
