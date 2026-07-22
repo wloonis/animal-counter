@@ -261,27 +261,53 @@
     state: directory
     mode: '0755'
 
-# Override k3s : demarrer APRES docker + dummy0 + fake-hwclock + clock-ready,
-# et recharger fake-hwclock au tout dernier moment (ExecStartPre) pour qu'une
-# synchro RTC tardive (RTC mort -> 1970) ne desynchronise pas k3s.
+# Override k3s : demarrer APRES docker + dummy0 + fake-hwclock + clock-ready
+# + rtc-ds3231, et recharger l horloge au tout dernier moment (ExecStartPre via
+# k3s-clock-load.sh) pour qu'une synchro RTC tardive (RTC mort -> 1970) ne
+# desynchronise pas k3s. k3s-clock-load.sh prefere le DS3231 (/dev/rtc1) et
+# retombe sur fake-hwclock si absent.
 # Requires= sur dummy0-net + fake-hwclock : `After=` seul n'active PAS la
 # dependance, il l'ordonne seulement. Sans Requires=, l'installeur k3s
 # (`systemctl start k3s`) ne demarrait pas dummy0-net -> dummy0 absent ->
 # k3s plantait "unable to find interface dummy0". Requires= force le demarrage.
-# k3s-clock-ready reste en After= seulement (active au boot via WantedBy= ;
-# ne pas le Requires= pour eviter un hang de 10 min a l install si l horloge
-# n est pas encore syncée).
+# k3s-clock-ready et rtc-ds3231 restent en After= seulement (actives au boot
+# via WantedBy= ; ne pas les Requires= pour eviter un hang a l install si
+# l horloge n est pas encore syncée / RTC absent).
+# --------------------------------------------------
+# 8b. k3s-clock-load — wrapper ExecStartPre preferring RTC over fake-hwclock
+# --------------------------------------------------
+# Runtime detection at k3s start time: if the DS3231 RTC registered
+# /dev/rtc1 (rtc-ds3231.service, BL-74), sync the system clock from it;
+# otherwise fall back to fake-hwclock (tertiary). This avoids templating
+# the override conditionally at install time and handles hot-swap of the
+# RTC module.
+- name: Créer le script k3s-clock-load (RTC-preferred, fake-hwclock fallback)
+  copy:
+    dest: /usr/local/bin/k3s-clock-load.sh
+    mode: '0755'
+    content: |
+      #!/bin/sh
+      # k3s-clock-load: ExecStartPre for k3s. Prefers the DS3231 RTC
+      # (/dev/rtc1, registered by rtc-ds3231.service) and falls back to
+      # fake-hwclock when the RTC module is absent or not yet registered.
+      if [ -e /dev/rtc1 ]; then
+        /sbin/hwclock --hctosys --rtc=/dev/rtc1 2>/dev/null
+      else
+        /sbin/fake-hwclock load 2>/dev/null
+      fi
+  become: yes
+
 - name: Configurer l override k3s (dependances + ExecStartPre clock)
   copy:
     dest: /etc/systemd/system/k3s.service.d/override.conf
     mode: '0644'
     content: |
       [Unit]
-      After=docker.service dummy0-net.service fake-hwclock.service k3s-clock-ready.service
+      After=docker.service dummy0-net.service fake-hwclock.service k3s-clock-ready.service rtc-ds3231.service
       Requires=docker.service dummy0-net.service fake-hwclock.service
 
       [Service]
-      ExecStartPre=/sbin/fake-hwclock load
+      ExecStartPre=/usr/local/bin/k3s-clock-load.sh
 
 - name: Install K3s
   shell: |
