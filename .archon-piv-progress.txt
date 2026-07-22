@@ -124,3 +124,5 @@ BL-74 Task 2: IMPORT configure_rtc.yml into prepare_system before k3s (used impo
 BL-74 Task 3: REWORK k3s clock stack — k3s-clock-load.sh wrapper (RTC-preferred/fake-hwclock fallback) + rtc-ds3231.service in After=; ExecStartPre -> wrapper; fake-hwclock in Requires= kept; k3s-clock-ready untouched — df0c755
 
 BL-74 Task 4: CREATE install_rtc_standalone.sh (mirrors companion standalone: JETSON_HOTSPOT_IP or JETSON_IP, CIDR strip, manual checkpoint, SSH check, ansible-playbook configure_rtc.yml, --check/--tags passthrough, verify cmds) — d4fe048
+
+BL-74 Task 5: REMOVE keep-alive loop + time push from JetsonConnectionManager; ADD public suspend syncTime(): SyncResult (activeIp-or-probe then POST /api/time); postTime() now returns SyncEvent; compileDebugKotlin BUILD SUCCESSFUL — 5751137
