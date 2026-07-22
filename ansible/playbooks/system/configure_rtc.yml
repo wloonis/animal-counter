@@ -73,12 +73,23 @@
   tasks:
     # -------------------------------------------------------------------
     # 1. Install i2c-tools (provides i2cdetect for the runtime probe).
+    #    i2c-tools ships with JetPack 6.2, so on a prepared Jetson i2cdetect is
+    #    usually already present — skip the apt install (and its apt-cache
+    #    refresh, which can fail on a no-RTC Jetson whose clock lags real time
+    #    and on stale local CUDA repos) when the binary is already there.
     # -------------------------------------------------------------------
+    - name: Check if i2cdetect is already installed
+      command: command -v i2cdetect
+      register: i2cdetect_check
+      changed_when: false
+      failed_when: false
+
     - name: Install i2c-tools (runtime RTC probe)
       apt:
         name: i2c-tools
         state: present
         update_cache: yes
+      when: i2cdetect_check.rc != 0
 
     # -------------------------------------------------------------------
     # 2. detect-ds3231.sh — probe I2C bus 7 for the DS3231 (0x68).
