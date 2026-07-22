@@ -56,7 +56,7 @@ Add a DS3231 hardware real-time clock to the Jetson with runtime I2C detection a
 
 - [x] **Task 10: CREATE** `docs/13_rtc_install.md` — Hardware wiring section (DS3231 HW-084 → 40-pin header: VCC→pin1 3.3V, GND→pin6, SDA→pin3, SCL→pin5). 3.3V-not-5V safety note (the HW-084 module has a charge circuit for LIR2032; with a non-rechargeable CR2032, do NOT supply 5V — use 3.3V to avoid the charge circuit). CR2032-vs-LIR2032 charge-circuit caveat. Detection section (`i2cdetect -y 7` → 0x68). Standalone setup commands (direct `ansible-playbook -i ansible/inventory/jetsons.yml ansible/playbooks/system/configure_rtc.yml` and `scripts/install_rtc_standalone.sh`). How it works section (rtc-ds3231.service, k3s-clock-load.sh, fallback chain). Cross-ref to `docs/12_jetson_network_k3s_boot.md` for the clock stack background.
 
-- [ ] **Task 11: RENAME** `docs/13_troubleshooting.md` → `docs/14_troubleshooting.md` — Git mv, update internal title/heading if it references its own number.
+- [x] **Task 11: RENAME** `docs/13_troubleshooting.md` → `docs/14_troubleshooting.md` — Git mv, update internal title/heading if it references its own number.
 
 - [ ] **Task 12: RENAME** `docs/14_reset.md` → `docs/15_reset.md` — Git mv, update internal title/heading if it references its own number.
 
