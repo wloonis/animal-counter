@@ -132,3 +132,4 @@ BL-74 Task 8: EN sync-time strings already present in values/strings.xml (added 
 Task 9: FR sync-time strings — a84a508
 Task 10: CREATE docs/13_rtc_install.md (DS3231 HW-084 wiring, 3.3V/CR2032 safety, detection, standalone setup, how-it-works fallback chain, on-demand Android sync, verification, cross-refs to docs/12 + docs/14) — 4e5936f
 BL-74 Task 11: RENAME docs/13_troubleshooting.md → docs/14_troubleshooting.md (git mv + title #14 — Troubleshooting) — 5b3f0a7
+BL-74 Task 12: RENAME docs/14_reset.md → docs/15_reset.md (git mv + title #15 — Reset Procedure) — 4f3e069
