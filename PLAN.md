@@ -60,7 +60,7 @@ Add a DS3231 hardware real-time clock to the Jetson with runtime I2C detection a
 
 - [x] **Task 12: RENAME** `docs/14_reset.md` → `docs/15_reset.md` — Git mv, update internal title/heading if it references its own number.
 
-- [ ] **Task 13: EDIT** `docs/02_setup.md` — Enhance the existing DS3231 mention in the Hardware section (around line 18) with a cross-ref to `docs/13_rtc_install.md`. Update the playbook table in §5 to include `configure_rtc.yml` (new row, step 3, before `install_k3s_with_docker_tasks.yml`).
+- [x] **Task 13: EDIT** `docs/02_setup.md` — Enhance the existing DS3231 mention in the Hardware section (around line 18) with a cross-ref to `docs/13_rtc_install.md`. Update the playbook table in §5 to include `configure_rtc.yml` (new row, step 3, before `install_k3s_with_docker_tasks.yml`).
 
 - [ ] **Task 14: EDIT** `docs/12_jetson_network_k3s_boot.md` — Add a cross-ref/note in §5 (the fake-hwclock / k3s-clock-ready section) pointing to `docs/13_rtc_install.md` for the RTC-based clock source that supersedes fake-hwclock when a DS3231 is installed. Update the TL;DR table row about "no RTC battery" to note the DS3231 option.
 
