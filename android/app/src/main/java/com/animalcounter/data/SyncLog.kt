@@ -9,8 +9,9 @@ import kotlinx.coroutines.flow.update
  * Process-wide, bounded ring buffer of recent [SyncEvent]s.
  *
  * A single `object` singleton so both the foreground UI (the log view +
- * out-of-range banner) and the background [com.animalcounter.service.TimeSyncService]
- * push into the same log. Thread-safe via a [MutableStateFlow] updated with
+ * out-of-range banner) and the app-lifecycle-scoped
+ * [com.animalcounter.net.JetsonConnectionManager] push into the same log.
+ * Thread-safe via a [MutableStateFlow] updated with
  * `update { }`; consumers observe [events] as a Compose-collectable
  * [StateFlow]. The buffer is capped at [CAP] entries; oldest entries are
  * dropped once the cap is reached (FIFO eviction).
@@ -28,7 +29,7 @@ object SyncLog {
     /**
      * Whether the phone is currently connected to the Jetson HotSpot WiFi.
      *
-     * Updated by [com.animalcounter.service.TimeSyncService]'s `NetworkCallback`
+     * Updated by [com.animalcounter.net.JetsonConnectionManager]'s `NetworkCallback`
      * (`onAvailable`/`onLost`); observed by the UI to show the out-of-range
      * message when the companion services are unreachable. Defaults to `false`.
      */

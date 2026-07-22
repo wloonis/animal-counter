@@ -10,9 +10,10 @@ import com.animalcounter.data.DEFAULT_JETSON_IP
 import com.animalcounter.data.SettingsRepository
 import com.animalcounter.net.ApiResult
 import com.animalcounter.net.JetsonClient
+import com.animalcounter.net.JetsonConnectionManager
 import com.animalcounter.net.SessionDetail
 import com.animalcounter.net.activeWifiNetwork
-import com.animalcounter.ui.timesync.ProbeState
+import com.animalcounter.net.ProbeState
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -47,16 +48,17 @@ sealed interface SessionDetailUiState {
  * The session id is supplied either via the Navigation Compose back-stack
  * argument (`session/{sessionId}` → [SavedStateHandle] key `"sessionId"`)
  * or by an explicit [load] call. Seeds the Jetson IP from
- * [SettingsRepository] (read-only here — the IP is edited on the Time sync
- * tab) and exposes:
+ * [SettingsRepository.activeIp] (resolved by [JetsonConnectionManager];
+ * read-only here — the IP is edited on the Settings tab) and exposes:
  *  - [state]: the current [SessionDetailUiState] (drives the screen body).
- *  - [probeState]: the reachability banner state (reuses the Time sync
- *    [ProbeState] so the banner style is identical).
+ *  - [probeState]: the reachability banner state (delegated to the
+ *    app-wide [JetsonConnectionManager] so the banner style is identical).
  *  - [sessionId]: the session id currently being displayed.
  *
- * Reachability is probed once on init (via `GET /api/identify`); [load] is
- * then called with the seeded session id. [refresh] re-fetches the same id
- * (used by pull-to-refresh).
+ * Reachability probing is owned by [JetsonConnectionManager]; [load] is
+ * called with the seeded session id on init and re-run whenever the
+ * resolved active IP changes. [refresh] re-fetches the same id (used by
+ * pull-to-refresh).
  */
 class SessionDetailViewModel(
     app: Application,
@@ -65,7 +67,7 @@ class SessionDetailViewModel(
 
     private val repo = SettingsRepository(app)
 
-    /** Current Jetson IP (seeded from DataStore; source of truth = Time sync tab). */
+    /** Current Jetson IP (resolved by the connection manager; source of truth = Settings tab). */
     private val _ip = MutableStateFlow(DEFAULT_JETSON_IP)
     val ip: StateFlow<String> = _ip.asStateFlow()
 
@@ -76,23 +78,23 @@ class SessionDetailViewModel(
     private val _state = MutableStateFlow<SessionDetailUiState>(SessionDetailUiState.Loading)
     val state: StateFlow<SessionDetailUiState> = _state.asStateFlow()
 
-    private val _probeState = MutableStateFlow(ProbeState.Idle)
-    val probeState: StateFlow<ProbeState> = _probeState.asStateFlow()
-
-    /** Whether the initial DataStore IP has been loaded (guards the first fetch). */
-    private var loaded = false
+    /**
+     * Reachability banner state — delegated to the app-wide
+     * [JetsonConnectionManager] (the single canonical probe owner, BL-73).
+     * Screens that read `vm.probeState` are unchanged.
+     */
+    val probeState: StateFlow<ProbeState>
+        get() = JetsonConnectionManager.probeState
 
     init {
-        // Seed the IP from DataStore, then probe + load the seeded session once.
+        // Re-seed the IP + refetch whenever the manager resolves a new active
+        // Jetson IP (hotspot/LAN/manual). The first emission is the hotspot
+        // default; a second follows once the parallel probe resolves.
         viewModelScope.launch {
-            repo.jetsonIp.collect { saved ->
-                _ip.value = saved
-                if (!loaded) {
-                    loaded = true
-                    probe()
-                    val id = _sessionId.value
-                    if (id.isNotBlank()) load(id) else _state.value = SessionDetailUiState.Error("no id")
-                }
+            repo.activeIp.collect { ip ->
+                _ip.value = ip
+                val id = _sessionId.value
+                if (id.isNotBlank()) load(id) else _state.value = SessionDetailUiState.Error("no id")
             }
         }
     }
@@ -112,38 +114,13 @@ class SessionDetailViewModel(
     }
 
     /**
-     * Re-fetch the current session (pull-to-refresh). No-op when no id is set.
+     * Re-fetch the current session (pull-to-refresh). No-op when no id is
+     * set. Reachability probing is owned by [JetsonConnectionManager].
      */
     fun refresh() {
         val id = _sessionId.value
         if (id.isBlank()) return
-        viewModelScope.launch {
-            fetch(id)
-            if (_probeState.value != ProbeState.Probing) probe()
-        }
-    }
-
-    /**
-     * Reachability probe — `GET /api/identify` bound to the active WiFi
-     * network so it reaches the Jetson HotSpot even with mobile data (5G)
-     * as the default internet uplink. Drives [probeState] (the banner).
-     */
-    fun probe() {
-        if (_probeState.value == ProbeState.Probing) return
-        _probeState.value = ProbeState.Probing
-        viewModelScope.launch {
-            try {
-                val cm = cm()
-                val wifi = if (cm != null) activeWifiNetwork(cm) else null
-                val event = JetsonClient.identify(ip = _ip.value, network = wifi)
-                _probeState.value =
-                    if (event.outcome == com.animalcounter.data.SyncEvent.Outcome.Success)
-                        ProbeState.Reachable
-                    else ProbeState.OutOfRange
-            } catch (t: Throwable) {
-                _probeState.value = ProbeState.OutOfRange
-            }
-        }
+        viewModelScope.launch { fetch(id) }
     }
 
     /**
@@ -165,10 +142,8 @@ class SessionDetailViewModel(
             when (val result = JetsonClient.getSession(ip = _ip.value, id = sessionId, network = wifi)) {
                 is ApiResult.Success -> {
                     _state.value = SessionDetailUiState.Loaded(result.data)
-                    // A successful fetch implies the Jetson is reachable.
-                    if (_probeState.value != ProbeState.Probing) {
-                        _probeState.value = ProbeState.Reachable
-                    }
+                    // A successful fetch implies the Jetson is reachable; the
+                    // manager owns the banner so nothing to set here.
                 }
                 is ApiResult.HttpError -> {
                     _state.value = if (previous is SessionDetailUiState.Loaded) previous

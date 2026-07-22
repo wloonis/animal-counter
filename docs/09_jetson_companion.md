@@ -18,13 +18,15 @@ and [BL-68](https://github.com/wloonis/animal-counter/issues).
 
 ## Why it exists — the Jetson has no RTC
 
-> **Only needed without a hardware RTC.** This companion clock-sync service is
-> a **software workaround** for the Jetson's missing real-time clock. If you've
-> installed a **DS3231 RTC module** on the Jetson Nano (the optional hardware
-> listed in [`02_setup.md`](02_setup.md) § Hardware), the system clock survives
-> power cycles on its own and **this service is unnecessary** — leave it
-> uninstalled or disable it. The companion is only useful on Jetsons that boot
-> with no RTC battery and no other clock reference.
+> **Role with a hardware RTC (BL-74).** If you've installed a **DS3231 RTC
+> module** ([`13_rtc_install.md`](13_rtc_install.md)), the system clock
+> survives power cycles on its own — but the DS3231 can still drift or start
+> uninitialized. The companion is then the **corrector**: the Android
+> "Synchroniser l'heure" button POSTs the phone's time, the companion applies
+> it to the system clock **and persists it into the DS3231** (`hwclock
+> --systohc`), so the correction survives the next reboot. On a Jetson with no
+> RTC at all, the companion is the only clock source (see below). Either way
+> the companion stays installed.
 
 The production Jetson has **no coin-cell battery**, so it has no real-time
 clock. On every offline boot (no internet, no NTP) its system clock is stuck
@@ -104,6 +106,20 @@ Input is strictly validated and `timedatectl` is always invoked via
 `shell=True`), so the JSON body is **never** interpolated into a shell
 command — no injection surface.
 
+#### Durability — persists to the DS3231 (BL-74)
+
+On a Jetson with a **DS3231 RTC** installed, `POST /api/time` does more than
+`timedatectl set-time` + `set-timezone`: after the system clock is set, the
+companion runs `hwclock --systohc --rtc=/dev/rtcN` to **persist the corrected
+time into the DS3231**. It finds the DS3231 dynamically by driver name
+(`ds1307` in `/sys/class/rtc/*/device/name`) → `/dev/rtcN` (N varies — the
+Jetson has two onboard Tegra RTCs, so the DS3231 is typically `/dev/rtc2`).
+This is **best-effort**: if no DS3231 is present, it is a silent no-op and the
+time-set still succeeds. Without this step a manual sync would set only the
+system clock and be lost on the next reboot (the drifted DS3231 would reset
+it); with it, the next boot reads the corrected DS3231 and the clock is sane
+without a phone. See [`13_rtc_install.md`](13_rtc_install.md).
+
 ### v2 — read-only history & video (BL-68)
 
 The companion is bumped to **version `"2"`** (`GET /api/identify` returns
@@ -129,13 +145,22 @@ See the [curl examples](#curl-examples) below and
 
 ## NTP note
 
-The service always runs `timedatectl set-ntp false` **before** `set-time`.
+The companion always runs `timedatectl set-ntp false` **before** `set-time`.
 This is required: if `systemd-timesyncd` (NTP) is still active, it can reject
 the manual `set-time` write or immediately overwrite it with its own
 (nonsense, offline) value. Disabling NTP first ensures the manual time sticks.
 
-If you ever want to re-enable NTP (e.g. the Jetson later gets internet), run
-it manually on the host:
+**Production keeps NTP disabled** (the Jetson is offline; the NTP daemon is
+useless there). The DS3231 is the boot source and the Android
+"Synchroniser l'heure" button is the corrector (and now persists to the
+DS3231 — see [`13_rtc_install.md`](13_rtc_install.md)). The only time NTP is
+touched is the **install-time one-shot** (`init-ds3231-from-ntp.sh`, run by
+`configure_rtc.yml`): on an **online** Jetson it syncs once, persists the
+result into the DS3231 (`hwclock --systohc`), then disables NTP again; on an
+**offline** Jetson it skips cleanly.
+
+If you ever want to re-enable NTP (e.g. the Jetson later gets permanent
+internet), run it manually on the host:
 
 ```bash
 sudo timedatectl set-ntp true
@@ -234,10 +259,12 @@ curl -s -o /dev/null -w "%{http_code}\n" \
 ```
 
 After a successful `POST /api/time`, verify on the Jetson that the clock
-reflects the change:
+reflects the change — and (with a DS3231) that the correction persisted into
+the RTC:
 
 ```bash
-ssh nano-counter@192.168.0.180 'timedatectl'
+ssh nano-counter@192.168.0.180 'timedatectl'                       # system clock
+ssh nano-counter@192.168.0.180 'sudo hwclock -r --rtc=/dev/rtc2'    # DS3231 (BL-74)
 ```
 
 And confirm the service is enabled + active:

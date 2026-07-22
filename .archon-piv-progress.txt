@@ -103,3 +103,39 @@ Task 5: CREATE app/src/cli.py — 0c63b4d
 Task 6: REWRITE app/src/main.py as thin entry point + fix split-module imports — fd2bf7d
 Task 7: TRANSLATE French comments → English — VERIFIED (translation already done during copy in Tasks 1-6; grep confirms no French comments remain in the 5 new modules + main.py) — f2800b6
 Task 8: VERIFY re-exports — VERIFIED main.py exposes DisplayThread/shared_state/settings/logger (+ settings.OUTPUT_VIDEO_PATH); standalone check all OK. test_finalize_recording_filename.py 5 failures are PRE-EXISTING (present at 68acd8c pre-refactor; missing record_start_ts stub from BL-71, out of scope "No test file modified"). test_counting/test_counting_invariance PASS; test_history_writer×2 + test_tracking×1 also pre-existing failures in files BL-29 did not touch. Zero BL-29 regressions. — 951c207
+BL-73 Task 1: RELOCATE ProbeState to net/ package — 2214815
+BL-73 Task 2: STRICT identify() — isValidIdentifyBody + 6 unit tests; fixed 3 pre-existing broken SessionDetail tests (events→videos) — 46c42fd
+BL-73 Task 3: EXTEND SettingsRepository — hotspotIp/lanIp/autoSelect flows+setters, _activeIp/activeIp StateFlow + suspend setActiveIp, DEFAULT_JETSON_IP kept (aliased to DEFAULT_HOTSPOT_IP) — 3b4f420
+BL-73 Task 4: CREATE JetsonConnectionManager — parallel strict probe + WiFi callback + ~30s keep-alive loop + POST /api/time — 02e6df9
+BL-73 Task 5: WIRE JetsonConnectionManager to app lifecycle (DisposableEffect + LifecycleEventObserver ON_START/ON_STOP, drop TimeSyncService start) — ea42e38
+BL-73 Task 6: CONVERT Dashboard + LiveCount ViewModels — activeIp collect + delegated probeState, removed probe()/_probeState/loaded — 1a713d4
+BL-73 Task 7: CONVERT History/Startups/Sessions ViewModels — activeIp collect + delegated probeState, removed probe()/_probeState/loaded/unused imports — 8903ed5
+BL-73 Task 8: CONVERT SessionDetail + VideoDetail ViewModels — activeIp collect + delegated probeState (SessionDetail); activeIp collect + repo.activeIp.value in loadDetail (VideoDetail), removed probe()/_probeState/loaded + unused imports — 170a685
+BL-73 Task 9: CREATE Settings screen (SettingsViewModel + SettingsScreen, Scaffold/TopAppBar/Switch/OutlinedTextFields, stringResource labels, debounced persist + rescan on toggle/candidate edit) + 5 EN strings — f99313b
+
+BL-73 Task 10: WIRE Settings tab + drop Synchro route (drop TIME_SYNC navitem+route+TimeSyncScreen/Schedule imports, add SETTINGS dest+navitem+SettingsScreen, add tab_settings EN/FR) — a5ef046
+BL-73 Task 11: DELETE dead files (TimeSyncService/BootReceiver/TimeSyncScreen/TimeSyncViewModel + empty dirs) + stale KDoc refs fixed — a04cef7
+BL-73 Task 12: CLEAN manifest — dropped TimeSyncService/BootReceiver + RECEIVE_BOOT_COMPLETED/FOREGROUND_SERVICE/FOREGROUND_SERVICE_DATA_SYNC/POST_NOTIFICATIONS perms; only INTERNET+ACCESS_NETWORK_STATE remain; assembleDebug BUILD SUCCESSFUL — fad2996
+BL-73 Task 13: CLEAN MainActivity — dropped requestPostNotificationsIfNeeded + requestNotificationPermission + Manifest/Build/ActivityResultContracts imports; assembleDebug BUILD SUCCESSFUL — e0edac8
+BL-73 Task 14: STRINGS — added tab_settings/settings_* EN+FR (FR was missing settings block), pruned unused tab_time_sync/notification_channel_*/foreground_notification_*/time_sync_placeholder/sync_now/log_empty/type_probe/type_sync/outcome_*/jetson_ip_label; kept refresh+jetson banners; assembleDebug BUILD SUCCESSFUL
+BL-73 Task 15: FINAL build + APK — assembleDebug BUILD SUCCESSFUL (35 up-to-date), testDebugUnitTest 37 tests 0 failures/0 errors (JetsonClientParsingTest 31 + JetsonClientIdentifyValidationTest 6), app-debug.apk 57M produced, copied to ~/Desktop/animal-counter-bl73-debug.apk (not committed)
+Task 1: CREATE configure_rtc.yml (i2c-tools + detect-ds3231.sh + rtc-ds3231.service) — 7cd5af8
+BL-74 Task 2: IMPORT configure_rtc.yml into prepare_system before k3s (used import_playbook, not import_tasks — configure_rtc.yml is a full standalone playbook with header; import_tasks failed syntax-check with "conflicting action statements"; split prepare_system into two plays around the import_playbook; both syntax-checks PASS) — 412f017
+BL-74 Task 3: REWORK k3s clock stack — k3s-clock-load.sh wrapper (RTC-preferred/fake-hwclock fallback) + rtc-ds3231.service in After=; ExecStartPre -> wrapper; fake-hwclock in Requires= kept; k3s-clock-ready untouched — df0c755
+
+BL-74 Task 4: CREATE install_rtc_standalone.sh (mirrors companion standalone: JETSON_HOTSPOT_IP or JETSON_IP, CIDR strip, manual checkpoint, SSH check, ansible-playbook configure_rtc.yml, --check/--tags passthrough, verify cmds) — d4fe048
+
+BL-74 Task 5: REMOVE keep-alive loop + time push from JetsonConnectionManager; ADD public suspend syncTime(): SyncResult (activeIp-or-probe then POST /api/time); postTime() now returns SyncEvent; compileDebugKotlin BUILD SUCCESSFUL — 5751137
+BL-74 Task 6: ADD syncResult StateFlow (Idle/Syncing/Success/Failure) + syncTime() (delegates to JetsonConnectionManager.syncTime, auto-clears Success after 5s, Failure persists) + clearSyncResult(); compileDebugKotlin BUILD SUCCESSFUL — cfa9040
+BL-74 Task 7: ADD Synchroniser l heure button to SettingsScreen.kt (syncResult obs, disabled-while-syncing, green Success auto-clear, red Failure persists) + 4 EN string keys (build dep); compileDebugKotlin BUILD SUCCESSFUL — 32288a0
+BL-74 Task 8: EN sync-time strings already present in values/strings.xml (added in Task 7 as build dep, values match spec exactly) — de0d5db (bookkeeping only)
+Task 9: FR sync-time strings — a84a508
+Task 10: CREATE docs/13_rtc_install.md (DS3231 HW-084 wiring, 3.3V/CR2032 safety, detection, standalone setup, how-it-works fallback chain, on-demand Android sync, verification, cross-refs to docs/12 + docs/14) — 4e5936f
+BL-74 Task 11: RENAME docs/13_troubleshooting.md → docs/14_troubleshooting.md (git mv + title #14 — Troubleshooting) — 5b3f0a7
+BL-74 Task 12: RENAME docs/14_reset.md → docs/15_reset.md (git mv + title #15 — Reset Procedure) — 4f3e069
+Task 13: EDIT docs/02_setup.md — DS3231 cross-ref to docs/13_rtc_install.md + configure_rtc.yml row in §5 playbook table — 246064c
+BL-74 Task 14: EDIT docs/12_jetson_network_k3s_boot.md — TL;DR row notes DS3231 RTC option (→ docs/13_rtc_install.md) + §5 RTC-upgrade blockquote cross-ref (supersedes fake-hwclock as primary, kept as tertiary fallback) — d125c62
+
+Task 15: README.md TOC renumbered + 13_rtc_install.md row inserted — 03b87ab
+
+Task 16: UPDATE cross-refs in docs/01_quickstart.md, docs/12, docs/14, docs/15 (troubleshooting→14, reset→15) — c63fea8

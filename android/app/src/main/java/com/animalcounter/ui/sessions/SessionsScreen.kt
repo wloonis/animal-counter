@@ -38,10 +38,11 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
 import com.animalcounter.R
 import com.animalcounter.net.SessionSummary
+import com.animalcounter.ui.common.AppNavIcon
 import com.animalcounter.ui.common.OfflineBanner
 import com.animalcounter.ui.sessiondetail.ReachabilityBanner
 import com.animalcounter.ui.sessiondetail.formatIso
-import com.animalcounter.ui.timesync.ProbeState
+import com.animalcounter.net.ProbeState
 
 /**
  * Sessions list — reached from the Dashboard "Sessions: N" entry. Lists
@@ -53,7 +54,7 @@ import com.animalcounter.ui.timesync.ProbeState
 @Composable
 fun SessionsScreen(
     navController: NavController,
-    onBack: () -> Unit = {},
+    onBack: (() -> Unit)? = null,
 ) {
     val vm: SessionsViewModel = viewModel()
     val state by vm.state.collectAsState()
@@ -65,11 +66,15 @@ fun SessionsScreen(
             TopAppBar(
                 title = { Text(stringResource(R.string.sessions_title)) },
                 navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = stringResource(R.string.detail_back),
-                        )
+                    if (onBack != null) {
+                        IconButton(onClick = onBack) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                                contentDescription = stringResource(R.string.detail_back),
+                            )
+                        }
+                    } else {
+                        AppNavIcon()
                     }
                 },
             )

@@ -58,8 +58,9 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.animalcounter.R
 import com.animalcounter.net.DailyBucket
+import com.animalcounter.ui.common.AppNavIcon
 import com.animalcounter.ui.common.OfflineBanner
-import com.animalcounter.ui.timesync.ProbeState
+import com.animalcounter.net.ProbeState
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import java.util.Locale
@@ -107,6 +108,7 @@ fun DashboardScreen(onSessionsClick: (days: Int) -> Unit = {}) {
         topBar = {
             CenterAlignedTopAppBar(
                 title = { Text(stringResource(R.string.dashboard_title)) },
+                navigationIcon = { AppNavIcon() },
             )
         },
     ) { innerPadding ->

@@ -14,7 +14,7 @@ import java.net.URL
 
 /**
  * Companion-side HTTP contract (BL-64 `companion.py`):
- *  - `GET  /api/identify` → `{"service":"animal-counter-companion","version":"<v>"}`
+ *  - `GET  /api/identify` → `{"service":"jetson-companion","version":"<v>"}`
  *  - `POST /api/time`     → body `{"time":"<ISO8601>","tz":"<IANA>"}` → 200 on success,
  *    400 on a malformed/unparseable time/tz, 5xx if the Jetson cannot apply it.
  *
@@ -65,6 +65,21 @@ fun nowIsoForCompanion(): String {
     return odt.format(java.time.format.DateTimeFormatter.ISO_OFFSET_DATE_TIME)
 }
 
+/**
+ * Strict validation of a `GET /api/identify` response body (BL-73).
+ *
+ * Returns `true` only when [body] parses as JSON and its top-level `service`
+ * field equals `"jetson-companion"` exactly. **No version check** is performed
+ * (deliberately dropped — the companion's `version` string is informational).
+ * Anything else (non-JSON, missing `service`, a wrong `service` value) is
+ * rejected so a stale/foreign HTTP 200 response is never mistaken for the
+ * Jetson companion. Extracted as a pure top-level `internal` function so the
+ * unit tests can exercise it without HTTP.
+ */
+internal fun isValidIdentifyBody(body: String): Boolean = runCatching {
+    JSONObject(body).optString("service") == "jetson-companion"
+}.getOrDefault(false)
+
 private const val JETSON_PORT = 8090
 
 /** Read/connect timeout for the companion probe/push. */
@@ -105,13 +120,26 @@ object JetsonClient {
             try {
                 val code = conn.responseCode
                 val body = conn.readBody(code)
-                if (code == 200) {
+                if (code == 200 && isValidIdentifyBody(body)) {
+                    // Strict identify success: HTTP 200 AND a body whose
+                    // `service` field is exactly `"jetson-companion"`
+                    // (validated by [isValidIdentifyBody]). Surface the
+                    // `service`/`version` pair as the detail line.
                     val parsed = runCatching {
                         val json = JSONObject(body)
                         "${json.optString("service")} ${json.optString("version")}".trim()
                     }.getOrNull()
                     val detail = parsed?.ifBlank { body } ?: body
                     SyncEvent(now, SyncEvent.Type.Probe, SyncEvent.Outcome.Success, detail)
+                } else if (code == 200) {
+                    // HTTP 200 but the body is NOT a valid Jetson identify
+                    // response (wrong/missing `service`, or non-JSON). Treat
+                    // it as a reachability failure and surface the raw body so
+                    // the operator can see what answered instead of the Jetson.
+                    SyncEvent(
+                        now, SyncEvent.Type.Probe, SyncEvent.Outcome.Network,
+                        body,
+                    )
                 } else {
                     SyncEvent(
                         now, SyncEvent.Type.Probe,
