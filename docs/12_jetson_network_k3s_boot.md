@@ -132,11 +132,15 @@ covering a gap the others leave:
 
 > **RTC upgrade (optional):** installing a DS3231 hardware RTC (HW-084 module)
 > on the 40-pin header **supersedes** fake-hwclock as the primary clock source.
-> The `rtc-ds3231.service` (runtime I2C detection) sets the clock from
-> `/dev/rtc1` at boot, and the k3s `ExecStartPre` is rerouted to
-> `k3s-clock-load.sh`, which prefers the RTC (`/dev/rtc1`) and only falls back to
-> `fake-hwclock load` when the RTC is absent. fake-hwclock is kept as a
-> tertiary fallback for RTC-less boots. See
+> The `rtc-ds3231.service` (runtime I2C detection) sets the clock from the
+> DS3231 at boot (found dynamically by driver name `ds1307` → `/dev/rtcN` —
+> typically `/dev/rtc2` on the Orin Nano, which has two onboard Tegra RTCs),
+> and the k3s `ExecStartPre` is rerouted to
+> `k3s-clock-load.sh`, which prefers the DS3231 (same dynamic lookup, never a
+> hardcoded `/dev/rtc1` which would read an onboard Tegra RTC stuck at 1970)
+> and only falls back to `fake-hwclock load` when the RTC is absent. A
+> year-sanity gate skips `hctosys` if the DS3231 reads year < 2024 (uninitialized).
+> fake-hwclock is kept as a tertiary fallback for RTC-less boots. See
 > [docs/13_rtc_install.md](13_rtc_install.md) for hardware wiring, the
 > detection service, and the full fallback chain.
 

@@ -264,7 +264,9 @@
 # Override k3s : demarrer APRES docker + dummy0 + fake-hwclock + clock-ready
 # + rtc-ds3231, et recharger l horloge au tout dernier moment (ExecStartPre via
 # k3s-clock-load.sh) pour qu'une synchro RTC tardive (RTC mort -> 1970) ne
-# desynchronise pas k3s. k3s-clock-load.sh prefere le DS3231 (/dev/rtc1) et
+# desynchronise pas k3s. k3s-clock-load.sh prefere le DS3231 (detecte
+# dynamiquement par driver name 'ds1307' -> /dev/rtcN, N variable car le Jetson
+# a deux RTC Tegra onboard ; le DS3231 est typiquement /dev/rtc2, PAS rtc1) et
 # retombe sur fake-hwclock si absent.
 # Requires= sur dummy0-net + fake-hwclock : `After=` seul n'active PAS la
 # dependance, il l'ordonne seulement. Sans Requires=, l'installeur k3s
@@ -276,22 +278,35 @@
 # --------------------------------------------------
 # 8b. k3s-clock-load — wrapper ExecStartPre preferring RTC over fake-hwclock
 # --------------------------------------------------
-# Runtime detection at k3s start time: if the DS3231 RTC registered
-# /dev/rtc1 (rtc-ds3231.service, BL-74), sync the system clock from it;
-# otherwise fall back to fake-hwclock (tertiary). This avoids templating
-# the override conditionally at install time and handles hot-swap of the
-# RTC module.
+# Runtime detection at k3s start time: find the DS3231 by driver name
+# ('ds1307' in /sys/class/rtc/*/device/name) and sync the system clock from
+# its /dev/rtcN (N varies — the Jetson has two onboard Tegra RTCs, so the
+# DS3231 is typically /dev/rtc2, NOT /dev/rtc1; hardcoding /dev/rtc1 would
+# read the onboard Tegra RTC which is stuck at 1970). Falls back to
+# fake-hwclock (tertiary) when the DS3231 is absent or not yet registered.
+# This avoids templating the override conditionally at install time and
+# handles hot-swap of the RTC module.
 - name: Créer le script k3s-clock-load (RTC-preferred, fake-hwclock fallback)
   copy:
     dest: /usr/local/bin/k3s-clock-load.sh
     mode: '0755'
     content: |
       #!/bin/sh
-      # k3s-clock-load: ExecStartPre for k3s. Prefers the DS3231 RTC
-      # (/dev/rtc1, registered by rtc-ds3231.service) and falls back to
-      # fake-hwclock when the RTC module is absent or not yet registered.
-      if [ -e /dev/rtc1 ]; then
-        /sbin/hwclock --hctosys --rtc=/dev/rtc1 2>/dev/null
+      # k3s-clock-load: ExecStartPre for k3s. Prefers the DS3231 RTC and
+      # falls back to fake-hwclock when the RTC module is absent or not yet
+      # registered. Finds the DS3231 dynamically by driver name (ds1307) so
+      # it never reads an onboard Tegra RTC (stuck at 1970). N varies because
+      # the Jetson has two onboard Tegra RTCs — the DS3231 is typically
+      # /dev/rtc2, NOT /dev/rtc1.
+      RTC=""
+      for np in /sys/class/rtc/*/device/name; do
+        [ -e "$np" ] || continue
+        [ "$(cat "$np" 2>/dev/null)" = ds1307 ] || continue
+        RTC="/dev/$(basename "$(dirname "$(dirname "$np")")")"
+        break
+      done
+      if [ -n "$RTC" ] && [ -e "$RTC" ]; then
+        /sbin/hwclock --hctosys --rtc="$RTC" 2>/dev/null
       else
         /sbin/fake-hwclock load 2>/dev/null
       fi

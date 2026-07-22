@@ -36,11 +36,11 @@ starting a new batch).
 | [`docs/06_validation.md`](docs/06_validation.md) | Validation workflow (`validate_on_jetson.sh`, manifest, reports) |
 | [`docs/07_development_workflow.md`](docs/07_development_workflow.md) | Development workflow with `archon-jetson-dev` (CLARIFY → plan → validate → PR) |
 | [`docs/08_offline_image_transfer.md`](docs/08_offline_image_transfer.md) | Transfer a Docker image from a test Jetson to an offline production Jetson via the PC |
-| [`docs/09_jetson_companion.md`](docs/09_jetson_companion.md) | Jetson companion service & API (BL-64/68) — clock-sync + read-only history/video API, port 8090 |
-| [`docs/10_android_app.md`](docs/10_android_app.md) | Android companion app (BL-65/69/72) — time sync, live count, sessions/history, videos |
+| [`docs/09_jetson_companion.md`](docs/09_jetson_companion.md) | Jetson companion service & API (BL-64/68/74) — clock-sync (durable: persists to DS3231) + read-only history/video API, port 8090 |
+| [`docs/10_android_app.md`](docs/10_android_app.md) | Android companion app (BL-65/69/72/73/74) — probe-based IP, manual "Synchroniser l'heure" (durable), live count, sessions/history, videos |
 | [`docs/11_counting_history.md`](docs/11_counting_history.md) | Persistent counting-session history (store) (BL-68/71) — JSONL schema, compaction, disk guard (HTTP API in 09) |
 | [`docs/12_jetson_network_k3s_boot.md`](docs/12_jetson_network_k3s_boot.md) | Jetson networking & K3s boot (WiFi-only, no RTC, no ethernet cable) — why + how |
-| [`docs/13_rtc_install.md`](docs/13_rtc_install.md) | DS3231 RTC (HW-084) install + on-demand Android time sync (BL-74) |
+| [`docs/13_rtc_install.md`](docs/13_rtc_install.md) | DS3231 RTC (HW-084) install + on-demand, durable Android time sync (BL-74) |
 | [`docs/14_troubleshooting.md`](docs/14_troubleshooting.md) | Troubleshooting |
 | [`docs/15_reset.md`](docs/15_reset.md) | Reset procedures |
 

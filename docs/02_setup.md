@@ -152,7 +152,7 @@ It calls these playbooks in sequence (do not invoke them individually):
 |------|----------|---------|
 | 3 | `prepare_system.yml` | Base packages, user, sudoers, timezone |
 | 3 | `network_ssh.yml` | Network + SSH hardening |
-| 3 | `configure_rtc.yml` | Detect + register a DS3231 RTC on I2C bus 7 (`/dev/rtc1`) and sync the system clock from it; no-op if absent (see [`13_rtc_install.md`](13_rtc_install.md)) |
+| 3 | `configure_rtc.yml` | Detect + register a DS3231 RTC on I2C bus 7 (dynamic `/dev/rtcN`, typically `/dev/rtc2` — the Orin Nano has two onboard Tegra RTCs) and sync the system clock from it; no-op if absent, year-sanity-gated; also a one-shot NTP→systohc at install (see [`13_rtc_install.md`](13_rtc_install.md)) |
 | 3 | `install_k3s_with_docker_tasks.yml` | Install Docker + K3s (single-node, WiFi-only — dummy0 node-ip + fake-hwclock, see [`12_jetson_network_k3s_boot.md`](12_jetson_network_k3s_boot.md)) |
 | 4 | `deploy_app.yml` | Build + deploy the countingapp |
 | 4.5 | `configure_static_wifi.yml` | Pin the internet WiFi to a static IP (`192.168.0.180`) |
