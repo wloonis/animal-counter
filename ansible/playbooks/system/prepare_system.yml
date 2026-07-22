@@ -124,6 +124,26 @@
           command: sudo jetson_clocks
           tags: optimize
 
+# -------------------------------------------------------------------
+# Import the DS3231 RTC playbook as its own play. `configure_rtc.yml` is a
+# standalone, directly-runnable playbook (it carries its own
+# `hosts: all` / `become: true` / `gather_facts: yes` header + vars +
+# handlers, like configure_companion.yml), so it must be pulled in with
+# `import_playbook` (which expands a full play) rather than `import_tasks`
+# (which only accepts a flat tasks list). It runs BEFORE the k3s import
+# below so the `rtc-ds3231.service` boot unit is installed before the k3s
+# clock stack is configured (Task 3 reworks k3s ExecStartPre to prefer
+# /dev/rtc1 and falls back to fake-hwclock when the RTC is absent).
+# -------------------------------------------------------------------
+- import_playbook: configure_rtc.yml
+  tags: rtc
+
+- name: Prepare Jetson system (K3s installation)
+  hosts: all
+  become: true
+  gather_facts: yes
+
+  tasks:
     - name: Import k3s installation playbook (Jetson optimized)
       import_tasks: install_k3s_with_docker_tasks.yml
       tags: k3s

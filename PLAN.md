@@ -1,305 +1,87 @@
-# Plan: BL-73 — Auto-select the Jetson companion IP (Android/Kotlin)
+# Plan: BL-74 — DS3231 RTC (HW-084) install + companion on-demand fallback
 
 ## Summary
 
-Make the Android app auto-select the Jetson companion IP by probing two
-candidates (hotspot `192.168.100.1` + LAN `192.168.0.180`) in parallel with
-strict `/api/identify` service-name validation, expose the resolved IP as a
-shared `activeIp` consumed by all tabs, re-scope clock sync to the app
-lifecycle (foreground only) via a ~30s keep-alive re-probe loop, add a Settings
-screen for manual override + auto-select toggle, and remove the Synchro tab +
-the foreground `TimeSyncService` + `BootReceiver`. Kotlin-only; no `app/`
-(Jetson) changes, so the `jetson-validate` node auto-skips.
+Add a DS3231 hardware real-time clock to the Jetson with runtime I2C detection at boot, rework the k3s clock stack to prefer the RTC over fake-hwclock (keeping fake-hwclock as tertiary fallback), and replace the Android app's automatic ~30s keep-alive time-push loop with a manual on-demand "Synchroniser l'heure" button in Settings. The companion service stays installed as fallback.
 
 ## In Scope
 
-- Strict `JetsonClient.identify()` validation: HTTP 200 + valid JSON +
-  `json.service == "jetson-companion"` (exact). **No version check.** Reject
-  otherwise. Fix the stale docstring (it says `"animal-counter-companion"`;
-  the real companion returns `{"service":"jetson-companion","version":"4"}`).
-- `SettingsRepository`: two configurable candidate IPs (`jetson_ip_hotspot`
-  default `192.168.100.1`, `jetson_ip_lan` default `192.168.0.180`), an
-  `auto_select` Boolean (default `true`), a manual-override IP, and an
-  `activeIp: StateFlow<String>` resolved by a parallel WiFi-bound probe.
-- App-lifecycle-scoped sync: `POST /api/time` runs ONLY while the app is
-  open (foreground/process alive) — on app open, on WiFi join while the app
-  is open (`NetworkCallback` registered on the app process), and via the
-  keep-alive loop. NOT in the background, NOT at boot. Everything stops when
-  the app is closed.
-- Keep-alive loop (app-scoped, ~30s on WiFi): re-probe active IP; on failure
-  re-run the parallel selection probe; on (re)found Jetson → `POST /api/time`
-  + clear banner; on none → out-of-range banner. Paused off-WiFi. **This loop,
-  the WiFi `NetworkCallback`, and every `POST /api/time` run ONLY while the
-  application is open (foreground/process alive) — they are fully stopped
-  (`stop()` cancels the coroutine loop + unregisters the callback) the moment
-  the app is closed/backgrounded, and NEVER run at boot or in the background.**
-- Remove `TimeSyncService` (foreground service + notification) + `BootReceiver`
-  (+ `RECEIVE_BOOT_COMPLETED`). Drop `FOREGROUND_SERVICE`,
-  `FOREGROUND_SERVICE_DATA_SYNC`, `POST_NOTIFICATIONS`, `RECEIVE_BOOT_COMPLETED`.
-  Keep only `INTERNET` + `ACCESS_NETWORK_STATE`.
-- Remove the Synchro tab (`TIME_SYNC` nav item + route + `TimeSyncScreen`).
-  Surface "Jetson connecté / hors de portée" via the existing reachability
-  banner (Dashboard + Live count). Relocate the `ProbeState` enum (currently in
-  `TimeSyncViewModel`, imported by 6 ViewModels + 2 screens).
-- New Settings bottom-nav tab (replacing Synchro): auto-select toggle + manual
-  override IP field (typing flips `auto_select=false`; toggle re-enables auto)
-  + the two candidate IPs as editable fields.
-- `MainActivity`: drop the `POST_NOTIFICATIONS` runtime request + the
-  `startForegroundService` LaunchedEffect (replaced by manager start/stop).
-- Strings: prune now-unused `tab_time_sync` / notification / sync-log strings;
-  add Settings labels (both `values/` and `values-fr/`).
-- Unit-test the strict identify validation (extract a pure validator, no HTTP).
+- New ansible playbook `configure_rtc.yml` with boot-time `rtc-ds3231.service` (I2C bus 7, addr 0x68, `rtc-ds1307` registration → `/dev/rtc1` → `hwclock --hctosys`)
+- Import `configure_rtc.yml` into `prepare_system.yml` before the k3s import
+- Rework k3s `ExecStartPre` to a runtime wrapper script (`k3s-clock-load.sh`) that prefers RTC, falls back to fake-hwclock
+- New standalone wrapper `scripts/install_rtc_standalone.sh`
+- Android: remove keep-alive loop + automatic `POST /api/time` from `JetsonConnectionManager`; add public `syncTime()` method
+- Android: add "Synchroniser l'heure" button in Settings with inline result (auto-clear ~5s on success, persist on failure)
+- New `docs/13_rtc_install.md` with hardware wiring, safety notes, detection, setup commands
+- Renumber docs: troubleshooting → 14, reset → 15 (new RTC doc takes slot 13, troubleshooting/reset stay last)
+- Update `docs/02_setup.md`, `docs/12_jetson_network_k3s_boot.md`, `README.md` TOC with cross-refs
 
 ## Out of Scope
 
-- Any changes under `app/` (Jetson Python). `jetson-validate` auto-detects an
-  empty `git diff --name-only main...HEAD -- app/` and signals VALIDATED.
-- SSID-based selection or `ACCESS_FINE_LOCATION`.
-- Version validation (explicitly dropped per user).
-- Background / boot time sync.
-- Changing the read-only history/count ViewModels' fetch/state-machine logic
-  beyond swapping the IP source and the probe/banner source.
+- No changes to `app/` (counting pipeline) — jetson-validate auto-skips
+- No changes to the companion service itself (`configure_companion.yml` / `jetson-companion` script)
+- No changes to `k3s-clock-ready.sh` script logic (stays as sanity gate, no RTC awareness)
+- No changes to fake-hwclock installation (kept as tertiary fallback)
+- No app/counting business validation
 
 ## Architecture Decisions
 
-- **ProbeState relocation**: move the `ProbeState` enum out of `TimeSyncViewModel`
-  into `net/ProbeState.kt` (shared, no Android deps) so it survives the
-  TimeSyncScreen deletion. All 6 history/count ViewModels + Dashboard/LiveCount
-  screens import it from there.
-- **Shared connection state**: a new singleton `JetsonConnectionManager`
-  (`net/JetsonConnectionManager.kt`) owns the WiFi `NetworkCallback`, the ~30s
-  keep-alive coroutine loop, the parallel selection probe, and `POST /api/time`.
-  It exposes `probeState: StateFlow<ProbeState>` (the app-wide banner) and
-  writes the resolved IP into `SettingsRepository.activeIp` via
-  `setActiveIp(...)`. This replaces the per-ViewModel `probe()` methods and the
-  foreground service. Rationale: one canonical reachability state, no
-  background service, no new permissions.
-- **activeIp ownership**: `SettingsRepository` owns `_activeIp:
-  MutableStateFlow<String>` (default = hotspot default) and exposes
-  `activeIp: StateFlow<String>`; `JetsonConnectionManager` is its only writer.
-  ViewModels read `repo.activeIp` (drop the old `repo.jetsonIp` seeding).
-  This honors the decision that the repository exposes `activeIp`.
-- **ViewModel probeState delegation**: each ViewModel keeps its
-  `probeState: StateFlow<ProbeState>` property but now returns
-  `JetsonConnectionManager.probeState` directly (one-line delegate), so screens
-  that read `vm.probeState` need no changes. The ViewModels' `probe()` methods
-  and init-probe calls are removed.
-- **Re-fetch on activeIp change**: ViewModels observe `repo.activeIp` and
-  re-fetch when it changes (the manager resolves it shortly after app open).
-  Initial activeIp is the hotspot default; a fetch may run with the default
-  before resolution then re-fetch on the resolved IP — acceptable, since
-  fetch failures already degrade gracefully.
-- **App lifecycle scoping without a new dependency**: tie
-  `JetsonConnectionManager.start/stop` to the `MainActivity` lifecycle via a
-  `DisposableEffect` + `LifecycleEventObserver` (`ON_START`→start,
-  `ON_STOP`→stop) in `AnimalCounterApp`, reusing the existing pattern from
-  `LiveCountScreen`. No `lifecycle-process`/`ProcessLifecycleOwner` dependency
-  is added (activity ON_STOP ≈ app backgrounded).
-- **Strict identify, testable**: extract `internal fun isValidIdentifyBody(body:
-  String): Boolean` (parses JSON, checks `service == "jetson-companion"` exact)
-  so the unit test can validate it without HTTP. `identify()` returns
-  `Outcome.Success` only when HTTP 200 AND `isValidIdentifyBody(body)`.
-- **Settings screen placement (implementer's call → decided)**: a new
-  bottom-nav **Settings tab replacing Synchro** (5 tabs: Dashboard / Live /
-  History / Startups / Settings). Rationale: keeps IP editing one tap away and
-  preserves the 5-tab layout users already know.
-- **Candidate-IP exposure (implementer's call → decided)**: expose both
-  candidate IPs (hotspot/lan) as editable fields in Settings (they are
-  "configurable" per decision 3) alongside the auto-select toggle and the
-  single manual-override IP field. Typing the manual IP flips
-  `auto_select=false`; toggling re-enables auto.
-- **Per-task compile check** is the Gradle build (NOT `python3 -m py_compile`):
-  `cd android && export JAVA_HOME=$HOME/.local/jdk/jdk-17.0.19+10 && export
-  ANDROID_HOME=$HOME/Android/Sdk && ./gradlew :app:assembleDebug --no-daemon
-  --console=plain`. Commit per task. Toolchain already installed (AGENTS.md §9).
+- **k3s-clock-ready.sh stays unchanged** — `rtc-ds3231.service` runs `Before=k3s-clock-ready.service`, so the RTC sets the clock before the gate runs. No redundant `hwclock --hctosys` in k3s-clock-ready.sh (no double mechanism).
+- **k3s ExecStartPre becomes a wrapper script** (`/usr/local/bin/k3s-clock-load.sh`) — checks `/dev/rtc1` at runtime: present → `hwclock --hctosys --rtc=/dev/rtc1`; absent → `fake-hwclock load` (tertiary fallback). This avoids templating the override.conf conditionally at install time and handles hot-swap of the RTC module.
+- **rtc-ds3231.service does runtime detection at boot** — `i2cdetect -y 7` checks for 0x68; if absent, service exits cleanly (Type=oneshot, no error). If present: `echo ds1307 0x68 > /sys/class/i2c-adapter/i2c-7/new_device` then `hwclock --hctosys --rtc=/dev/rtc1`. Idempotent: `new_device` write is guarded by checking if `/dev/rtc1` already exists.
+- **Android: remove entire keep-alive loop, not just the time push** — the `KEEP_ALIVE_INTERVAL_MS`, `keepAliveJob`, and `startKeepAliveIfOnWifi()` are all removed. The NetworkCallback `onAvailable` still calls `rescan()` (for IP selection) but without the `postTime()` call. `rescan()` no longer calls `postTime()` on a successful probe.
+- **Android: syncTime() exposed on JetsonConnectionManager** — reuses the existing private `postTime()` and probe logic. If `activeIp` is set, uses it directly; if not, runs a fresh `rescan()`-style probe first. Returns a result enum/sealed class for the Settings UI.
+- **Doc renumbering: RTC takes slot 13** — the original issue referenced `docs/15_rtc_install.md`, but the confirmed decision is to insert as `docs/13_rtc_install.md` and renumber troubleshooting → 14, reset → 15, keeping troubleshooting/reset last.
+- **Standalone wrapper created** — `scripts/install_rtc_standalone.sh` mirrors `install_companion_standalone.sh` (env loading, validation, manual checkpoint, ansible-playbook invocation) for re-running just the RTC config on an already-prepared Jetson.
 
 ## Tasks
 
-Tasks are ordered so the Gradle build is green after every commit. The
-implement node does ONE task per fresh session, runs the Gradle build, and
-commits.
+- [x] **Task 1: CREATE** `ansible/playbooks/system/configure_rtc.yml` — New playbook. Installs `i2c-tools` package. Creates `/usr/local/bin/detect-ds3231.sh` script (runs `i2cdetect -y 7`, greps for `68`, exits 0/1). Creates `/etc/systemd/system/rtc-ds3231.service` (Type=oneshot, RemainAfterExit=yes, After=systemd-modules-load.service, Before=k3s-clock-ready.service, WantedBy=multi-user.target). The service ExecStart runs detect-ds3231.sh; if RTC present: guard `/dev/rtc1` existence (skip if already registered), `echo ds1307 0x68 > /sys/class/i2c-adapter/i2c-7/new_device`, `hwclock --hctosys --rtc=/dev/rtc1`; if absent: exit 0 (clean no-op). Enables + starts the service. Reloads systemd daemon. Idempotent (service module + copy with content matching). Standalone-callable (has its own `hosts: all`, `become: true`, `gather_facts: yes` header like other system playbooks).
 
-- [x] Task 1: RELOCATE `ProbeState` — create
-  `android/app/src/main/java/com/animalcounter/net/ProbeState.kt` containing the
-  `enum class ProbeState { Idle, Probing, Reachable, OutOfRange }`. Remove the
-  enum from `ui/timesync/TimeSyncViewModel.kt`. Update the `import` in all
-  consumers to `com.animalcounter.net.ProbeState`: `DashboardViewModel`,
-  `LiveCountViewModel`, `HistoryViewModel`, `StartupsViewModel`,
-  `SessionsViewModel`, `SessionDetailViewModel`, `DashboardScreen`,
-  `LiveCountScreen`, and `TimeSyncViewModel`. Build green.
+- [x] **Task 2: EDIT** `ansible/playbooks/system/prepare_system.yml` — Add `import_tasks: configure_rtc.yml` with `tags: rtc` immediately BEFORE the existing `import_tasks: install_k3s_with_docker_tasks.yml` block (around line 80, after the optimize block). This ensures the RTC service is installed before the k3s clock stack is configured.
 
-- [x] Task 2: STRICT `identify()` — in
-  `android/app/src/main/java/com/animalcounter/net/JetsonClient.kt`, extract
-  `internal fun isValidIdentifyBody(body: String): Boolean` (parses JSON;
-  returns true only when `json.optString("service") == "jetson-companion"`).
-  Change `identify()` so the `code == 200` branch returns
-  `SyncEvent.Outcome.Success` only when `isValidIdentifyBody(body)` is true,
-  else a `Network`/failure outcome with the raw body. Fix the class docstring:
-  the companion returns `{"service":"jetson-companion","version":"<v>"}` (not
-  `animal-counter-companion`). Add unit tests in
-  `android/app/src/test/java/com/animalcounter/net/JetsonClientParsingTest.kt`
-  for `isValidIdentifyBody` (valid, wrong service, non-JSON, missing service).
-  Run `./gradlew :app:testDebugUnitTest`. Build green.
+- [x] **Task 3: EDIT** `ansible/playbooks/system/install_k3s_with_docker_tasks.yml` — Rework the k3s clock stack: (a) Add a new task to create `/usr/local/bin/k3s-clock-load.sh` (mode 0755) — a wrapper script that checks `[ -e /dev/rtc1 ]` → if present runs `hwclock --hctosys --rtc=/dev/rtc1`; else runs `/sbin/fake-hwclock load`. (b) Change the k3s override.conf `ExecStartPre` from `/sbin/fake-hwclock load` to `/usr/local/bin/k3s-clock-load.sh`. (c) Add `rtc-ds3231.service` to the k3s override `[Unit] After=` line (after `k3s-clock-ready.service`). (d) Keep `fake-hwclock.service` in `Requires=` (still needed as tertiary fallback when RTC absent). (e) Keep `k3s-clock-ready.service` in `After=` unchanged. (f) Do NOT modify `k3s-clock-ready.sh` or `k3s-clock-ready.service`.
 
-- [x] Task 3: EXTEND `SettingsRepository` — in
-  `android/app/src/main/java/com/animalcounter/data/SettingsRepository.kt`, add
-  DataStore-backed flows + setters: `hotspotIp` (key `jetson_ip_hotspot`,
-  default `192.168.100.1`), `lanIp` (key `jetson_ip_lan`, default
-  `192.168.0.180`), `autoSelect` (key `auto_select`, Boolean, default `true`),
-  and keep `jetsonIp`/`setJetsonIp` as the manual-override IP (key `jetson_ip`).
-  Add `booleanPreferencesKey` import. Add `_activeIp:
-  MutableStateFlow<String>(DEFAULT_HOTSPOT_IP)` + `activeIp: StateFlow<String>`
-  + `suspend fun setActiveIp(ip: String)`. Keep `DEFAULT_JETSON_IP` constant for
-  the manual default. Build green.
+- [x] **Task 4: CREATE** `scripts/install_rtc_standalone.sh` — Mirror `scripts/install_companion_standalone.sh` structure: load `.env.local`, validate `JETSON_PASSWORD` + `JETSON_HOTSPOT_IP` (or `JETSON_IP`), default `JETSON_USER=nano-counter`, strip CIDR, manual checkpoint prompt, SSH reachability check, export env, run `ansible-playbook -i ansible/inventory/jetsons.yml ansible/playbooks/system/configure_rtc.yml "$@"`. Support `--check` (dry-run) and `--tags` passthrough. Print verification commands at the end (`i2cdetect -y 7`, `systemctl is-active rtc-ds3231`, `ls /dev/rtc1`).
 
-- [x] Task 4: CREATE `JetsonConnectionManager` — create
-  `android/app/src/main/java/com/animalcounter/net/JetsonConnectionManager.kt`
-  as a singleton `object`. It exposes `probeState: StateFlow<ProbeState>` and
-  `activeIp` (delegated to `SettingsRepository`). Methods `start(context)` /
-  `stop()`: register a `TRANSPORT_WIFI` `NetworkCallback` (onAvailable →
-  rescan + POST time; onLost → out-of-range banner, pause keep-alive);
-  `rescan()` runs a PARALLEL probe of both candidate IPs (or the manual IP when
-  `autoSelect=false`) bound via `activeWifiNetwork(cm)`, ~1500ms timeout,
-  `JetsonClient.identify(ip, network=...)`, picks the first strict-valid hit →
-  `repo.setActiveIp(ip)` + `probeState=Reachable` + `POST /api/time`; none →
-  `probeState=OutOfRange`. A ~30s keep-alive coroutine loop (only while on
-  WiFi) re-probes the active IP; on failure calls `rescan()`; on found → POST
-  time + Reachable; on none → OutOfRange. Uses `SettingsRepository(appContext)`
-  for settings, `JetsonClient.postTime`/`identify`, `nowIsoForCompanion()`,
-  and logs to `SyncLog`. Not wired to the lifecycle yet. Build green.
+- [x] **Task 5: EDIT** `android/app/src/main/java/com/animalcounter/net/JetsonConnectionManager.kt` — Remove: `KEEP_ALIVE_INTERVAL_MS` constant, `keepAliveJob` field, `startKeepAliveIfOnWifi()` method, `postTime()` calls inside `rescan()` (line ~175), `postTime()` call in keep-alive loop, `keepAliveJob` cancel in `rescan()` OutOfRange branch, `keepAliveJob` cancel in `onLost`, `keepAliveJob` cancel + null in `stop()`. Keep: `rescan()` for IP selection only (remove `postTime(resolved, network)` call and `startKeepAliveIfOnWifi()` call from the success branch), `onAvailable` → `rescan()` (no time push), `onLost` → out-of-range banner, one-time ON_START probe in `start()`. Keep `postTime()` as private but add a new public `suspend fun syncTime(): SyncResult` that: checks `repo?.activeIp?.value` — if set, uses it directly; if blank/null, runs a fresh probe (reuse `parallelProbe`/`singleProbe` logic); then calls `postTime()` and returns success/failure. Update KDoc to reflect removal of keep-alive loop.
 
-- [x] Task 5: WIRE manager to app lifecycle — in
-  `android/app/src/main/java/com/animalcounter/ui/nav/AnimalCounterApp.kt`,
-  remove the `LaunchedEffect(Unit) { ContextCompat.startForegroundService(...) }`
-  block and the `TimeSyncService`/`Intent`/`ContextCompat` imports. Add a
-  `DisposableEffect(lifecycleOwner)` with a `LifecycleEventObserver` that calls
-  `JetsonConnectionManager.start(context)` on `ON_START` and
-  `JetsonConnectionManager.stop()` on `ON_STOP` (reuse the pattern from
-  `LiveCountScreen`'s polling `DisposableEffect`). Build green.
+- [x] **Task 6: EDIT** `android/app/src/main/java/com/animalcounter/ui/settings/SettingsViewModel.kt` — Add a `syncResult` StateFlow (sealed class or enum: Idle, Syncing, Success, Failure with optional message). Add a `syncTime()` method that launches in `viewModelScope`: sets state to Syncing, calls `JetsonConnectionManager.syncTime()`, sets state to Success or Failure. On Success: launch a coroutine that `delay(5000)` then resets to Idle. On Failure: leave state as Failure (persists until next user action). Add a `clearSyncResult()` method to manually reset to Idle (for retry).
 
-- [x] Task 6: CONVERT Dashboard + LiveCount ViewModels — in
-  `DashboardViewModel.kt` and `LiveCountViewModel.kt`: replace the
-  `repo.jetsonIp.collect { _ip.value = saved; if(!loaded){loaded=true;probe();refresh()} }`
-  init with `repo.activeIp.collect { _ip.value = it; refresh()/load() }`
-  (re-fetch on each activeIp change). Replace `_probeState`/`probeState` with a
-  delegate to `JetsonConnectionManager.probeState` (`val probeState =
-  JetsonConnectionManager.probeState`). Remove the `probe()` method, the
-  `_probeState` MutableStateFlow, the `loaded` flag, and the now-unused
-  `activeWifiNetwork`/`SyncEvent`/`identify` imports. Screens unchanged (they
-  still read `vm.probeState`). Build green.
+- [x] **Task 7: EDIT** `android/app/src/main/java/com/animalcounter/ui/settings/SettingsScreen.kt` — Add a "Synchroniser l'heure" button (Button composable) below the existing IP fields. Observe `vm.syncResult` state. Show: Idle → button enabled with label; Syncing → button disabled with loading indicator; Success → green "Synchronisé ✓" text (auto-clears via VM); Failure → red "Échec de synchronisation" text (persists). Button onClick → `vm.syncTime()`.
 
-- [x] Task 7: CONVERT History + Startups + Sessions ViewModels — apply the
-  same activeIp + delegated-probeState conversion to `HistoryViewModel.kt`,
-  `StartupsViewModel.kt`, `SessionsViewModel.kt`: seed `_ip` from
-  `repo.activeIp` (re-fetch on change), delegate `probeState` to
-  `JetsonConnectionManager.probeState`, remove `probe()` + `_probeState` +
-  `loaded` flag + unused imports. Build green.
+- [x] **Task 8: EDIT** `android/app/src/main/res/values/strings.xml` — Add: `settings_sync_time` ("Synchronize clock"), `settings_sync_success` ("Clock synchronized ✓"), `settings_sync_failure` ("Sync failed"), `settings_syncing` ("Synchronizing…").
 
-- [x] Task 8: CONVERT SessionDetail + VideoDetail ViewModels — in
-  `SessionDetailViewModel.kt`: same activeIp + delegated-probeState
-  conversion (remove `probe()`, delegate `probeState`). In
-  `VideoDetailViewModel.kt`: it has no `probeState`/`probe()`; replace
-  `repo.jetsonIp.first()` (in `loadDetail`) and the `repo.jetsonIp.collect`
-  init with `repo.activeIp` (collect into `_ip`; `loadDetail` uses
-  `repo.activeIp.value`). Build green.
+- [x] **Task 9: EDIT** `android/app/src/main/res/values-fr/strings.xml` — Add FR translations: `settings_sync_time` ("Synchroniser l'heure"), `settings_sync_success` ("Heure synchronisée ✓"), `settings_sync_failure` ("Échec de la synchronisation"), `settings_syncing` ("Synchronisation…").
 
-- [x] Task 9: CREATE Settings screen — create
-  `android/app/src/main/java/com/animalcounter/ui/settings/SettingsScreen.kt`
-  and `SettingsViewModel.kt`. The screen renders: an auto-select toggle
-  (`autoSelect` from repo), a manual-override IP `OutlinedTextField` (enabled
-  when `autoSelect=false`; typing flips `autoSelect=false` via
-  `setAutoSelect(false)` + `setJetsonIp(value)`), and two candidate IP fields
-  (`hotspotIp`, `lanIp`) persisted via `setHotspotIp`/`setLanIp`. Toggling
-  auto-select back to true re-enables auto and triggers
-  `JetsonConnectionManager.rescan()`; editing a candidate IP also triggers
-  `rescan()`. Use existing Material 3 idioms (`OutlinedTextField`, `Switch`,
-  `Scaffold` + `TopAppBar`) and `stringResource` for all labels. Build green.
+- [x] **Task 10: CREATE** `docs/13_rtc_install.md` — Hardware wiring section (DS3231 HW-084 → 40-pin header: VCC→pin1 3.3V, GND→pin6, SDA→pin3, SCL→pin5). 3.3V-not-5V safety note (the HW-084 module has a charge circuit for LIR2032; with a non-rechargeable CR2032, do NOT supply 5V — use 3.3V to avoid the charge circuit). CR2032-vs-LIR2032 charge-circuit caveat. Detection section (`i2cdetect -y 7` → 0x68). Standalone setup commands (direct `ansible-playbook -i ansible/inventory/jetsons.yml ansible/playbooks/system/configure_rtc.yml` and `scripts/install_rtc_standalone.sh`). How it works section (rtc-ds3231.service, k3s-clock-load.sh, fallback chain). Cross-ref to `docs/12_jetson_network_k3s_boot.md` for the clock stack background.
 
-- [x] Task 10: WIRE Settings tab + drop Synchro route — in
-  `AnimalCounterApp.kt`: remove the `TIME_SYNC` `NavigationBarItem` and the
-  `composable(Destinations.TIME_SYNC) { TimeSyncScreen() }` route + the
-  `TimeSyncScreen` import. Add `SETTINGS = "settings"` to `Destinations`, a
-  `NavigationBarItem` (Settings, `Icons.Filled.Settings`) and
-  `composable(Destinations.SETTINGS) { SettingsScreen() }`. Remove the
-  `Icons.Filled.Schedule` import. Build green (`TimeSyncScreen.kt` remains on
-  disk, unreferenced — it compiles; deleted next task).
+- [x] **Task 11: RENAME** `docs/13_troubleshooting.md` → `docs/14_troubleshooting.md` — Git mv, update internal title/heading if it references its own number.
 
-- [x] Task 11: DELETE dead files — delete
-  `android/app/src/main/java/com/animalcounter/service/TimeSyncService.kt`,
-  `receiver/BootReceiver.kt`,
-  `ui/timesync/TimeSyncScreen.kt`, and
-  `ui/timesync/TimeSyncViewModel.kt` (and the now-empty
-  `service/`/`receiver/`/`ui/timesync/` package dirs if empty). Grep for any
-  remaining references first; fix them. Build green.
+- [x] **Task 12: RENAME** `docs/14_reset.md` → `docs/15_reset.md` — Git mv, update internal title/heading if it references its own number.
 
-- [x] Task 12: CLEAN manifest — in
-  `android/app/src/main/AndroidManifest.xml`: remove the `<service
-  android:name=".service.TimeSyncService" .../>` element, the `<receiver
-  android:name=".receiver.BootReceiver" .../>` element, and the
-  `RECEIVE_BOOT_COMPLETED`, `FOREGROUND_SERVICE`,
-  `FOREGROUND_SERVICE_DATA_SYNC`, `POST_NOTIFICATIONS` `<uses-permission>`
-  lines. Keep only `INTERNET` + `ACCESS_NETWORK_STATE`. Build green.
+- [x] **Task 13: EDIT** `docs/02_setup.md` — Enhance the existing DS3231 mention in the Hardware section (around line 18) with a cross-ref to `docs/13_rtc_install.md`. Update the playbook table in §5 to include `configure_rtc.yml` (new row, step 3, before `install_k3s_with_docker_tasks.yml`).
 
-- [x] Task 13: CLEAN MainActivity — in
-  `android/app/src/main/java/com/animalcounter/MainActivity.kt`: remove the
-  `requestPostNotificationsIfNeeded()` call + method, the
-  `requestNotificationPermission` `ActivityResultLauncher` field, and the
-  `Manifest`/`Build`/`ActivityResultContracts` imports that become unused.
-  Build green.
+- [x] **Task 14: EDIT** `docs/12_jetson_network_k3s_boot.md` — Add a cross-ref/note in §5 (the fake-hwclock / k3s-clock-ready section) pointing to `docs/13_rtc_install.md` for the RTC-based clock source that supersedes fake-hwclock when a DS3231 is installed. Update the TL;DR table row about "no RTC battery" to note the DS3231 option.
 
-- [x] Task 14: STRINGS — in `android/app/src/main/res/values/strings.xml` and
-  `values-fr/strings.xml`: add `tab_settings`, `settings_title`,
-  `settings_auto_select`, `settings_manual_ip`, `settings_hotspot_ip`,
-  `settings_lan_ip` (English + French). Grep the codebase for usages before
-  removing; prune now-unused strings: `tab_time_sync`,
-  `notification_channel_*`, `foreground_notification_*`, `time_sync_placeholder`,
-  `sync_now`, `refresh`, `log_empty`, `type_probe`, `type_sync`, `outcome_*`
-  (keep `jetson_connected`/`jetson_out_of_range`/`jetson_checking` — still used
-  by banners; keep `jetson_ip_label` if reused by Settings, else replace with
-  the new settings labels). Build green.
+- [x] **Task 15: EDIT** `README.md` — Update the Table of contents table: insert `docs/13_rtc_install.md` row, renumber troubleshooting to 14, reset to 15. Update all internal cross-references that link to `docs/13_troubleshooting.md` → `docs/14_troubleshooting.md` and `docs/14_reset.md` → `docs/15_reset.md`.
 
-- [x] Task 15: FINAL build + APK — run the full Gradle build
-  (`./gradlew :app:assembleDebug --no-daemon --console=plain`) and the unit
-  tests (`./gradlew :app:testDebugUnitTest`). Confirm
-  `android/app/build/outputs/apk/debug/app-debug.apk` is produced. Optionally
-  copy it to the Desktop as `animal-counter-bl73-debug.apk` per the AGENTS.md §9
-  convention (do NOT commit the APK or `local.properties`).
+- [x] **Task 16: EDIT** all other docs/files with cross-references to renumbered docs — grep for `13_troubleshooting` and `14_reset` across all docs and update links to the new numbers (`14_troubleshooting`, `15_reset`). This includes any cross-refs in `docs/01_quickstart.md`, `docs/02_setup.md`, `docs/03_deployment.md`, etc.
 
 ## Validation
 
-- Per-task: `cd android && export JAVA_HOME=$HOME/.local/jdk/jdk-17.0.19+10
-  && export ANDROID_HOME=$HOME/Android/Sdk && ./gradlew :app:assembleDebug
-  --no-daemon --console=plain` (must succeed after every task commit).
-- Unit tests: `./gradlew :app:testDebugUnitTest` (Task 2 adds
-  `isValidIdentifyBody` cases; existing parsing tests must still pass).
-- No `app/` diff: `git diff --name-only main...HEAD -- app/` is empty →
-  `jetson-validate` auto-signals VALIDATED (no `scripts/validate_on_jetson.sh`
-  run).
-- Manual/functional (post-build, on-phone): with the phone on the Jetson
-  hotspot, the Dashboard/Live reachability banner shows "Jetson connecté" and
-  data loads without manually setting an IP; switching to the LAN WiFi
-  re-selects `192.168.0.180` within ~30s; leaving WiFi shows "hors de portée";
-  the Settings tab lets the operator toggle auto-select off and type a manual
-  IP; the Synchro tab is gone; no foreground-service notification appears.
+- **Ansible syntax**: `ansible-playbook --syntax-check ansible/playbooks/system/configure_rtc.yml` and `ansible-playbook --syntax-check ansible/playbooks/system/prepare_system.yml`
+- **Standalone script**: `bash -n scripts/install_rtc_standalone.sh` (syntax check)
+- **Android build**: `cd android && ./gradlew assembleDebug` (compiles; no runtime test needed since no counting changes)
+- **Kotlin compile**: Verify `JetsonConnectionManager.kt` compiles with removed keep-alive loop and new `syncTime()` method
+- **Doc cross-refs**: `grep -r '13_troubleshooting\|14_reset' docs/ README.md` returns no results after renumbering (all updated to 14/15)
+- **Jetson-validate**: auto-skips (no `app/` changes)
+- **Manual on-Jetson verification** (post-deploy, if hardware available): `i2cdetect -y 7` shows `68`, `systemctl is-active rtc-ds3231` is `active`, `/dev/rtc1` exists, `hwclock -r --rtc=/dev/rtc1` returns a sane date
 
 ## Risks
 
-- **Parallel-probe timing vs. first fetch**: ViewModels may fetch once with the
-  default hotspot IP before the manager resolves `activeIp`, then re-fetch on
-  the resolved IP. Mitigation: ViewModels re-fetch on every `activeIp` change;
-  fetch failures already degrade to cached/out-of-range gracefully, so a
-  transient wrong-IP fetch is invisible to the user.
-- **`ProbeState` import breakage on deletion**: deleting `TimeSyncViewModel`
-  would break 6+ importers. Mitigation: Task 1 relocates `ProbeState` first;
-  Task 11 deletes the TimeSync files only after the route/import is removed
-  (Task 10), so the build is green at every step.
-- **Stale string references**: removing strings still referenced by code would
-  break the build. Mitigation: Task 14 greps for each string's `R.string.<name>`
-  usage before removing it.
-- **`local.properties` / APK committed by mistake**: both are machine-local.
-  Mitigation: Task 15 stages only source files; `local.properties` is already
-  documented as never-committed in AGENTS.md §9.
-- **Manual-override + keep-alive interaction**: when `autoSelect=false`, the
-  manager must still probe the manual IP for reachability and POST time, not
-  skip the loop. Mitigation: Task 4 specifies the manual-override path probes
-  the single manual IP (no parallel selection) and still POSTs time on found.
+- **I2C bus number may differ across Jetson models** — The Orin Nano uses bus 7 for the 40-pin header, but this could differ on other Jetson variants. Mitigation: document the bus number in `docs/13_rtc_install.md` and note it's specific to the Orin Nano.
+- **`new_device` sysfs write is not idempotent on all kernels** — Writing `ds1307 0x68` to `new_device` when the device is already registered can error. Mitigation: guard with `[ -e /dev/rtc1 ]` check before the write.
+- **Removing keep-alive loop changes connection monitoring** — Without the 30s re-probe, the app won't auto-detect a HotSpot→LAN migration while open. The NetworkCallback `onAvailable` still fires on WiFi changes, so IP selection still works. The on-demand sync button covers time needs. Mitigation: verified that `onAvailable`/`onLost` still drive the reachability banner.
+- **Doc renumbering breaks external links** — Renaming `13_troubleshooting.md` → `14` and `14_reset.md` → `15` could break bookmarked URLs. Mitigation: this is a private repo with no external doc hosting; all cross-refs are updated in-task.
+- **`rtc-ds1307` module may not be auto-loaded** — The `ds1307` name written to `new_device` triggers the kernel to load the `rtc-ds1307` module. If the module isn't available, registration fails. Mitigation: `i2c-tools` + the kernel module are standard on JetPack 6.2; document troubleshooting in `docs/13_rtc_install.md`.

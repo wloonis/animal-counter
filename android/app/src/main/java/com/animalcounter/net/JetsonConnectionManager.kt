@@ -13,11 +13,9 @@ import com.animalcounter.data.SyncEvent
 import com.animalcounter.data.SyncLog
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
-import kotlinx.coroutines.delay
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -28,21 +26,26 @@ import java.time.Instant
 import java.time.ZoneId
 
 /**
- * Per-probe deadline. The two candidate IPs are polled in parallel; the
- * first strict-valid `GET /api/identify` wins. A short deadline keeps the
- * app-open latency low (the user sees the banner resolve in ~1.5s, well
- * below the 5s per-request connect/read timeout in [JetsonClient]).
+ * Per-probe deadline for the parallel candidate race. The first strict-valid
+ * `GET /api/identify` wins (see [parallelProbe] — a true `select` race, so a
+ * failing/unreachable candidate does NOT block the reachable one). Set above
+ * the 5s per-request connect timeout in [JetsonClient] so that when ALL
+ * candidates are unreachable the race resolves at ~5s via the connect timeout
+ * (not the probe deadline); when a candidate IS reachable it wins in ~200ms
+ * regardless of any unreachable candidate still hanging.
  */
-private const val PROBE_TIMEOUT_MS = 1_500L
+private const val PROBE_TIMEOUT_MS = 6_000L
 
 /**
- * Keep-alive cadence. While the app is open and on WiFi, the active IP is
- * re-probed every ~30s. On a failed probe the full parallel [rescan]
- * selection runs again (handles a phone migrating from the HotSpot to the
- * LAN). On a successful probe a `POST /api/time` re-syncs the clock so the
- * Jetson stays accurate even if the phone never leaves the HotSpot.
+ * Outcome of an on-demand clock push ([syncTime]). Surfaced to the Settings
+ * screen so the "Synchroniser l'heure" button can show an inline result.
  */
-private const val KEEP_ALIVE_INTERVAL_MS = 30_000L
+sealed interface SyncResult {
+    /** `POST /api/time` returned 200. */
+    data object Success : SyncResult
+    /** No reachable Jetson, a non-2xx HTTP response, or a network error. */
+    data class Failure(val message: String?) : SyncResult
+}
 
 /**
  * App-lifecycle-scoped connection manager for the Jetson companion (BL-73).
@@ -59,19 +62,26 @@ private const val KEEP_ALIVE_INTERVAL_MS = 30_000L
  *    banner) and [activeIp] (delegated to [SettingsRepository], the single
  *    IP ViewModels use for `GET /api/...`).
  *  - Register a `TRANSPORT_WIFI` [ConnectivityManager.NetworkCallback]:
- *    `onAvailable` → [rescan] + `POST /api/time`; `onLost` → OutOfRange
- *    banner + pause the keep-alive loop.
+ *    `onAvailable` → [rescan] (re-select the active IP, **no** automatic
+ *    time push); `onLost` → OutOfRange banner.
  *  - [rescan]: a **parallel** strict probe of both candidate IPs (hotspot +
  *    lan) when [SettingsRepository.autoSelect] is on, or a single probe of
  *    the manual-override IP when it is off. Bound to the active WiFi
  *    [Network] via [activeWifiNetwork] so the request reaches the Jetson
  *    HotSpot even with mobile data (5G) as the default internet uplink.
  *    First strict-valid [JetsonClient.identify] hit wins → the IP is written
- *    into [SettingsRepository.activeIp] (via [setActiveIp]) and the clock is
- *    pushed; no hit → OutOfRange.
- *  - Keep-alive loop (~30s, only while on WiFi): re-probes the active IP;
- *    on failure calls [rescan]; on found → `POST /api/time` + Reachable; on
- *    none → OutOfRange.
+ *    into [SettingsRepository.activeIp] (via [setActiveIp]); no hit →
+ *    OutOfRange. **No clock push here** anymore.
+ *  - [syncTime]: the on-demand, user-triggered clock push ("Synchroniser
+ *    l'heure" button in Settings). If [SettingsRepository.activeIp] is
+ *    already set, it posts directly to it; otherwise it runs a fresh
+ *    selection probe first. Returns a [SyncResult] for the Settings UI.
+ *
+ * There is **no keep-alive loop** anymore (BL-74): the ~30s re-probe and its
+ * automatic `POST /api/time` were removed. The `NetworkCallback.onAvailable`
+ * still fires on WiFi changes (so IP selection re-runs), and the on-demand
+ * [syncTime] covers the time needs. The Jetson now keeps its own time via a
+ * DS3231 hardware RTC ([docs/13_rtc_install.md]).
  *
  * Everything is cancelled by [stop] (the activity `ON_STOP`): the
  * NetworkCallback is unregistered and the coroutine scope is cancelled.
@@ -95,9 +105,6 @@ object JetsonConnectionManager {
 
     /** App-scoped coroutine scope — created on [start], cancelled on [stop]. */
     private var scope: CoroutineScope? = null
-
-    /** Keep-alive loop job — cancelled on WiFi loss / [stop]. */
-    private var keepAliveJob: Job? = null
 
     private var connectivityManager: ConnectivityManager? = null
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
@@ -128,13 +135,11 @@ object JetsonConnectionManager {
 
     /**
      * Stop app-foreground connection management. Unregisters the WiFi
-     * callback and cancels the coroutine scope (keep-alive loop + any
-     * in-flight probe). The activity calls this on `ON_STOP`.
+     * callback and cancels the coroutine scope (any in-flight probe). The
+     * activity calls this on `ON_STOP`.
      */
     fun stop() {
         unregisterNetworkCallback()
-        keepAliveJob?.cancel()
-        keepAliveJob = null
         scope?.cancel()
         scope = null
         onWifi = false
@@ -142,15 +147,17 @@ object JetsonConnectionManager {
     }
 
     /**
-     * Run a fresh selection probe and, on a strict-valid hit, push the clock.
+     * Run a fresh selection probe.
      *
      * - `autoSelect = true` (default): probe BOTH candidate IPs in parallel
      *   (hotspot + lan); the first strict-valid [JetsonClient.identify] hit
      *   wins (race). On a hit → [SettingsRepository.setActiveIp] +
-     *   `probeState = Reachable` + `POST /api/time`. No hit →
-     *   `probeState = OutOfRange`.
+     *   `probeState = Reachable`. No hit → `probeState = OutOfRange`.
      * - `autoSelect = false`: probe only the manual-override IP
      *   ([SettingsRepository.jetsonIp]); same hit/none handling.
+     *
+     * This is **IP selection only** — no automatic clock push. The clock is
+     * pushed on demand via [syncTime].
      *
      * Safe to call from the UI thread (offloads work to the manager scope).
      */
@@ -172,22 +179,57 @@ object JetsonConnectionManager {
             if (resolved != null) {
                 r.setActiveIp(resolved)
                 _probeState.value = ProbeState.Reachable
-                postTime(resolved, network)
-                startKeepAliveIfOnWifi()
             } else {
                 _probeState.value = ProbeState.OutOfRange
-                // Pause the keep-alive loop until WiFi is re-acquired; a
-                // subsequent onAvailable will rescan.
-                keepAliveJob?.cancel()
-                keepAliveJob = null
             }
         }
     }
 
     /**
+     * On-demand clock push — "Synchroniser l'heure" (BL-74 replacement for the
+     * removed keep-alive time loop).
+     *
+     * If [SettingsRepository.activeIp] is already set (non-blank), posts
+     * directly to it. Otherwise runs a fresh selection probe first (mirrors
+     * [rescan]) so the button works even before the auto-probe has resolved
+     * an IP. The probe result is *not* logged to [SyncLog] (it's a pure IP
+     * selection); only the final `POST /api/time` outcome is logged.
+     *
+     * @return [SyncResult.Success] on HTTP 200, otherwise
+     *   [SyncResult.Failure] (no reachable Jetson, non-2xx, or network error).
+     */
+    suspend fun syncTime(): SyncResult {
+        val r = repo ?: return SyncResult.Failure("Manager not started")
+        val network = activeWifiNetworkSafe()
+        val active = r.activeIp.value
+        val ip = if (!active.isNullOrBlank()) {
+            active
+        } else {
+            val auto = runCatching { r.autoSelect.first() }.getOrDefault(true)
+            val resolved = if (auto) {
+                val hotspot = runCatching { r.hotspotIp.first() }.getOrDefault(DEFAULT_HOTSPOT_IP)
+                val lan = runCatching { r.lanIp.first() }.getOrDefault(DEFAULT_LAN_IP)
+                parallelProbe(setOf(hotspot, lan), network)
+            } else {
+                val manual = runCatching { r.jetsonIp.first() }.getOrDefault(DEFAULT_JETSON_IP)
+                singleProbe(manual, network)
+            } ?: return SyncResult.Failure("Jetson introuvable")
+            r.setActiveIp(resolved)
+            resolved
+        }
+        val event = postTime(ip, network)
+        return if (event.outcome == SyncEvent.Outcome.Success) {
+            SyncResult.Success
+        } else {
+            SyncResult.Failure(event.detail)
+        }
+    }
+
+
+    /**
      * Register the `TRANSPORT_WIFI` [ConnectivityManager.NetworkCallback].
-     * `onAvailable` → mark on-WiFi, [rescan] + `POST /api/time`;
-     * `onLost` → mark off-WiFi, OutOfRange banner, pause the keep-alive loop.
+     * `onAvailable` → mark on-WiFi, [rescan] (re-select the active IP);
+     * `onLost` → mark off-WiFi, OutOfRange banner.
      */
     private fun registerNetworkCallback() {
         if (networkCallback != null) return
@@ -214,8 +256,6 @@ object JetsonConnectionManager {
                 onWifi = false
                 SyncLog.setConnected(false)
                 _probeState.value = ProbeState.OutOfRange
-                keepAliveJob?.cancel()
-                keepAliveJob = null
                 SyncLog.add(
                     SyncEvent(
                         timestamp = Instant.now(),
@@ -243,6 +283,17 @@ object JetsonConnectionManager {
      * the first to return a strict-valid `Success` outcome wins. The whole
      * race is bounded by [PROBE_TIMEOUT_MS] — if no candidate succeeds
      * within the deadline, returns `null`.
+     *
+     * This is a TRUE `select` race (BL-74 fix): the first SUCCESSFUL probe
+     * resolves the result immediately, and a failing/unreachable candidate
+     * does NOT short-circuit the race — we keep waiting for the others. The
+     * previous implementation awaited the candidates sequentially, so on the
+     * LAN the unreachable hotspot candidate (192.168.100.1, whose TCP connect
+     * hangs until the 5s connect timeout) was awaited first and let the short
+     * probe deadline expire before the reachable LAN candidate (192.168.0.180,
+     * done in ~200ms) was ever checked — the app reported "hors de portée" on
+     * the LAN even though the Jetson was reachable. The select race fixes that:
+     * the reachable candidate wins in ~200ms regardless of the unreachable one.
      */
     private suspend fun parallelProbe(
         candidates: Set<String>,
@@ -252,20 +303,34 @@ object JetsonConnectionManager {
         if (ips.isEmpty()) return null
         val s = scope ?: return null
         return withTimeoutOrNull(PROBE_TIMEOUT_MS) {
-            val deferreds = ips.map { ip ->
-                s.async {
+            // TRUE race (BL-74 fix): every candidate is probed in parallel and
+            // reports its result into a buffered channel; the first SUCCESS
+            // (non-null) wins and we return immediately. A failing/unreachable
+            // candidate does NOT short-circuit the race — we keep receiving
+            // until a success arrives or every candidate has reported (all
+            // failures -> null). The previous implementation awaited the
+            // candidates sequentially, so on the LAN the unreachable hotspot
+            // candidate (192.168.100.1, whose TCP connect hangs until the 5s
+            // connect timeout) was awaited first and let the short probe
+            // deadline expire before the reachable LAN candidate
+            // (192.168.0.180, done in ~200ms) was ever checked — the app
+            // reported "hors de portée" on the LAN even though the Jetson was
+            // reachable. The channel race fixes that: the reachable candidate
+            // wins in ~200ms regardless of the unreachable one.
+            val results = Channel<String?>(ips.size)
+            ips.forEach { ip ->
+                s.launch {
                     val event = JetsonClient.identify(ip = ip, network = network)
-                    if (event.outcome == SyncEvent.Outcome.Success) ip else null
+                    results.send(if (event.outcome == SyncEvent.Outcome.Success) ip else null)
                 }
             }
-            // Race: the first non-null result wins; await the rest so no
-            // coroutine leaks. If none succeed, returns null.
-            var winner: String? = null
-            for (d in deferreds) {
-                val res = d.await()
-                if (res != null && winner == null) winner = res
+            var received = 0
+            while (received < ips.size) {
+                val res = results.receive()
+                received++
+                if (res != null) return@withTimeoutOrNull res
             }
-            winner
+            null
         }
     }
 
@@ -278,42 +343,10 @@ object JetsonConnectionManager {
     }
 
     /**
-     * Start the ~30s keep-alive loop (only while on WiFi). Idempotent. The
-     * loop re-probes the active IP; on a failed probe it calls [rescan]
-     * (full selection — handles a HotSpot → LAN migration); on a found
-     * Jetson it re-syncs the clock; on none it sets OutOfRange.
-     */
-    private fun startKeepAliveIfOnWifi() {
-        if (keepAliveJob?.isActive == true) return
-        if (!onWifi) return
-        val s = scope ?: return
-        val r = repo ?: return
-        keepAliveJob = s.launch {
-            while (true) {
-                delay(KEEP_ALIVE_INTERVAL_MS)
-                if (!onWifi) break
-                val network = activeWifiNetworkSafe()
-                val active = r.activeIp.value
-                val event = JetsonClient.identify(ip = active, network = network)
-                if (event.outcome == SyncEvent.Outcome.Success) {
-                    _probeState.value = ProbeState.Reachable
-                    postTime(active, network)
-                } else {
-                    // Active IP no longer reachable — re-run the full
-                    // parallel selection (may land on the other candidate).
-                    // rescan() owns its own loop restart on success.
-                    rescan()
-                    break
-                }
-            }
-        }
-    }
-
-    /**
      * `POST /api/time` to [ip] (bound to [network]); logs the result to
      * [SyncLog]. Failures never throw — they surface as a [SyncEvent].
      */
-    private suspend fun postTime(ip: String, network: Network?) {
+    private suspend fun postTime(ip: String, network: Network?): SyncEvent {
         val event = JetsonClient.postTime(
             ip = ip,
             timeIso = nowIsoForCompanion(),
@@ -321,6 +354,7 @@ object JetsonConnectionManager {
             network = network,
         )
         SyncLog.add(event)
+        return event
     }
 
     /** Resolve the active WiFi [Network] (null when not on the Jetson HotSpot). */

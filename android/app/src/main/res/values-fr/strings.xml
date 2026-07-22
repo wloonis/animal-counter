@@ -140,8 +140,8 @@
     <string name="dashboard_avg_per_day">Moy. / jour</string>
     <string name="empty_dashboard">Aucune donnée pour cette période</string>
 
-    <!-- BL-69 — startups screen -->
-    <string name="tab_startups">Démarrage</string>
+    <!-- BL-69 — sessions tab (was startups) -->
+    <string name="tab_sessions">Sessions</string>
     <string name="empty_startups">Aucun démarrage enregistré</string>
     <string name="startup_boot_at">Démarré à</string>
     <string name="startup_image_tag">Tag image</string>
@@ -166,4 +166,8 @@
     <string name="settings_manual_ip">IP Jetson manuelle</string>
     <string name="settings_hotspot_ip">IP candidate hotspot</string>
     <string name="settings_lan_ip">IP candidate LAN</string>
+    <string name="settings_sync_time">Synchroniser l\'heure</string>
+    <string name="settings_sync_success">Heure synchronisée ✓</string>
+    <string name="settings_sync_failure">Échec de la synchronisation</string>
+    <string name="settings_syncing">Synchronisation…</string>
 </resources>

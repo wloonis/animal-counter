@@ -955,7 +955,11 @@
               """Run the timedatectl sequence to set the clock + timezone.
 
               Always disables NTP first so systemd-timesyncd does not reject or
-              immediately overwrite the manual time. Returns (ok, error_msg).
+              immediately overwrite the manual time. Then, if the DS3231 hardware
+              RTC (BL-74) is registered, persist the new time into it with
+              `hwclock --systohc --rtc=/dev/rtcN` so the correction survives a
+              reboot (otherwise the DS3231 would reset the system clock back at
+              the next boot). Returns (ok, error_msg).
               """
               steps = [
                   ["timedatectl", "set-ntp", "false"],
@@ -973,7 +977,30 @@
                       return False, "'{}' failed: {}".format(
                           " ".join(cmd), err
                       )
+              _persist_to_ds3231()  # best-effort: keep the DS3231 in sync with the system clock
               return True, None
+
+
+          def _persist_to_ds3231():
+              """Best-effort: copy the system clock into the DS3231 hardware RTC
+              (BL-74) so a manual time sync survives a reboot. No-op if the
+              DS3231 is absent (the RTC then just isn't updated; the next boot
+              sets the system clock from whatever the DS3231 still holds).
+              """
+              for name_path in glob.glob("/sys/class/rtc/*/device/name"):
+                  try:
+                      with open(name_path) as f:
+                          if f.read().strip() != "ds1307":
+                              continue
+                      # name_path = /sys/class/rtc/rtcN/device/name -> rtcN
+                      rtc_dev = "/dev/" + name_path.split("/")[4]
+                      subprocess.run(
+                          ["hwclock", "--systohc", "--rtc=" + rtc_dev],
+                          capture_output=True,
+                          text=True,
+                      )
+                  except OSError:
+                      continue
 
 
           class CompanionHandler(BaseHTTPRequestHandler):

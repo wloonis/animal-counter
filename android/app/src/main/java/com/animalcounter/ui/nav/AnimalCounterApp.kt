@@ -1,11 +1,14 @@
 package com.animalcounter.ui.nav
 
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.BarChart
 import androidx.compose.material.icons.filled.History
-import androidx.compose.material.icons.filled.PowerSettingsNew
+import androidx.compose.material.icons.filled.PlayCircle
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material3.Icon
@@ -16,9 +19,13 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -39,13 +46,12 @@ import com.animalcounter.ui.sessiondetail.SessionDetailScreen
 import com.animalcounter.ui.sessiondetail.VideoDetailScreen
 import com.animalcounter.ui.sessions.SessionsScreen
 import com.animalcounter.ui.settings.SettingsScreen
-import com.animalcounter.ui.startups.StartupsScreen
 
 private object Destinations {
     const val LIVE_COUNT = "live-count"
     const val HISTORY = "history"
     const val DASHBOARD = "dashboard"
-    const val STARTUPS = "startups"
+    const val SESSIONS_TAB = "sessions-tab"
     const val SESSION_DETAIL = "session/{sessionId}"
     const val VIDEO_DETAIL = "video/{videoId}?filename={filename}&countDelta={countDelta}&duration={duration}&fileDuration={fileDuration}&status={status}&sessionId={sessionId}&ts={ts}"
     const val SESSIONS = "sessions?days={days}"
@@ -83,31 +89,31 @@ fun AnimalCounterApp() {
                     selected = currentRoute == Destinations.DASHBOARD,
                     onClick = { navController.navigateTo(Destinations.DASHBOARD) },
                     icon = { Icon(Icons.Filled.BarChart, contentDescription = null) },
-                    label = { Text(stringResource(R.string.tab_dashboard)) },
+                    label = { TabLabel(R.string.tab_dashboard) },
                 )
                 NavigationBarItem(
                     selected = currentRoute == Destinations.LIVE_COUNT,
                     onClick = { navController.navigateTo(Destinations.LIVE_COUNT) },
                     icon = { Icon(Icons.Filled.Visibility, contentDescription = null) },
-                    label = { Text(stringResource(R.string.tab_live_count)) },
+                    label = { TabLabel(R.string.tab_live_count) },
                 )
                 NavigationBarItem(
                     selected = currentRoute == Destinations.HISTORY,
                     onClick = { navController.navigateTo(Destinations.HISTORY) },
                     icon = { Icon(Icons.Filled.History, contentDescription = null) },
-                    label = { Text(stringResource(R.string.tab_history)) },
+                    label = { TabLabel(R.string.tab_history) },
                 )
                 NavigationBarItem(
-                    selected = currentRoute == Destinations.STARTUPS,
-                    onClick = { navController.navigateTo(Destinations.STARTUPS) },
-                    icon = { Icon(Icons.Filled.PowerSettingsNew, contentDescription = null) },
-                    label = { Text(stringResource(R.string.tab_startups)) },
+                    selected = currentRoute?.startsWith("sessions") == true,
+                    onClick = { navController.navigateTo(Destinations.SESSIONS_TAB) },
+                    icon = { Icon(Icons.Filled.PlayCircle, contentDescription = null) },
+                    label = { TabLabel(R.string.tab_sessions) },
                 )
                 NavigationBarItem(
                     selected = currentRoute == Destinations.SETTINGS,
                     onClick = { navController.navigateTo(Destinations.SETTINGS) },
                     icon = { Icon(Icons.Filled.Settings, contentDescription = null) },
-                    label = { Text(stringResource(R.string.tab_settings)) },
+                    label = { TabLabel(R.string.tab_settings) },
                 )
             }
         },
@@ -127,7 +133,7 @@ fun AnimalCounterApp() {
                     navController.navigate("sessions?days=$days")
                 })
             }
-            composable(Destinations.STARTUPS) { StartupsScreen() }
+            composable(Destinations.SESSIONS_TAB) { SessionsScreen(navController, onBack = null) }
             composable(
                 route = Destinations.VIDEO_DETAIL,
                 arguments = listOf(
@@ -194,6 +200,20 @@ fun AnimalCounterApp() {
             }
         }
     }
+}
+
+@Composable
+private fun TabLabel(resId: Int) {
+    Text(
+        stringResource(resId),
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(32.dp)
+            .wrapContentHeight(Alignment.CenterVertically),
+        textAlign = TextAlign.Center,
+        maxLines = 2,
+        overflow = TextOverflow.Ellipsis,
+    )
 }
 
 private fun NavController.navigateTo(route: String) {

@@ -71,6 +71,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
 import com.animalcounter.R
 import com.animalcounter.net.VideoRow
+import com.animalcounter.ui.common.AppNavIcon
 import com.animalcounter.ui.common.OfflineBanner
 import com.animalcounter.net.ProbeState
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -154,6 +155,7 @@ fun HistoryScreen(navController: NavController) {
         topBar = {
             LargeTopAppBar(
                 title = { Text(stringResource(R.string.history_title)) },
+                navigationIcon = { AppNavIcon() },
                 actions = {
                     IconButton(onClick = vm::loadFirstPage) {
                         Icon(Icons.Filled.Refresh, contentDescription = stringResource(R.string.refresh))

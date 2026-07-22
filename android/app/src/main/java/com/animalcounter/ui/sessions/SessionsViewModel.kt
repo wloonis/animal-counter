@@ -65,8 +65,8 @@ class SessionsViewModel(
     private val _ip = MutableStateFlow(DEFAULT_JETSON_IP)
     val ip: StateFlow<String> = _ip.asStateFlow()
 
-    /** Period window in days (from the nav arg; default 1). */
-    val days: Int = handle.get<String>("days")?.toIntOrNull()?.coerceAtLeast(1) ?: 1
+    /** Period window in days (from the nav arg; default 30 — the Sessions tab). */
+    val days: Int = handle.get<String>("days")?.toIntOrNull()?.coerceAtLeast(1) ?: 30
 
     private val cache = ArrayList<SessionSummary>()
     private var offset = 0
