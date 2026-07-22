@@ -1,0 +1,165 @@
+---
+# configure_rtc.yml
+#
+# BL-74 — DS3231 RTC (HW-084) install + runtime I2C detection at boot.
+#
+# The production Jetson has no working onboard RTC (no coin-cell battery),
+# so on every offline boot the system clock is stuck at the build date (or
+# 1970). fake-hwclock (BL-12) restores a rough clock and the companion
+# service (BL-64) lets the phone push exact time over the hotspot, but a
+# real hardware RTC is the only source that survives a power cut WITHOUT a
+# phone present and sets the clock before userspace starts counting.
+#
+# This playbook installs a DS3231 HW-084 module on the 40-pin header (I2C
+# bus 7, addr 0x68 on the Jetson Orin Nano) and a boot service that:
+#   1. Probes I2C bus 7 for the DS3231 (0x68) via i2cdetect at boot.
+#   2. If present: registers it as an rtc-ds1307 device
+#      (`echo ds1307 0x68 > /sys/class/i2c-adapter/i2c-7/new_device`), which
+#      creates /dev/rtc1, then copies the RTC time into the system clock
+#      (`hwclock --hctosys --rtc=/dev/rtc1`).
+#   3. If absent: exits cleanly (Type=oneshot no-op). The k3s clock stack
+#      then falls back to fake-hwclock (BL-74 reworks k3s ExecStartPre to a
+#      runtime wrapper that prefers /dev/rtc1 and falls back to
+#      fake-hwclock — see install_k3s_with_docker_tasks.yml).
+#
+# Idempotency:
+#   - The `new_device` sysfs write is NOT idempotent on all kernels (writing
+#     ds1307 0x68 when /dev/rtc1 already exists can error), so the service
+#     guards the write with `[ -e /dev/rtc1 ]` and skips registration when the
+#     device is already there. `hwclock --hctosys` is always safe to re-run.
+#   - The systemd `service` module + `copy` (content-matched) keep the second
+#     playbook run idempotent (changed=0 when nothing changed).
+#
+# Runtime ordering: `rtc-ds3231.service` runs `Before=k3s-clock-ready.service`
+# so the RTC sets the clock before the k3s sanity gate runs — k3s-clock-ready
+# stays unchanged (no double hwclock --hctosys).
+#
+# Usage (raw ansible, if JETSON_IP is already exported):
+#   set -a; source .env.local; set +a
+#   ansible-playbook -i ansible/inventory/jetsons.yml \
+#                    ansible/playbooks/system/configure_rtc.yml
+#
+# Usage (standalone, over the Jetson hotspot — preferred):
+#   ./scripts/install_rtc_standalone.sh
+#   (sources .env.local, derives JETSON_IP from JETSON_HOTSPOT_IP, runs this
+#    playbook; i2c-tools is the only apt package and it is already on
+#    JetPack 6.2, so no internet is strictly required after that)
+
+- name: Configure DS3231 RTC detection + boot service (BL-74)
+  hosts: all
+  become: true
+  gather_facts: yes
+
+  vars:
+    rtc_detect_script: /usr/local/bin/detect-ds3231.sh
+    rtc_service: rtc-ds3231.service
+    # The Orin Nano exposes the 40-pin header I2C on bus 7. The DS3231 has a
+    # fixed 7-bit address of 0x68.
+    i2c_bus: "7"
+    i2c_addr: "0x68"
+
+  handlers:
+    # -------------------------------------------------------------------
+    # Reload systemd + (re)start the RTC service when the detect script or
+    # the unit content changes, so a re-run picks up the new code. Only
+    # fires on content change, which keeps the second run idempotent.
+    # -------------------------------------------------------------------
+    - name: Reload systemd + restart rtc-ds3231
+      systemd:
+        name: "{{ rtc_service }}"
+        daemon_reload: yes
+        state: restarted
+
+  tasks:
+    # -------------------------------------------------------------------
+    # 1. Install i2c-tools (provides i2cdetect for the runtime probe).
+    # -------------------------------------------------------------------
+    - name: Install i2c-tools (runtime RTC probe)
+      apt:
+        name: i2c-tools
+        state: present
+        update_cache: yes
+
+    # -------------------------------------------------------------------
+    # 2. detect-ds3231.sh — probe I2C bus 7 for the DS3231 (0x68).
+    #    Exits 0 if the RTC is present, 1 if absent. Used by the boot
+    #    service (and by the standalone verifier) to decide whether to
+    #    register the rtc-ds1307 device. Pure detection — no side effects.
+    # -------------------------------------------------------------------
+    - name: Install detect-ds3231.sh probe script
+      copy:
+        dest: "{{ rtc_detect_script }}"
+        owner: root
+        group: root
+        mode: '0755'
+        content: |
+          #!/bin/sh
+          # detect-ds3231.sh — probe I2C bus {{ i2c_bus }} for the DS3231
+          # (address {{ i2c_addr }}). Exits 0 if present, 1 if absent.
+          #
+          # i2cdetect prints a grid; the DS3231 shows up as "{{ i2c_addr }}" in
+          # the cell (a "--" means something is at that address but it did
+          # not ACK a quick write, which can happen with some RTCs; "UU"
+          # means the address is already in use by a kernel driver, i.e. the
+          # RTC is already registered). Accept "68" OR "UU" at the DS3231
+          # address as "present".
+          set -eu
+          out=$(/usr/sbin/i2cdetect -y {{ i2c_bus }} 2>/dev/null || true)
+          if printf '%s\n' "$out" | grep -Eq '{{ i2c_addr }}|UU'; then
+            exit 0
+          fi
+          exit 1
+      notify: Reload systemd + restart rtc-ds3231
+
+    # -------------------------------------------------------------------
+    # 3. rtc-ds3231.service — boot service that sets the system clock from
+    #    the RTC. Type=oneshot + RemainAfterExit=yes so it runs once at boot
+    #    and stays "active" after. Runs Before=k3s-clock-ready.service so
+    #    the clock is sane before the k3s sanity gate runs.
+    #
+    #    ExecStart: run detect-ds3231.sh. If the RTC is absent, exit 0
+    #    (clean no-op — the k3s stack falls back to fake-hwclock). If
+    #    present: guard the `new_device` write with `[ -e /dev/rtc1 ]`
+    #    (skip registration if already registered, so the service is
+    #    idempotent on re-runs/restarts), then copy the RTC time into the
+    #    system clock with hwclock --hctosys.
+    # -------------------------------------------------------------------
+    - name: Install rtc-ds3231.service
+      copy:
+        dest: "/etc/systemd/system/{{ rtc_service }}"
+        owner: root
+        group: root
+        mode: '0644'
+        content: |
+          [Unit]
+          Description=DS3231 RTC detection + hwclock --hctosys at boot (BL-74)
+          # Run after the modules-load service so the i2c bus adapter driver
+          # is ready, and before the k3s clock sanity gate so the clock is
+          # sane before k3s starts.
+          After=systemd-modules-load.service
+          Before=k3s-clock-ready.service
+          # i2c-tools (i2cdetect) must be installed; the playbook installs it
+          # but the unit itself does not depend on a dedicated service.
+
+          [Service]
+          Type=oneshot
+          RemainAfterExit=yes
+          # Probe for the DS3231. If absent, exit 0 (clean no-op). If present,
+          # register it as rtc-ds1307 (guarded by /dev/rtc1 so the write is
+          # idempotent) and copy the RTC time into the system clock.
+          ExecStart=/bin/sh -c '/usr/local/bin/detect-ds3231.sh || exit 0; if [ ! -e /dev/rtc1 ]; then echo ds1307 {{ i2c_addr }} > /sys/class/i2c-adapter/i2c-{{ i2c_bus }}/new_device; fi; hwclock --hctosys --rtc=/dev/rtc1'
+
+          [Install]
+          WantedBy=multi-user.target
+      notify: Reload systemd + restart rtc-ds3231
+
+    # -------------------------------------------------------------------
+    # 4. Enable + start the service (daemon_reload so the new unit is seen).
+    #    The handler above restarts it if the script/unit content changed.
+    # -------------------------------------------------------------------
+    - name: Enable + start rtc-ds3231.service
+      systemd:
+        name: "{{ rtc_service }}"
+        enabled: yes
+        daemon_reload: yes
+        state: started
