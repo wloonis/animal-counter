@@ -52,7 +52,7 @@ Add a DS3231 hardware real-time clock to the Jetson with runtime I2C detection a
 
 - [x] **Task 8: EDIT** `android/app/src/main/res/values/strings.xml` — Add: `settings_sync_time` ("Synchronize clock"), `settings_sync_success` ("Clock synchronized ✓"), `settings_sync_failure` ("Sync failed"), `settings_syncing` ("Synchronizing…").
 
-- [ ] **Task 9: EDIT** `android/app/src/main/res/values-fr/strings.xml` — Add FR translations: `settings_sync_time` ("Synchroniser l'heure"), `settings_sync_success` ("Heure synchronisée ✓"), `settings_sync_failure` ("Échec de la synchronisation"), `settings_syncing` ("Synchronisation…").
+- [x] **Task 9: EDIT** `android/app/src/main/res/values-fr/strings.xml` — Add FR translations: `settings_sync_time` ("Synchroniser l'heure"), `settings_sync_success` ("Heure synchronisée ✓"), `settings_sync_failure` ("Échec de la synchronisation"), `settings_syncing` ("Synchronisation…").
 
 - [ ] **Task 10: CREATE** `docs/13_rtc_install.md` — Hardware wiring section (DS3231 HW-084 → 40-pin header: VCC→pin1 3.3V, GND→pin6, SDA→pin3, SCL→pin5). 3.3V-not-5V safety note (the HW-084 module has a charge circuit for LIR2032; with a non-rechargeable CR2032, do NOT supply 5V — use 3.3V to avoid the charge circuit). CR2032-vs-LIR2032 charge-circuit caveat. Detection section (`i2cdetect -y 7` → 0x68). Standalone setup commands (direct `ansible-playbook -i ansible/inventory/jetsons.yml ansible/playbooks/system/configure_rtc.yml` and `scripts/install_rtc_standalone.sh`). How it works section (rtc-ds3231.service, k3s-clock-load.sh, fallback chain). Cross-ref to `docs/12_jetson_network_k3s_boot.md` for the clock stack background.
 
