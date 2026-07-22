@@ -15,7 +15,7 @@ fail on this hardware and the working solution is non-obvious.
 | Concern | Solution |
 |---------|----------|
 | K3s node-ip must be stable + reachable at boot | Put it on a **virtual `dummy0` interface** (always UP, no cable needed), not the physical ethernet (linkdown) and not WiFi (changes between internet/hotspot mode) |
-| Jetson has no RTC battery → clock boots to 1970 | `fake-hwclock` restores the clock at boot + `ExecStartPre=/sbin/fake-hwclock load` on k3s re-applies it at the very last moment |
+| Jetson has no RTC battery → clock boots to 1970 | `fake-hwclock` restores the clock at boot + `ExecStartPre=/sbin/fake-hwclock load` on k3s re-applies it at the very last moment. **With a DS3231 RTC installed (optional, see [docs/13_rtc_install.md](13_rtc_install.md)) the RTC becomes the primary clock source and fake-hwclock drops to a tertiary fallback.** |
 | A late RTC sync resets the clock to 1970 *after* fake-hwclock | `k3s-clock-ready` gate + the `ExecStartPre` re-load cover it |
 | WiFi IP drifted (DHCP `.180 → .181`) → unpredictable SSH | Pin the internet WiFi connection to a **static `.180`** |
 | First boot has no fake-hwclock data yet | `k3s-clock-ready` waits for the phone (BL-65) time push over the hotspot |
@@ -129,6 +129,16 @@ just lives on `dummy0` instead of the dead ethernet.
 The Jetson has no RTC battery, so at boot the clock is `1970-01-01`. K3s cannot
 start with a 1970 clock. The fix has **three cooperating layers**, each
 covering a gap the others leave:
+
+> **RTC upgrade (optional):** installing a DS3231 hardware RTC (HW-084 module)
+> on the 40-pin header **supersedes** fake-hwclock as the primary clock source.
+> The `rtc-ds3231.service` (runtime I2C detection) sets the clock from
+> `/dev/rtc1` at boot, and the k3s `ExecStartPre` is rerouted to
+> `k3s-clock-load.sh`, which prefers the RTC (`/dev/rtc1`) and only falls back to
+> `fake-hwclock load` when the RTC is absent. fake-hwclock is kept as a
+> tertiary fallback for RTC-less boots. See
+> [docs/13_rtc_install.md](13_rtc_install.md) for hardware wiring, the
+> detection service, and the full fallback chain.
 
 ### 5.1 `fake-hwclock` — restore the clock at boot
 
