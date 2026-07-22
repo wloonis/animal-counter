@@ -14,8 +14,8 @@ import com.animalcounter.data.SyncLog
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -26,12 +26,15 @@ import java.time.Instant
 import java.time.ZoneId
 
 /**
- * Per-probe deadline. The two candidate IPs are polled in parallel; the
- * first strict-valid `GET /api/identify` wins. A short deadline keeps the
- * app-open latency low (the user sees the banner resolve in ~1.5s, well
- * below the 5s per-request connect/read timeout in [JetsonClient]).
+ * Per-probe deadline for the parallel candidate race. The first strict-valid
+ * `GET /api/identify` wins (see [parallelProbe] — a true `select` race, so a
+ * failing/unreachable candidate does NOT block the reachable one). Set above
+ * the 5s per-request connect timeout in [JetsonClient] so that when ALL
+ * candidates are unreachable the race resolves at ~5s via the connect timeout
+ * (not the probe deadline); when a candidate IS reachable it wins in ~200ms
+ * regardless of any unreachable candidate still hanging.
  */
-private const val PROBE_TIMEOUT_MS = 1_500L
+private const val PROBE_TIMEOUT_MS = 6_000L
 
 /**
  * Outcome of an on-demand clock push ([syncTime]). Surfaced to the Settings
@@ -280,6 +283,17 @@ object JetsonConnectionManager {
      * the first to return a strict-valid `Success` outcome wins. The whole
      * race is bounded by [PROBE_TIMEOUT_MS] — if no candidate succeeds
      * within the deadline, returns `null`.
+     *
+     * This is a TRUE `select` race (BL-74 fix): the first SUCCESSFUL probe
+     * resolves the result immediately, and a failing/unreachable candidate
+     * does NOT short-circuit the race — we keep waiting for the others. The
+     * previous implementation awaited the candidates sequentially, so on the
+     * LAN the unreachable hotspot candidate (192.168.100.1, whose TCP connect
+     * hangs until the 5s connect timeout) was awaited first and let the short
+     * probe deadline expire before the reachable LAN candidate (192.168.0.180,
+     * done in ~200ms) was ever checked — the app reported "hors de portée" on
+     * the LAN even though the Jetson was reachable. The select race fixes that:
+     * the reachable candidate wins in ~200ms regardless of the unreachable one.
      */
     private suspend fun parallelProbe(
         candidates: Set<String>,
@@ -289,20 +303,34 @@ object JetsonConnectionManager {
         if (ips.isEmpty()) return null
         val s = scope ?: return null
         return withTimeoutOrNull(PROBE_TIMEOUT_MS) {
-            val deferreds = ips.map { ip ->
-                s.async {
+            // TRUE race (BL-74 fix): every candidate is probed in parallel and
+            // reports its result into a buffered channel; the first SUCCESS
+            // (non-null) wins and we return immediately. A failing/unreachable
+            // candidate does NOT short-circuit the race — we keep receiving
+            // until a success arrives or every candidate has reported (all
+            // failures -> null). The previous implementation awaited the
+            // candidates sequentially, so on the LAN the unreachable hotspot
+            // candidate (192.168.100.1, whose TCP connect hangs until the 5s
+            // connect timeout) was awaited first and let the short probe
+            // deadline expire before the reachable LAN candidate
+            // (192.168.0.180, done in ~200ms) was ever checked — the app
+            // reported "hors de portée" on the LAN even though the Jetson was
+            // reachable. The channel race fixes that: the reachable candidate
+            // wins in ~200ms regardless of the unreachable one.
+            val results = Channel<String?>(ips.size)
+            ips.forEach { ip ->
+                s.launch {
                     val event = JetsonClient.identify(ip = ip, network = network)
-                    if (event.outcome == SyncEvent.Outcome.Success) ip else null
+                    results.send(if (event.outcome == SyncEvent.Outcome.Success) ip else null)
                 }
             }
-            // Race: the first non-null result wins; await the rest so no
-            // coroutine leaks. If none succeed, returns null.
-            var winner: String? = null
-            for (d in deferreds) {
-                val res = d.await()
-                if (res != null && winner == null) winner = res
+            var received = 0
+            while (received < ips.size) {
+                val res = results.receive()
+                received++
+                if (res != null) return@withTimeoutOrNull res
             }
-            winner
+            null
         }
     }
 
