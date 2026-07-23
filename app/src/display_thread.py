@@ -30,6 +30,12 @@ from supervision import Detections
 
 from state import shared_state, logger, settings
 
+# BL-76: Shared-file IPC sentinel written by the companion (POST /api/power).
+# The counting app consumes it (sets arret_requested) only if its mtime is
+# newer than the app process start time, to avoid a stale pre-boot sentinel
+# triggering an immediate poweroff loop after a crash/reboot.
+POWER_SENTINEL_PATH = "/files/.arret_requested"
+
 class DisplayThread(threading.Thread):
     """
     Thread for handling display and counting.
@@ -187,6 +193,32 @@ class DisplayThread(threading.Thread):
 
         while not self.stop_event.is_set():
             time_start = time.time()
+
+            # BL-76: Poll the shared-file power sentinel written by the
+            # companion (POST /api/power). Consume it (best-effort) and flip
+            # arret_requested ONLY if the sentinel mtime is newer than this
+            # process start time. A stale pre-boot sentinel (leftover from a
+            # prior crash) is removed silently without triggering a poweroff
+            # (anti poweroff-loop guard). The rest of the BL-62 shutdown
+            # sequence below is unchanged.
+            try:
+                if os.path.exists(POWER_SENTINEL_PATH):
+                    sentinel_mtime = os.path.getmtime(POWER_SENTINEL_PATH)
+                    if sentinel_mtime > shared_state.app_start_time:
+                        try:
+                            os.remove(POWER_SENTINEL_PATH)
+                        except OSError:
+                            pass
+                        shared_state.arret_requested = True
+                        logger.info("Power sentinel consumed — arret requested")
+                    else:
+                        # Stale pre-boot sentinel — discard without action.
+                        try:
+                            os.remove(POWER_SENTINEL_PATH)
+                        except OSError:
+                            pass
+            except OSError:
+                pass
 
             # BL-62: Clean shutdown — detect the stop request and launch the
             # shutdown sequence: (1) status=0/auto/learning off, (2)
