@@ -154,3 +154,4 @@ Task 12: JetsonConnectionManager poweroff/getSettings/putSettings + resolveActiv
 Task 13: ADD 4 DataStore runtime tracking keys (drawTracking/boxTracking/centroidTracking/offsetCountingLine) + flows + setters + defaults — 328ae91
 Task 14: SettingsViewModel tracking StateFlows + debounced putSettings + getSettings sync + poweroff — 84bc249
 Task 15: RESTRUCTURE SettingsScreen.kt into 5 Section(title,content) Cards (Horloge/Connexion/Alimentation/Enregistrement & tracking/Ligne de comptage) + poweroff AlertDialog + master/sub-toggles + offset Slider — 12e14a8
+Task 16: ADD EN+FR strings for settings restructure (5 sections + poweroff + tracking toggles) — 9e2c76c
