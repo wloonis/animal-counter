@@ -89,7 +89,7 @@ Réorganiser `SettingsScreen.kt` en 5 sections claires (Horloge / Connexion / Al
 
 - [x] Task 19: BUILD (Android) — `cd android && ./gradlew :app:assembleDebug --no-daemon` → APK debug généré. Sideload sur un téléphone pour vérifier l'affichage des 5 sections, le slider, le dialogue de confirmation d'arrêt, et le comportement des sub-toggles grisés quand master OFF.
 
-- [ ] Task 20: PR — Créer une PR avec body incluant `Closes #91` (auto-close de l'issue BL-76 au merge). Nommer la branche/PR avec le préfixe `BL-76`. Documenter dans le body que OFFSET expose → validation `--full` passée, et que `config.json` `mode` reste `"standard"`.
+- [x] Task 20: PR — Créer une PR avec body incluant `Closes #91` (auto-close de l'issue BL-76 au merge). Nommer la branche/PR avec le préfixe `BL-76`. Documenter dans le body que OFFSET expose → validation `--full` passée, et que `config.json` `mode` reste `"standard"`.
 
 ## Validation
 - `python3 -m py_compile app/src/main.py app/src/display_thread.py app/src/state.py app/src/utils/shared_state.py` — aucune erreur de syntaxe.
