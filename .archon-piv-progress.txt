@@ -142,3 +142,4 @@ Task 16: UPDATE cross-refs in docs/01_quickstart.md, docs/12, docs/14, docs/15 (
 Task 1: Companion constants (RUNTIME_SETTINGS_FILE/POWER_SENTINEL_FILE) + SERVICE_VERSION=5 + docstring endpoints — f5cee6a
 Task 2: companion _load_runtime_settings + _validate_settings_payload helpers — 0457d39
 Task 3: companion GET /api/settings branch (returns runtime-settings.json, empty {} if absent) — ad33b98
+Task 4: companion do_PUT /api/settings (atomic PATCH-like write) — c9f58b3
