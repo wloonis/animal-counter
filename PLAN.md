@@ -71,7 +71,7 @@ Réorganiser `SettingsScreen.kt` en 5 sections claires (Horloge / Connexion / Al
 
 - [x] Task 14: EDIT `android/app/src/main/java/com/animalcounter/ui/settings/SettingsViewModel.kt` — Ajouter 4 `StateFlow` (`drawTracking`, `boxTracking`, `centroidTracking`, `offsetCountingLine`) alimentés par le repository. Sur changement d'un toggle/slider : updater le StateFlow + lancer un `putSettings` débouncé (push vers Jetson). Au `init` ou sur un refresh explicite : appeler `getSettings` pour synchroniser depuis le Jetson (fallback cache DataStore si offline). Exposer un `poweroffResult: StateFlow<PoweroffUiState>` (Idle/Loading/Success/Error) et `fun poweroff()` qui appelle le manager.
 
-- [ ] Task 15: EDIT `android/app/src/main/java/com/animalcounter/ui/settings/SettingsScreen.kt` — Restructurer en 5 sections via un composable réutilisable `@Composable fun Section(title: String, content: @Composable () -> Unit)` (titre + contenu dans une Card/Column) :
+- [x] Task 15: EDIT `android/app/src/main/java/com/animalcounter/ui/settings/SettingsScreen.kt` — Restructurer en 5 sections via un composable réutilisable `@Composable fun Section(title: String, content: @Composable () -> Unit)` (titre + contenu dans une Card/Column) :
   1. **Horloge** — conserver le bouton « Sync time » BL-65 existant (déplacer dans cette section).
   2. **Connexion au Jetson** — conserver auto-select + override IP + IPs candidates (BL-73), déplacer dans cette section.
   3. **Alimentation** — bouton « Arrêter le Jetson » (rouge/distructif) ouvrant un `AlertDialog` de confirmation (« Êtes-vous sûr ? ») ; sur confirm → `vm.poweroff()` + spinner + message « Arrêt en cours » selon `poweroffResult`.

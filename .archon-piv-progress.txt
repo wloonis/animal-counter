@@ -152,3 +152,5 @@ Task 10: ADD JetsonSettings + PoweroffResponse data classes + JSON codecs in Mod
 Task 11: ADD JetsonClient getSettings/putSettings/postPower + sendJson transport (compileDebugKotlin BUILD SUCCESSFUL) — 5b9f95b
 Task 12: JetsonConnectionManager poweroff/getSettings/putSettings + resolveActiveIp helper — a587dff
 Task 13: ADD 4 DataStore runtime tracking keys (drawTracking/boxTracking/centroidTracking/offsetCountingLine) + flows + setters + defaults — 328ae91
+Task 14: SettingsViewModel tracking StateFlows + debounced putSettings + getSettings sync + poweroff — 84bc249
+Task 15: RESTRUCTURE SettingsScreen.kt into 5 Section(title,content) Cards (Horloge/Connexion/Alimentation/Enregistrement & tracking/Ligne de comptage) + poweroff AlertDialog + master/sub-toggles + offset Slider — 12e14a8
