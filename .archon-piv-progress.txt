@@ -139,3 +139,5 @@ BL-74 Task 14: EDIT docs/12_jetson_network_k3s_boot.md — TL;DR row notes DS323
 Task 15: README.md TOC renumbered + 13_rtc_install.md row inserted — 03b87ab
 
 Task 16: UPDATE cross-refs in docs/01_quickstart.md, docs/12, docs/14, docs/15 (troubleshooting→14, reset→15) — c63fea8
+Task 1: Companion constants (RUNTIME_SETTINGS_FILE/POWER_SENTINEL_FILE) + SERVICE_VERSION=5 + docstring endpoints — f5cee6a
+Task 2: companion _load_runtime_settings + _validate_settings_payload helpers — 0457d39
