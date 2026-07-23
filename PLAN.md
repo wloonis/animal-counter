@@ -51,7 +51,7 @@ Réorganiser `SettingsScreen.kt` en 5 sections claires (Horloge / Connexion / Al
 
 ### Counting app (app/src)
 
-- [ ] Task 6: EDIT `app/src/utils/shared_state.py` — Ajouter `self.app_start_time = time.time()` dans `__init__` (près de `arret_requested`, ~ligne 66) pour le test anti-stale du sentinel d'arrêt. Ajouter `import time` si absent.
+- [x] Task 6: EDIT `app/src/utils/shared_state.py` — Ajouter `self.app_start_time = time.time()` dans `__init__` (près de `arret_requested`, ~ligne 66) pour le test anti-stale du sentinel d'arrêt. Ajouter `import time` si absent.
 
 - [ ] Task 7: EDIT `app/src/state.py` (ou `app/src/main.py`) — Ajouter une fonction helper `load_runtime_settings()` qui lit `/files/runtime-settings.json` (constante `RUNTIME_SETTINGS_PATH = "/files/runtime-settings.json"`) et renvoie un dict, ou `{}` si absent/illisible (best-effort, log warning via `logger`). Aucune levée d'exception. Ne pas importer de nouveau module lourd.
 
