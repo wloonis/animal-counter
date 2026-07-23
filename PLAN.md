@@ -87,7 +87,7 @@ Réorganiser `SettingsScreen.kt` en 5 sections claires (Horloge / Connexion / Al
 
 - [ ] Task 18: VALIDATE (Jetson) — Préparer le worktree (copier les fichiers gitignored : `.env.local`, `app/model/`, `app/.env`, `validation/videos/*.mp4` depuis le worktree principal via `git worktree list`). Lancer `scripts/validate_on_jetson.sh --full` (les 4 vidéos priority de `validation/expected_counts.json`) car `OFFSET_PERCENT_COUNTING_LINE` est exposé/modifiable et `app/src/main.py`/`display_thread.py` sont touchés. Le count attendu doit rester conforme (ne pas auto-correct un mismatch — investiguer si divergence). Confirmer qu'avec `offset=10` (default) le count est identique au baseline.
 
-- [ ] Task 19: BUILD (Android) — `cd android && ./gradlew :app:assembleDebug --no-daemon` → APK debug généré. Sideload sur un téléphone pour vérifier l'affichage des 5 sections, le slider, le dialogue de confirmation d'arrêt, et le comportement des sub-toggles grisés quand master OFF.
+- [x] Task 19: BUILD (Android) — `cd android && ./gradlew :app:assembleDebug --no-daemon` → APK debug généré. Sideload sur un téléphone pour vérifier l'affichage des 5 sections, le slider, le dialogue de confirmation d'arrêt, et le comportement des sub-toggles grisés quand master OFF.
 
 - [ ] Task 20: PR — Créer une PR avec body incluant `Closes #91` (auto-close de l'issue BL-76 au merge). Nommer la branche/PR avec le préfixe `BL-76`. Documenter dans le body que OFFSET expose → validation `--full` passée, et que `config.json` `mode` reste `"standard"`.
 
