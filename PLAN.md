@@ -61,7 +61,7 @@ Réorganiser `SettingsScreen.kt` en 5 sections claires (Horloge / Connexion / Al
 
 ### Android (Compose/Kotlin)
 
-- [ ] Task 10: EDIT `android/app/src/main/java/com/animalcounter/net/Models.kt` — Ajouter `data class JetsonSettings(val drawTracking: Boolean? = null, val boxTracking: Boolean? = null, val centroidTracking: Boolean? = null, val offsetCountingLine: Int? = null)` (tous nullable pour le PATCH-like ; null = non modifié). Ajouter `data class PoweroffResponse(val status: String)`.
+- [x] Task 10: EDIT `android/app/src/main/java/com/animalcounter/net/Models.kt` — Ajouter `data class JetsonSettings(val drawTracking: Boolean? = null, val boxTracking: Boolean? = null, val centroidTracking: Boolean? = null, val offsetCountingLine: Int? = null)` (tous nullable pour le PATCH-like ; null = non modifié). Ajouter `data class PoweroffResponse(val status: String)`.
 
 - [ ] Task 11: EDIT `android/app/src/main/java/com/animalcounter/net/JetsonClient.kt` — Ajouter 3 fonctions suspend : `getSettings(baseUrl): JetsonSettings` (GET `/api/settings`), `putSettings(baseUrl, body: JetsonSettings): JetsonSettings` (PUT `/api/settings`, body JSON), `postPower(baseUrl): PoweroffResponse` (POST `/api/power`). Réutiliser le client HTTP + parsing JSON existants. Map camelCase Kotlin ↔ snake_case JSON via la convention déjà utilisée (vérifier le sérialiseur en place ; adapter les noms de champ si besoin).
 
