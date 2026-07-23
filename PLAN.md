@@ -83,7 +83,7 @@ Réorganiser `SettingsScreen.kt` en 5 sections claires (Horloge / Connexion / Al
 
 ### Validation & garde-fous
 
-- [ ] Task 17: VERIFY — `python3 -m py_compile app/src/main.py app/src/display_thread.py app/src/state.py app/src/utils/shared_state.py` (aucune erreur de syntaxe). Vérifier que `validation/config.json` `mode` reste `"standard"` (non modifié). Vérifier qu'aucun fichier de logique de comptage (`core/counting.py`, `infer_thread.py`, params `TRACKER_*`) n'a été touché.
+- [x] Task 17: VERIFY — `python3 -m py_compile app/src/main.py app/src/display_thread.py app/src/state.py app/src/utils/shared_state.py` (aucune erreur de syntaxe). Vérifier que `validation/config.json` `mode` reste `"standard"` (non modifié). Vérifier qu'aucun fichier de logique de comptage (`core/counting.py`, `infer_thread.py`, params `TRACKER_*`) n'a été touché.
 
 - [ ] Task 18: VALIDATE (Jetson) — Préparer le worktree (copier les fichiers gitignored : `.env.local`, `app/model/`, `app/.env`, `validation/videos/*.mp4` depuis le worktree principal via `git worktree list`). Lancer `scripts/validate_on_jetson.sh --full` (les 4 vidéos priority de `validation/expected_counts.json`) car `OFFSET_PERCENT_COUNTING_LINE` est exposé/modifiable et `app/src/main.py`/`display_thread.py` sont touchés. Le count attendu doit rester conforme (ne pas auto-correct un mismatch — investiguer si divergence). Confirmer qu'avec `offset=10` (default) le count est identique au baseline.
 

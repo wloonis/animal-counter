@@ -155,3 +155,4 @@ Task 13: ADD 4 DataStore runtime tracking keys (drawTracking/boxTracking/centroi
 Task 14: SettingsViewModel tracking StateFlows + debounced putSettings + getSettings sync + poweroff — 84bc249
 Task 15: RESTRUCTURE SettingsScreen.kt into 5 Section(title,content) Cards (Horloge/Connexion/Alimentation/Enregistrement & tracking/Ligne de comptage) + poweroff AlertDialog + master/sub-toggles + offset Slider — 12e14a8
 Task 16: ADD EN+FR strings for settings restructure (5 sections + poweroff + tracking toggles) — 9e2c76c
+Task 17: VERIFY py_compile PASS, config.json mode=standard, counting logic (core/counting.py, infer_thread.py, tracking.py) untouched, TRACKER_* unchanged — (no commit, verification only)
