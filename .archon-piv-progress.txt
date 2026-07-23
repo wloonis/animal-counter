@@ -147,3 +147,4 @@ Task 5: companion POST /api/power sentinel branch — fa2b538
 Task 6: ADD app_start_time to SharedState (anti-stale sentinel) — d35e0ef
 Task 7: ADD load_runtime_settings() helper in app/src/state.py — 1b1ada3
 Task 8: HOT-RELOAD runtime-settings.json in main.py start() before Tracking/Rendering/Counting instantiation (fallback os.getenv, bool/int validation, OFFSET 0-100 range) — e61f712
+Task 9: POLL power sentinel in DisplayThread.run (anti-stale guard) — da60ea9
