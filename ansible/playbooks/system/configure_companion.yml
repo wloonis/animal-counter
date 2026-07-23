@@ -974,6 +974,68 @@
                   return None, "malformed JSON: {}".format(exc)
 
 
+          def _load_runtime_settings():
+              """Best-effort load of RUNTIME_SETTINGS_FILE. Returns the parsed
+              dict, or {} if the file is absent or unreadable (a missing file
+              is the normal state at boot — the counting app then falls back
+              to os.getenv/defaults). Logs a warning on an unexpected read
+              failure (absence is silent). Used by GET /api/settings and as
+              the merge base for PUT /api/settings."""
+              try:
+                  with open(RUNTIME_SETTINGS_FILE, "r") as fh:
+                      data = json.load(fh)
+                  if not isinstance(data, dict):
+                      sys.stderr.write(
+                          "[runtime-settings] not a JSON object: {}\n".format(
+                              type(data).__name__))
+                      return {}
+                  return data
+              except FileNotFoundError:
+                  return {}
+              except (OSError, json.JSONDecodeError) as exc:
+                  sys.stderr.write(
+                      "[runtime-settings] read failed: {}\n".format(exc))
+                  return {}
+
+
+          def _validate_settings_payload(payload):
+              """Validate a settings dict for PUT /api/settings.
+
+              Recognised keys (all optional — PATCH-like):
+                - draw_tracking     : bool (strict, not a truthy string)
+                - box_tracking      : bool
+                - centroid_tracking : bool
+                - offset_counting_line : int in [0, 100]
+
+              Returns (ok, errors). `ok` is True when every present key is
+              valid; `errors` is a list of human-readable strings (empty when
+              ok). Unknown keys are ignored (forward-compat). A non-bool
+              truthy value (e.g. "true" string) is rejected so the counting
+              app never has to re-coerce types."""
+              errors = []
+              if not isinstance(payload, dict):
+                  return False, ["payload must be a JSON object"]
+              for key in ("draw_tracking", "box_tracking",
+                          "centroid_tracking"):
+                  if key in payload and not isinstance(payload[key], bool):
+                      errors.append(
+                          "{} must be a boolean, got {}".format(
+                              key, type(payload[key]).__name__))
+              if "offset_counting_line" in payload:
+                  val = payload["offset_counting_line"]
+                  # bool is a subclass of int — reject it explicitly so
+                  # `true` is not silently accepted as 1.
+                  if isinstance(val, bool) or not isinstance(val, int):
+                      errors.append(
+                          "offset_counting_line must be an integer, got {}".format(
+                              type(val).__name__))
+                  elif val < 0 or val > 100:
+                      errors.append(
+                          "offset_counting_line must be in [0, 100], got {}".format(
+                              val))
+              return (len(errors) == 0), errors
+
+
           def _apply_time(time_str, tz):
               """Run the timedatectl sequence to set the clock + timezone.
 
