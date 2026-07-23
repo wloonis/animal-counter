@@ -43,7 +43,7 @@ Réorganiser `SettingsScreen.kt` en 5 sections claires (Horloge / Connexion / Al
 
 - [x] Task 2: EDIT `ansible/playbooks/system/configure_companion.yml` — Ajouter une fonction helper `_load_runtime_settings()` qui renvoie le dict JSON désérialisé depuis `RUNTIME_SETTINGS_FILE`, ou `{}` si absent/illisible (best-effort, log warning). Ajouter `_validate_settings_payload(payload)` qui valide un dict : `draw_tracking`/`box_tracking`/`centroid_tracking` ∈ {True, False} si présents (bool strict, rejeter les strings), `offset_counting_line` ∈ int 0-100 si présent. Retourne `(ok, errors)`.
 
-- [ ] Task 3: EDIT `ansible/playbooks/system/configure_companion.yml` — Étendre `do_GET` (~ligne 1021) : ajouter une branche `if path == "/api/settings":` qui appelle `_load_runtime_settings()`, renvoie 200 JSON (toujours un objet, vide `{}` si pas de fichier). Logger `GET /api/settings -> 200`.
+- [x] Task 3: EDIT `ansible/playbooks/system/configure_companion.yml` — Étendre `do_GET` (~ligne 1021) : ajouter une branche `if path == "/api/settings":` qui appelle `_load_runtime_settings()`, renvoie 200 JSON (toujours un objet, vide `{}` si pas de fichier). Logger `GET /api/settings -> 200`.
 
 - [ ] Task 4: EDIT `ansible/playbooks/system/configure_companion.yml` — Ajouter une méthode `do_PUT` (nouvelle) : si `self.path != "/api/settings"` → 404. Sinon lire le body JSON via le helper `_read_json_body` existant (~ligne 938), valider via `_validate_settings_payload`. Sur erreur → 400 avec message. Sinon : charger les settings existants (`_load_runtime_settings`), merger les clés présentes (PATCH-like), écrire atomiquement (write temp + `os.replace`) le JSON dans `RUNTIME_SETTINGS_FILE`, renvoyer 200 avec le settings mergé complet. Logger `PUT /api/settings -> 200 ({...})`.
 
