@@ -65,6 +65,10 @@ class SharedState:
         # BL-62: Arrêt button — flags for graceful shutdown + poweroff
         self.arret_requested = False
         self.poweroff_requested = False
+        # BL-76: wall-clock boot time of the process, used by the anti-stale
+        # check of the .arret_requested sentinel in DisplayThread.run (the
+        # sentinel only triggers a poweroff if its mtime is *newer* than this).
+        self.app_start_time = time.time()
         # BL-68: counting-history recorder (serve mode only). Holds the
         # HistoryWriter instance so stop() and the BL-62 poweroff path can reach
         # it and emit a clean session_end. None in validate/test mode.
