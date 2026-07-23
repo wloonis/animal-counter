@@ -3,11 +3,17 @@ package com.animalcounter.ui.settings
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.animalcounter.data.DEFAULT_BOX_TRACKING
+import com.animalcounter.data.DEFAULT_CENTROID_TRACKING
+import com.animalcounter.data.DEFAULT_DRAW_TRACKING
 import com.animalcounter.data.DEFAULT_HOTSPOT_IP
 import com.animalcounter.data.DEFAULT_JETSON_IP
 import com.animalcounter.data.DEFAULT_LAN_IP
+import com.animalcounter.data.DEFAULT_OFFSET_COUNTING_LINE
 import com.animalcounter.data.SettingsRepository
 import com.animalcounter.net.JetsonConnectionManager
+import com.animalcounter.net.JetsonSettings
+import com.animalcounter.net.PoweroffResponse
 import com.animalcounter.net.SyncResult
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -19,6 +25,13 @@ import kotlinx.coroutines.launch
 
 /** Debounce window (ms) before a typed IP is persisted to DataStore. */
 private const val IP_PERSIST_DEBOUNCE_MS = 500L
+
+/**
+ * Debounce window (ms) before a tracking/offset setting change is pushed to
+ * the Jetson via `PUT /api/settings`. Coalesces rapid slider/toggle flicker
+ * into a single PATCH.
+ */
+private const val SETTINGS_PUSH_DEBOUNCE_MS = 600L
 
 /**
  * State holder for the Settings screen (BL-73).
@@ -69,6 +82,53 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
     /** LAN candidate IP probed by the auto-select parallel probe. */
     val lanIp: StateFlow<String> = _lanIp.asStateFlow()
 
+    // ---- BL-76 runtime recording/tracking settings (cache + push) ----
+
+    private val _drawTracking = MutableStateFlow(DEFAULT_DRAW_TRACKING)
+    /**
+     * Master "Track in recordings" toggle (`draw_tracking`). Drives the
+     * enabled state of [boxTracking] / [centroidTracking] in the UI. The
+     * last value pushed to the Jetson is cached here (DataStore is the
+     * offline fallback; the on-device `runtime-settings.json` is the
+     * source of truth at recording start).
+     */
+    val drawTracking: StateFlow<Boolean> = _drawTracking.asStateFlow()
+
+    private val _boxTracking = MutableStateFlow(DEFAULT_BOX_TRACKING)
+    /** "Boxes" sub-toggle (`box_tracking`). */
+    val boxTracking: StateFlow<Boolean> = _boxTracking.asStateFlow()
+
+    private val _centroidTracking = MutableStateFlow(DEFAULT_CENTROID_TRACKING)
+    /** "Trails" sub-toggle (`centroid_tracking`). */
+    val centroidTracking: StateFlow<Boolean> = _centroidTracking.asStateFlow()
+
+    private val _offsetCountingLine = MutableStateFlow(DEFAULT_OFFSET_COUNTING_LINE)
+    /**
+     * Counting-line position (`offset_counting_line`, 0-100). Changing this
+     * affects the count; the UI warns the user accordingly.
+     */
+    val offsetCountingLine: StateFlow<Int> = _offsetCountingLine.asStateFlow()
+
+    /**
+     * UI-facing state of an on-demand Jetson poweroff (`POST /api/power`).
+     * Surfaced to the Settings screen so the "Arrêter le Jetson" button can
+     * show a spinner, a success, or an error message.
+     */
+    sealed interface PoweroffUiState {
+        /** No poweroff requested yet (default). */
+        data object Idle : PoweroffUiState
+        /** A poweroff request is in flight (sentinel being written). */
+        data object Loading : PoweroffUiState
+        /** Sentinel written — the counting app will run the BL-62 poweroff. */
+        data object Success : PoweroffUiState
+        /** No reachable Jetson, non-2xx HTTP, or network error. */
+        data class Error(val message: String?) : PoweroffUiState
+    }
+
+    private val _poweroffResult = MutableStateFlow<PoweroffUiState>(PoweroffUiState.Idle)
+    /** Observable on-demand poweroff outcome for the "Arrêter le Jetson" button. */
+    val poweroffResult: StateFlow<PoweroffUiState> = _poweroffResult.asStateFlow()
+
     /** State of an on-demand clock sync, surfaced to the Settings UI. */
     sealed interface SyncState {
         /** No sync pending/done (default + auto-cleared a few seconds after success). */
@@ -97,6 +157,13 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
     private var hotspotPersistJob: Job? = null
     private var lanPersistJob: Job? = null
 
+    /**
+     * Pending debounced push job for the BL-76 tracking/offset settings. A
+     * single shared job coalesces rapid toggle/slider flicker into one
+     * `PUT /api/settings` PATCH carrying all four current values.
+     */
+    private var settingsPushJob: Job? = null
+
     init {
         // Seed the fields from DataStore (DEFAULT_* until first emit).
         viewModelScope.launch {
@@ -104,7 +171,15 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
             _manualIp.value = repo.jetsonIp.first()
             _hotspotIp.value = repo.hotspotIp.first()
             _lanIp.value = repo.lanIp.first()
+            _drawTracking.value = repo.drawTracking.first()
+            _boxTracking.value = repo.boxTracking.first()
+            _centroidTracking.value = repo.centroidTracking.first()
+            _offsetCountingLine.value = repo.offsetCountingLine.first()
             loaded = true
+            // Best-effort sync from the Jetson: if reachable, the on-device
+            // runtime-settings.json overrides the local cache so the UI shows
+            // the live values. Offline → keep the cached DataStore values.
+            refreshSettingsFromJetson()
         }
     }
 
@@ -143,6 +218,124 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
      */
     fun clearSyncResult() {
         _syncResult.value = SyncState.Idle
+    }
+
+    // ---- BL-76 runtime recording/tracking settings ----
+
+    /**
+     * Best-effort pull of the live runtime settings from the Jetson
+     * (`GET /api/settings`). On success, the four fields are updated from
+     * the response (only the keys present in the merged object; absent keys
+     * keep the cached value) and persisted back to DataStore so the cache
+     * stays fresh. Offline / non-2xx / parse failure → silently keep the
+     * cached values (the UI already shows them).
+     */
+    fun refreshSettingsFromJetson() {
+        viewModelScope.launch {
+            val result = JetsonConnectionManager.getSettings()
+            result.onSuccess { s ->
+                s.drawTracking?.let {
+                    _drawTracking.value = it
+                    repo.setDrawTracking(it)
+                }
+                s.boxTracking?.let {
+                    _boxTracking.value = it
+                    repo.setBoxTracking(it)
+                }
+                s.centroidTracking?.let {
+                    _centroidTracking.value = it
+                    repo.setCentroidTracking(it)
+                }
+                s.offsetCountingLine?.let {
+                    _offsetCountingLine.value = it
+                    repo.setOffsetCountingLine(it)
+                }
+            }
+        }
+    }
+
+    /**
+     * Master "Track in recordings" toggle change. Updates the local flow +
+     * cache, then schedules a debounced `PUT /api/settings` push to the
+     * Jetson carrying all four current values.
+     */
+    fun setDrawTracking(value: Boolean) {
+        _drawTracking.value = value
+        viewModelScope.launch { repo.setDrawTracking(value) }
+        scheduleSettingsPush()
+    }
+
+    /** "Boxes" sub-toggle change. */
+    fun setBoxTracking(value: Boolean) {
+        _boxTracking.value = value
+        viewModelScope.launch { repo.setBoxTracking(value) }
+        scheduleSettingsPush()
+    }
+
+    /** "Trails" sub-toggle change. */
+    fun setCentroidTracking(value: Boolean) {
+        _centroidTracking.value = value
+        viewModelScope.launch { repo.setCentroidTracking(value) }
+        scheduleSettingsPush()
+    }
+
+    /**
+     * Counting-line slider change. [value] is clamped to 0-100 by the
+     * repository. Updates the local flow + cache, then schedules a
+     * debounced push.
+     */
+    fun setOffsetCountingLine(value: Int) {
+        _offsetCountingLine.value = value.coerceIn(0, 100)
+        viewModelScope.launch { repo.setOffsetCountingLine(value) }
+        scheduleSettingsPush()
+    }
+
+    /**
+     * Coalesce tracking/offset edits into a single debounced `PUT
+     * /api/settings` carrying all four current values (a PATCH that rewrites
+     * the four UI-managed keys). Best-effort: a push failure does not reset
+     * the UI (the cache is the offline source of truth; the next refresh or
+     * edit retries implicitly).
+     */
+    private fun scheduleSettingsPush() {
+        settingsPushJob?.cancel()
+        settingsPushJob = viewModelScope.launch {
+            delay(SETTINGS_PUSH_DEBOUNCE_MS)
+            val body = JetsonSettings(
+                drawTracking = _drawTracking.value,
+                boxTracking = _boxTracking.value,
+                centroidTracking = _centroidTracking.value,
+                offsetCountingLine = _offsetCountingLine.value,
+            )
+            JetsonConnectionManager.putSettings(body)
+        }
+    }
+
+    // ---- BL-76 on-demand Jetson poweroff ----
+
+    /**
+     * Request a Jetson poweroff (`POST /api/power`). Sets state to
+     * [PoweroffUiState.Loading], delegates to
+     * [JetsonConnectionManager.poweroff] (which writes the
+     * `.arret_requested` sentinel; the counting app consumes it and runs
+     * the BL-62 poweroff sequence), then sets [PoweroffUiState.Success] or
+     * [PoweroffUiState.Error]. Success persists (the Jetson is going down);
+     * call [clearPoweroffResult] to reset.
+     */
+    fun poweroff() {
+        _poweroffResult.value = PoweroffUiState.Loading
+        viewModelScope.launch {
+            val result: Result<PoweroffResponse> = JetsonConnectionManager.poweroff()
+            _poweroffResult.value = result.fold(
+                onSuccess = { PoweroffUiState.Success },
+                onFailure = { PoweroffUiState.Error(it.message) },
+            )
+        }
+    }
+
+    /** Reset [poweroffResult] to [PoweroffUiState.Idle]. */
+    fun clearPoweroffResult() {
+        _poweroffResult.value = PoweroffUiState.Idle
     }
 
     /**
