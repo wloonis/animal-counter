@@ -150,3 +150,4 @@ Task 8: HOT-RELOAD runtime-settings.json in main.py start() before Tracking/Rend
 Task 9: POLL power sentinel in DisplayThread.run (anti-stale guard) — da60ea9
 Task 10: ADD JetsonSettings + PoweroffResponse data classes + JSON codecs in Models.kt — 2be6754
 Task 11: ADD JetsonClient getSettings/putSettings/postPower + sendJson transport (compileDebugKotlin BUILD SUCCESSFUL) — 5b9f95b
+Task 12: JetsonConnectionManager poweroff/getSettings/putSettings + resolveActiveIp helper — a587dff
