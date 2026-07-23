@@ -15,13 +15,21 @@
 #   1. Installs /usr/local/bin/jetson-companion — a stdlib-only Python HTTP
 #      server (http.server, json, subprocess, datetime, os, sys — NO external
 #      deps, NO venv/pip). It exposes:
-#        GET  /api/identify        -> {"service":"jetson-companion","version":"4"}
+#        GET  /api/identify        -> {"service":"jetson-companion","version":"5"}
 #        GET  /api/count           -> live count/status/auto_mode (newest heartbeat)
 #        POST /api/time            -> {"time":"<ISO8601>","tz":"Europe/Paris"}
 #                                   -> timedatectl set-ntp false
 #                                   -> timedatectl set-time  "<time>"
 #                                   -> timedatectl set-timezone "<tz>"
 #                                   -> {"status":"ok","time":...,"tz":...}
+#        POST /api/power           -> writes the .arret_requested sentinel into
+#                                   /data/orin/files (consumed by the counting
+#                                   app, which runs the BL-62 poweroff seq)
+#                                   -> {"status":"poweroff_requested"}
+#        GET  /api/settings        -> runtime-settings.json (empty {} if absent)
+#        PUT  /api/settings        -> PATCH-like merge of runtime-settings.json
+#                                   (draw_tracking/box_tracking/centroid_tracking
+#                                    bool, offset_counting_line int 0-100)
 #        GET  /api/sessions        -> paginated session summaries (newest first)
 #        GET  /api/summary         -> daily aggregates (count/sessions/guards)
 #        GET  /api/videos          -> paginated video list (running recording first)
@@ -105,9 +113,17 @@
           # (or 1970) until this service sets it.
           #
           # Endpoints:
-          #   GET  /api/identify        -> {"service":"jetson-companion","version":"4"}
+          #   GET  /api/identify        -> {"service":"jetson-companion","version":"5"}
           #   GET  /api/count           -> live count/status/auto_mode (newest heartbeat)
           #   POST /api/time            -> timedatectl set-time/set-timezone
+          #   POST /api/power           -> writes .arret_requested sentinel (BL-76);
+          #        the counting app consumes it and runs the BL-62 poweroff
+          #        sequence (nsenter systemctl poweroff). Returns 200 before
+          #        the actual poweroff (best-effort sentinel write).
+          #   GET  /api/settings        -> runtime-settings.json ({} if absent)
+          #   PUT  /api/settings        -> PATCH-like merge into runtime-settings.json
+          #        (draw_tracking/box_tracking/centroid_tracking bool,
+          #         offset_counting_line int 0-100); validated, atomic write.
           #   GET  /api/sessions        -> paginated session summaries (newest first)
           #        ?limit=50&offset=0
           #   GET  /api/summary         -> daily aggregates ?days=7
@@ -141,7 +157,7 @@
           from urllib.parse import urlparse, parse_qs
 
           SERVICE_NAME = "jetson-companion"
-          SERVICE_VERSION = "4"
+          SERVICE_VERSION = "5"
           HOST = "0.0.0.0"
           DEFAULT_PORT = 8090
           # Path on the Jetson HOST to the counting-history JSONL written by the
@@ -153,6 +169,13 @@
           # (the compression cron writes counting-{ts}-#N.mp4 here). Used by
           # /api/video/<id> to resolve a video_id to its on-disk file.
           FILES_DIR = os.path.dirname(HISTORY_FILE) or "/data/orin/files"
+          # BL-76: shared IPC files in FILES_DIR (the /files hostPath, host
+          # /data/orin/files). runtime-settings.json is read at hot-reload time
+          # by the counting app at the start of each recording (main.py); the
+          # .arret_requested sentinel is polled by display_thread.py and, when
+          # fresh (mtime > app_start_time), triggers the BL-62 poweroff seq.
+          RUNTIME_SETTINGS_FILE = os.path.join(FILES_DIR, "runtime-settings.json")
+          POWER_SENTINEL_FILE = os.path.join(FILES_DIR, ".arret_requested")
           # Chunk size for streaming video bytes to the client.
           _VIDEO_CHUNK = 64 * 1024
 
