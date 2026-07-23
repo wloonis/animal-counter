@@ -160,9 +160,19 @@ class SettingsRepository(private val context: Context) {
      * the hotspot default ([DEFAULT_HOTSPOT_IP]) until
      * [JetsonConnectionManager][com.animalcounter.net.JetsonConnectionManager]
      * resolves a reachable IP shortly after the app opens.
+     *
+     * Backed by a **process-wide** [MutableStateFlow] held in the
+     * [Companion] (NOT an instance field). There are several
+     * [SettingsRepository] instances in the process (one in
+     * [JetsonConnectionManager], one per ViewModel), so an instance-level
+     * `_activeIp` would NOT be shared: [setActiveIp] on the manager's repo
+     * would never reach the ViewModels' repos, leaving them stuck on the
+     * hotspot default even after a LAN probe resolved 192.168.0.180. The
+     * companion-level flow makes [setActiveIp] (called by the manager)
+     * propagate to every ViewModel's [activeIp] collector within the
+     * process.
      */
-    private val _activeIp: MutableStateFlow<String> =
-        MutableStateFlow(DEFAULT_HOTSPOT_IP)
+    private val _activeIp: MutableStateFlow<String> = _activeIpShared
     val activeIp: StateFlow<String> = _activeIp.asStateFlow()
 
     /**
@@ -261,6 +271,15 @@ class SettingsRepository(private val context: Context) {
     }
 
     private companion object {
+        /**
+         * Process-wide backing for [activeIp] (shared across every
+         * [SettingsRepository] instance — see [activeIp] doc). Defaults to
+         * the hotspot candidate until [setActiveIp] (the manager's probe)
+         * updates it.
+         */
+        private val _activeIpShared: MutableStateFlow<String> =
+            MutableStateFlow(DEFAULT_HOTSPOT_IP)
+
         const val JETSON_IP_KEY = "jetson_ip"
         const val HOTSPOT_IP_KEY = "jetson_ip_hotspot"
         const val LAN_IP_KEY = "jetson_ip_lan"
