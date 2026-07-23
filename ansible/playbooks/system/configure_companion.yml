@@ -1117,6 +1117,16 @@
                       _send_json(self, 200, payload)
                       return
 
+                  if path == "/api/settings":
+                      # Hot-path runtime toggles shared with the counting
+                      # app via the hostPath /files volume. Always returns an
+                      # object — empty {} when no file has been written yet
+                      # (normal at boot; the app falls back to os.getenv).
+                      payload = _load_runtime_settings()
+                      self._log("GET /api/settings -> 200")
+                      _send_json(self, 200, payload)
+                      return
+
                   if path == "/api/count":
                       # Live counting state (absorbed BL-66 scope). Reads the
                       # newest heartbeat from the JSONL via the cached index —
