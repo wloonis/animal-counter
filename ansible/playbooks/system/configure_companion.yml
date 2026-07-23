@@ -1274,6 +1274,59 @@
                   self._log("GET {} -> 404".format(self.path))
                   _send_json(self, 404, {"error": "not found"})
 
+              def do_PUT(self):
+                  # PATCH-like write of runtime settings shared with the
+                  # counting app via the hostPath /files volume. Only the keys
+                  # present in the body are overwritten; the rest of the
+                  # existing file is preserved. The merged object is written
+                  # atomically (temp file + os.replace) so the counting app
+                  # never observes a half-written file.
+                  if self.path != "/api/settings":
+                      self._log("PUT {} -> 404".format(self.path))
+                      _send_json(self, 404, {"error": "not found"})
+                      return
+
+                  body, err = _read_json_body(self)
+                  if err is not None:
+                      self._log("PUT /api/settings -> 400 ({})".format(err))
+                      _send_json(self, 400, {"error": err})
+                      return
+
+                  ok, errors = _validate_settings_payload(body)
+                  if not ok:
+                      msg = "; ".join(errors)
+                      self._log("PUT /api/settings -> 400 ({})".format(msg))
+                      _send_json(self, 400, {"errors": errors})
+                      return
+
+                  # Merge the incoming keys into the existing settings
+                  # (PATCH-like). _load_runtime_settings returns {} when the
+                  # file is absent (the normal state at boot).
+                  merged = _load_runtime_settings()
+                  for key, val in body.items():
+                      # Only the recognised keys are merged; unknown keys
+                      # are ignored (forward-compat, matches the validator).
+                      if key in ("draw_tracking", "box_tracking",
+                                 "centroid_tracking",
+                                 "offset_counting_line"):
+                          merged[key] = val
+
+                  # Atomic write: temp file in the same dir, then os.replace
+                  # so a crash mid-write never leaves a partial JSON file
+                  # (the counting app reads best-effort on the next video).
+                  try:
+                      tmp_path = RUNTIME_SETTINGS_FILE + ".tmp"
+                      with open(tmp_path, "w") as fh:
+                          json.dump(merged, fh, indent=2, sort_keys=True)
+                      os.replace(tmp_path, RUNTIME_SETTINGS_FILE)
+                  except OSError as exc:
+                      self._log("PUT /api/settings -> 500 ({})".format(exc))
+                      _send_json(self, 500, {"error": str(exc)})
+                      return
+
+                  self._log("PUT /api/settings -> 200 ({})".format(merged))
+                  _send_json(self, 200, merged)
+
               def do_POST(self):
                   if self.path != "/api/time":
                       self._log("POST {} -> 404".format(self.path))
