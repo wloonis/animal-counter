@@ -1328,6 +1328,37 @@
                   _send_json(self, 200, merged)
 
               def do_POST(self):
+                  # /api/power: write the .arret_requested sentinel so the
+                  # counting app (DisplayThread.run polls it) triggers the
+                  # BL-62 finalize -> stop -> nsenter poweroff sequence. We do
+                  # NOT execute the poweroff here: the endpoint only writes
+                  # the sentinel and replies 200, the counting app consumes
+                  # it. An optional JSON body (e.g. {"action":"poweroff"}) is
+                  # accepted and ignored. Any pre-existing sentinel is removed
+                  # first so a stale file is replaced with a fresh timestamp
+                  # (anti-stale guard handled on the app side via mtime).
+                  if self.path == "/api/power":
+                      # Accept and ignore an optional JSON body. A malformed
+                      # body is not fatal here: the action is the sentinel
+                      # write, which does not depend on the body content.
+                      _read_json_body(self)  # best-effort, ignore errors
+
+                      try:
+                          if os.path.exists(POWER_SENTINEL_FILE):
+                              os.remove(POWER_SENTINEL_FILE)
+                          tmp_path = POWER_SENTINEL_FILE + ".tmp"
+                          with open(tmp_path, "w") as fh:
+                              fh.write(datetime.datetime.now().isoformat())
+                          os.replace(tmp_path, POWER_SENTINEL_FILE)
+                      except OSError as exc:
+                          self._log("POST /api/power -> 500 ({})".format(exc))
+                          _send_json(self, 500, {"error": str(exc)})
+                          return
+
+                      self._log("POST /api/power -> 200 (sentinel written)")
+                      _send_json(self, 200, {"status": "poweroff_requested"})
+                      return
+
                   if self.path != "/api/time":
                       self._log("POST {} -> 404".format(self.path))
                       _send_json(self, 404, {"error": "not found"})
