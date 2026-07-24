@@ -11,6 +11,10 @@ import com.animalcounter.data.DEFAULT_LAN_IP
 import com.animalcounter.data.SettingsRepository
 import com.animalcounter.data.SyncEvent
 import com.animalcounter.data.SyncLog
+import com.animalcounter.net.ApiResult
+import com.animalcounter.net.JetsonClient
+import com.animalcounter.net.JetsonSettings
+import com.animalcounter.net.PoweroffResponse
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -225,6 +229,93 @@ object JetsonConnectionManager {
         }
     }
 
+
+    /**
+     * Resolve the active Jetson IP for an on-demand call, mirroring [syncTime]:
+     * if [SettingsRepository.activeIp] is already set (non-blank) it is used
+     * directly, otherwise a fresh selection probe is run (parallel when
+     * `autoSelect`, single otherwise) and its result is persisted via
+     * [SettingsRepository.setActiveIp]. Returns `null` when no Jetson is
+     * reachable (the caller surfaces a failure to the UI).
+     */
+    private suspend fun resolveActiveIp(): String? {
+        val r = repo ?: return null
+        val network = activeWifiNetworkSafe()
+        val active = r.activeIp.value
+        if (!active.isNullOrBlank()) return active
+        val auto = runCatching { r.autoSelect.first() }.getOrDefault(true)
+        val resolved = if (auto) {
+            val hotspot = runCatching { r.hotspotIp.first() }.getOrDefault(DEFAULT_HOTSPOT_IP)
+            val lan = runCatching { r.lanIp.first() }.getOrDefault(DEFAULT_LAN_IP)
+            parallelProbe(setOf(hotspot, lan), network)
+        } else {
+            val manual = runCatching { r.jetsonIp.first() }.getOrDefault(DEFAULT_JETSON_IP)
+            singleProbe(manual, network)
+        } ?: return null
+        r.setActiveIp(resolved)
+        return resolved
+    }
+
+    /**
+     * On-demand `POST /api/power` (BL-76) — writes the `.arret_requested`
+     * sentinel on the Jetson; the counting app consumes it and runs the BL-62
+     * poweroff sequence. Reuses the same IP resolution + WiFi-bound transport
+     * as [syncTime]: if [SettingsRepository.activeIp] is already set it posts
+     * directly to it, otherwise a fresh selection probe runs first.
+     *
+     * @return [Result.success] with the [PoweroffResponse] on HTTP 200, or
+     *   [Result.failure] (no reachable Jetson, non-2xx HTTP, or network
+     *   error). Never throws.
+     */
+    suspend fun poweroff(): Result<PoweroffResponse> {
+        val ip = resolveActiveIp() ?: return Result.failure(IllegalStateException("Jetson introuvable"))
+        val network = activeWifiNetworkSafe()
+        return when (val res = JetsonClient.postPower(ip = ip, network = network)) {
+            is ApiResult.Success -> Result.success(res.data)
+            is ApiResult.HttpError -> Result.failure(IllegalStateException("HTTP ${res.code}"))
+            is ApiResult.NetworkError -> Result.failure(IllegalStateException(res.message))
+        }
+    }
+
+    /**
+     * On-demand `GET /api/settings` (BL-76) — fetches the merged
+     * `runtime-settings.json` from the Jetson (an empty object → an
+     * all-`null` [JetsonSettings] when the file is absent). Reuses the same
+     * IP resolution + WiFi-bound transport as [syncTime].
+     *
+     * @return [Result.success] with the [JetsonSettings] on HTTP 200, or
+     *   [Result.failure] (no reachable Jetson, non-2xx HTTP, or network
+     *   error). Never throws.
+     */
+    suspend fun getSettings(): Result<JetsonSettings> {
+        val ip = resolveActiveIp() ?: return Result.failure(IllegalStateException("Jetson introuvable"))
+        val network = activeWifiNetworkSafe()
+        return when (val res = JetsonClient.getSettings(ip = ip, network = network)) {
+            is ApiResult.Success -> Result.success(res.data)
+            is ApiResult.HttpError -> Result.failure(IllegalStateException("HTTP ${res.code}"))
+            is ApiResult.NetworkError -> Result.failure(IllegalStateException(res.message))
+        }
+    }
+
+    /**
+     * On-demand `PUT /api/settings` (BL-76) — PATCH-like merge: only the
+     * non-`null` fields of [settings] are serialized by [JetsonSettings.toJson];
+     * the companion merges them atomically and echoes the full merged object.
+     * Reuses the same IP resolution + WiFi-bound transport as [syncTime].
+     *
+     * @return [Result.success] with the merged [JetsonSettings] on HTTP 200,
+     *   or [Result.failure] (no reachable Jetson, 400 on a validation error,
+     *   or network error). Never throws.
+     */
+    suspend fun putSettings(settings: JetsonSettings): Result<JetsonSettings> {
+        val ip = resolveActiveIp() ?: return Result.failure(IllegalStateException("Jetson introuvable"))
+        val network = activeWifiNetworkSafe()
+        return when (val res = JetsonClient.putSettings(ip = ip, body = settings, network = network)) {
+            is ApiResult.Success -> Result.success(res.data)
+            is ApiResult.HttpError -> Result.failure(IllegalStateException("HTTP ${res.code}"))
+            is ApiResult.NetworkError -> Result.failure(IllegalStateException(res.message))
+        }
+    }
 
     /**
      * Register the `TRANSPORT_WIFI` [ConnectivityManager.NetworkCallback].

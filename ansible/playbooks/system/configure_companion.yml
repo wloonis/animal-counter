@@ -15,13 +15,21 @@
 #   1. Installs /usr/local/bin/jetson-companion — a stdlib-only Python HTTP
 #      server (http.server, json, subprocess, datetime, os, sys — NO external
 #      deps, NO venv/pip). It exposes:
-#        GET  /api/identify        -> {"service":"jetson-companion","version":"4"}
+#        GET  /api/identify        -> {"service":"jetson-companion","version":"5"}
 #        GET  /api/count           -> live count/status/auto_mode (newest heartbeat)
 #        POST /api/time            -> {"time":"<ISO8601>","tz":"Europe/Paris"}
 #                                   -> timedatectl set-ntp false
 #                                   -> timedatectl set-time  "<time>"
 #                                   -> timedatectl set-timezone "<tz>"
 #                                   -> {"status":"ok","time":...,"tz":...}
+#        POST /api/power           -> writes the .arret_requested sentinel into
+#                                   /data/orin/files (consumed by the counting
+#                                   app, which runs the BL-62 poweroff seq)
+#                                   -> {"status":"poweroff_requested"}
+#        GET  /api/settings        -> runtime-settings.json (empty {} if absent)
+#        PUT  /api/settings        -> PATCH-like merge of runtime-settings.json
+#                                   (draw_tracking/box_tracking/centroid_tracking
+#                                    bool, offset_counting_line int 0-100)
 #        GET  /api/sessions        -> paginated session summaries (newest first)
 #        GET  /api/summary         -> daily aggregates (count/sessions/guards)
 #        GET  /api/videos          -> paginated video list (running recording first)
@@ -105,9 +113,17 @@
           # (or 1970) until this service sets it.
           #
           # Endpoints:
-          #   GET  /api/identify        -> {"service":"jetson-companion","version":"4"}
+          #   GET  /api/identify        -> {"service":"jetson-companion","version":"5"}
           #   GET  /api/count           -> live count/status/auto_mode (newest heartbeat)
           #   POST /api/time            -> timedatectl set-time/set-timezone
+          #   POST /api/power           -> writes .arret_requested sentinel (BL-76);
+          #        the counting app consumes it and runs the BL-62 poweroff
+          #        sequence (nsenter systemctl poweroff). Returns 200 before
+          #        the actual poweroff (best-effort sentinel write).
+          #   GET  /api/settings        -> runtime-settings.json ({} if absent)
+          #   PUT  /api/settings        -> PATCH-like merge into runtime-settings.json
+          #        (draw_tracking/box_tracking/centroid_tracking bool,
+          #         offset_counting_line int 0-100); validated, atomic write.
           #   GET  /api/sessions        -> paginated session summaries (newest first)
           #        ?limit=50&offset=0
           #   GET  /api/summary         -> daily aggregates ?days=7
@@ -141,7 +157,7 @@
           from urllib.parse import urlparse, parse_qs
 
           SERVICE_NAME = "jetson-companion"
-          SERVICE_VERSION = "4"
+          SERVICE_VERSION = "5"
           HOST = "0.0.0.0"
           DEFAULT_PORT = 8090
           # Path on the Jetson HOST to the counting-history JSONL written by the
@@ -153,6 +169,13 @@
           # (the compression cron writes counting-{ts}-#N.mp4 here). Used by
           # /api/video/<id> to resolve a video_id to its on-disk file.
           FILES_DIR = os.path.dirname(HISTORY_FILE) or "/data/orin/files"
+          # BL-76: shared IPC files in FILES_DIR (the /files hostPath, host
+          # /data/orin/files). runtime-settings.json is read at hot-reload time
+          # by the counting app at the start of each recording (main.py); the
+          # .arret_requested sentinel is polled by display_thread.py and, when
+          # fresh (mtime > app_start_time), triggers the BL-62 poweroff seq.
+          RUNTIME_SETTINGS_FILE = os.path.join(FILES_DIR, "runtime-settings.json")
+          POWER_SENTINEL_FILE = os.path.join(FILES_DIR, ".arret_requested")
           # Chunk size for streaming video bytes to the client.
           _VIDEO_CHUNK = 64 * 1024
 
@@ -951,6 +974,68 @@
                   return None, "malformed JSON: {}".format(exc)
 
 
+          def _load_runtime_settings():
+              """Best-effort load of RUNTIME_SETTINGS_FILE. Returns the parsed
+              dict, or {} if the file is absent or unreadable (a missing file
+              is the normal state at boot — the counting app then falls back
+              to os.getenv/defaults). Logs a warning on an unexpected read
+              failure (absence is silent). Used by GET /api/settings and as
+              the merge base for PUT /api/settings."""
+              try:
+                  with open(RUNTIME_SETTINGS_FILE, "r") as fh:
+                      data = json.load(fh)
+                  if not isinstance(data, dict):
+                      sys.stderr.write(
+                          "[runtime-settings] not a JSON object: {}\n".format(
+                              type(data).__name__))
+                      return {}
+                  return data
+              except FileNotFoundError:
+                  return {}
+              except (OSError, json.JSONDecodeError) as exc:
+                  sys.stderr.write(
+                      "[runtime-settings] read failed: {}\n".format(exc))
+                  return {}
+
+
+          def _validate_settings_payload(payload):
+              """Validate a settings dict for PUT /api/settings.
+
+              Recognised keys (all optional — PATCH-like):
+                - draw_tracking     : bool (strict, not a truthy string)
+                - box_tracking      : bool
+                - centroid_tracking : bool
+                - offset_counting_line : int in [0, 100]
+
+              Returns (ok, errors). `ok` is True when every present key is
+              valid; `errors` is a list of human-readable strings (empty when
+              ok). Unknown keys are ignored (forward-compat). A non-bool
+              truthy value (e.g. "true" string) is rejected so the counting
+              app never has to re-coerce types."""
+              errors = []
+              if not isinstance(payload, dict):
+                  return False, ["payload must be a JSON object"]
+              for key in ("draw_tracking", "box_tracking",
+                          "centroid_tracking"):
+                  if key in payload and not isinstance(payload[key], bool):
+                      errors.append(
+                          "{} must be a boolean, got {}".format(
+                              key, type(payload[key]).__name__))
+              if "offset_counting_line" in payload:
+                  val = payload["offset_counting_line"]
+                  # bool is a subclass of int — reject it explicitly so
+                  # `true` is not silently accepted as 1.
+                  if isinstance(val, bool) or not isinstance(val, int):
+                      errors.append(
+                          "offset_counting_line must be an integer, got {}".format(
+                              type(val).__name__))
+                  elif val < 0 or val > 100:
+                      errors.append(
+                          "offset_counting_line must be in [0, 100], got {}".format(
+                              val))
+              return (len(errors) == 0), errors
+
+
           def _apply_time(time_str, tz):
               """Run the timedatectl sequence to set the clock + timezone.
 
@@ -1029,6 +1114,16 @@
                           "version": SERVICE_VERSION,
                       }
                       self._log("GET /api/identify -> 200")
+                      _send_json(self, 200, payload)
+                      return
+
+                  if path == "/api/settings":
+                      # Hot-path runtime toggles shared with the counting
+                      # app via the hostPath /files volume. Always returns an
+                      # object — empty {} when no file has been written yet
+                      # (normal at boot; the app falls back to os.getenv).
+                      payload = _load_runtime_settings()
+                      self._log("GET /api/settings -> 200")
                       _send_json(self, 200, payload)
                       return
 
@@ -1179,7 +1274,91 @@
                   self._log("GET {} -> 404".format(self.path))
                   _send_json(self, 404, {"error": "not found"})
 
+              def do_PUT(self):
+                  # PATCH-like write of runtime settings shared with the
+                  # counting app via the hostPath /files volume. Only the keys
+                  # present in the body are overwritten; the rest of the
+                  # existing file is preserved. The merged object is written
+                  # atomically (temp file + os.replace) so the counting app
+                  # never observes a half-written file.
+                  if self.path != "/api/settings":
+                      self._log("PUT {} -> 404".format(self.path))
+                      _send_json(self, 404, {"error": "not found"})
+                      return
+
+                  body, err = _read_json_body(self)
+                  if err is not None:
+                      self._log("PUT /api/settings -> 400 ({})".format(err))
+                      _send_json(self, 400, {"error": err})
+                      return
+
+                  ok, errors = _validate_settings_payload(body)
+                  if not ok:
+                      msg = "; ".join(errors)
+                      self._log("PUT /api/settings -> 400 ({})".format(msg))
+                      _send_json(self, 400, {"errors": errors})
+                      return
+
+                  # Merge the incoming keys into the existing settings
+                  # (PATCH-like). _load_runtime_settings returns {} when the
+                  # file is absent (the normal state at boot).
+                  merged = _load_runtime_settings()
+                  for key, val in body.items():
+                      # Only the recognised keys are merged; unknown keys
+                      # are ignored (forward-compat, matches the validator).
+                      if key in ("draw_tracking", "box_tracking",
+                                 "centroid_tracking",
+                                 "offset_counting_line"):
+                          merged[key] = val
+
+                  # Atomic write: temp file in the same dir, then os.replace
+                  # so a crash mid-write never leaves a partial JSON file
+                  # (the counting app reads best-effort on the next video).
+                  try:
+                      tmp_path = RUNTIME_SETTINGS_FILE + ".tmp"
+                      with open(tmp_path, "w") as fh:
+                          json.dump(merged, fh, indent=2, sort_keys=True)
+                      os.replace(tmp_path, RUNTIME_SETTINGS_FILE)
+                  except OSError as exc:
+                      self._log("PUT /api/settings -> 500 ({})".format(exc))
+                      _send_json(self, 500, {"error": str(exc)})
+                      return
+
+                  self._log("PUT /api/settings -> 200 ({})".format(merged))
+                  _send_json(self, 200, merged)
+
               def do_POST(self):
+                  # /api/power: write the .arret_requested sentinel so the
+                  # counting app (DisplayThread.run polls it) triggers the
+                  # BL-62 finalize -> stop -> nsenter poweroff sequence. We do
+                  # NOT execute the poweroff here: the endpoint only writes
+                  # the sentinel and replies 200, the counting app consumes
+                  # it. An optional JSON body (e.g. {"action":"poweroff"}) is
+                  # accepted and ignored. Any pre-existing sentinel is removed
+                  # first so a stale file is replaced with a fresh timestamp
+                  # (anti-stale guard handled on the app side via mtime).
+                  if self.path == "/api/power":
+                      # Accept and ignore an optional JSON body. A malformed
+                      # body is not fatal here: the action is the sentinel
+                      # write, which does not depend on the body content.
+                      _read_json_body(self)  # best-effort, ignore errors
+
+                      try:
+                          if os.path.exists(POWER_SENTINEL_FILE):
+                              os.remove(POWER_SENTINEL_FILE)
+                          tmp_path = POWER_SENTINEL_FILE + ".tmp"
+                          with open(tmp_path, "w") as fh:
+                              fh.write(datetime.datetime.now().isoformat())
+                          os.replace(tmp_path, POWER_SENTINEL_FILE)
+                      except OSError as exc:
+                          self._log("POST /api/power -> 500 ({})".format(exc))
+                          _send_json(self, 500, {"error": str(exc)})
+                          return
+
+                      self._log("POST /api/power -> 200 (sentinel written)")
+                      _send_json(self, 200, {"status": "poweroff_requested"})
+                      return
+
                   if self.path != "/api/time":
                       self._log("POST {} -> 404".format(self.path))
                       _send_json(self, 404, {"error": "not found"})
