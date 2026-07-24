@@ -330,6 +330,104 @@ object JetsonClient {
         network: Network? = null,
     ): ApiResult<String> = getJson(ip, path, network) { it }
 
+    // -----------------------------------------------------------------------
+    // BL-76 runtime settings + poweroff (mutable endpoints)
+    // -----------------------------------------------------------------------
+    //
+    // Three endpoints backing the Android Réglages tab (companion
+    // SERVICE_VERSION "5"). They reuse the same WiFi-bound [HttpURLConnection]
+    // transport as the read-only history getters, but the latter two are
+    // write operations (PUT/POST) so they go through [sendJson] instead of
+    // [getJson]. `null` fields on a [JetsonSettings] PUT body are omitted by
+    // [JetsonSettings.toJson] so the body is a true PATCH (only the keys the
+    // caller wants to change are sent). The companion validates types/ranges
+    // server-side and returns 400 on a bad payload; that surfaces as
+    // [ApiResult.HttpError](400). All three never throw — failures map to
+    // [ApiResult.HttpError] / [ApiResult.NetworkError].
+
+    /** `GET /api/settings` → [JetsonSettings] (merged `runtime-settings.json`,
+     *  empty object → all-`null` [JetsonSettings] if the file is absent). */
+    suspend fun getSettings(
+        ip: String,
+        network: Network? = null,
+    ): ApiResult<JetsonSettings> =
+        getJson(ip, "/api/settings", network) { parseJetsonSettings(it) }
+
+    /**
+     * `PUT /api/settings` — PATCH-like merge: only the non-`null` fields of
+     * [body] are serialized (see [JetsonSettings.toJson]); the companion
+     * merges them into `runtime-settings.json` atomically and echoes the full
+     * merged object. Returns the parsed merged settings on 200, 400 on a
+     * validation error, [ApiResult.NetworkError] on connect/read failure.
+     */
+    suspend fun putSettings(
+        ip: String,
+        body: JetsonSettings,
+        network: Network? = null,
+    ): ApiResult<JetsonSettings> =
+        sendJson("PUT", ip, "/api/settings", body.toJson().toString(), network) {
+            parseJetsonSettings(it)
+        }
+
+    /**
+     * `POST /api/power` — writes the `.arret_requested` sentinel on the
+     * Jetson (the counting app consumes it and runs the BL-62 poweroff
+     * sequence). The request body is optional and ignored server-side; an
+     * empty JSON object is sent. Returns [PoweroffResponse] on 200
+     * (`{"status":"poweroff_requested"}`), [ApiResult.HttpError] on a non-2xx,
+     * [ApiResult.NetworkError] on connect/read failure.
+     */
+    suspend fun postPower(
+        ip: String,
+        network: Network? = null,
+    ): ApiResult<PoweroffResponse> =
+        sendJson("POST", ip, "/api/power", "{}", network) { parsePoweroffResponse(it) }
+
+    /**
+     * Shared transport for the BL-76 write endpoints: binds to [network]
+     * (the WiFi HotSpot) when non-null, applies the 5s connect/read timeouts,
+     * sends [payload] as the request body with `Content-Type: application/json`,
+     * drains the response, and maps HTTP 200 → [ApiResult.Success] (parsed via
+     * [parse]), non-2xx → [ApiResult.HttpError], thrown/parse failure →
+     * [ApiResult.NetworkError]. Never throws.
+     */
+    private suspend fun <T> sendJson(
+        method: String,
+        ip: String,
+        path: String,
+        payload: String,
+        network: Network?,
+        parse: (String) -> T,
+    ): ApiResult<T> = withContext(Dispatchers.IO) {
+        try {
+            val url = URL("http://${sanitizeIp(ip)}:$JETSON_PORT$path")
+            val conn = (openBound(url, network) as HttpURLConnection).apply {
+                requestMethod = method
+                connectTimeout = CONNECT_TIMEOUT_MS
+                readTimeout = READ_TIMEOUT_MS
+                doOutput = true
+                instanceFollowRedirects = false
+                useCaches = false
+                setRequestProperty("Content-Type", "application/json; charset=utf-8")
+                setRequestProperty("Accept", "application/json")
+            }
+            try {
+                conn.outputStream.use { it.write(payload.toByteArray(Charsets.UTF_8)) }
+                val code = conn.responseCode
+                val body = conn.readBody(code)
+                if (code == 200) {
+                    ApiResult.Success(parse(body))
+                } else {
+                    ApiResult.HttpError(code)
+                }
+            } finally {
+                conn.disconnect()
+            }
+        } catch (t: Throwable) {
+            ApiResult.NetworkError(t.message ?: t.javaClass.simpleName)
+        }
+    }
+
     /**
      * Shared GET transport for the read-only history endpoints: binds to
      * [network] (the WiFi HotSpot) when non-null, applies the 5s timeouts,

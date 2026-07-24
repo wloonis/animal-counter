@@ -317,6 +317,72 @@ data class StartupList(
 )
 
 // ---------------------------------------------------------------------------
+// BL-76 runtime settings + poweroff (mutable, PATCH-like)
+// ---------------------------------------------------------------------------
+//
+// The Jetson companion (port 8090, SERVICE_VERSION "5") exposes three new
+// endpoints consumed by the Android Réglages tab:
+//   GET  /api/settings → the merged runtime-settings.json ({} if absent)
+//   PUT  /api/settings → PATCH-like merge of the keys present in the body
+//                        (only non-null Kotlin fields are written) → the full
+//                        merged object echoed back
+//   POST /api/power    → writes the .arret_requested sentinel (200 before the
+//                        counting app executes the actual poweroff)
+//
+// `JetsonSettings` mirrors `runtime-settings.json`:
+//   {"draw_tracking": bool, "box_tracking": bool,
+//    "centroid_tracking": bool, "offset_counting_line": int 0-100}
+// Every field is nullable so a PUT body carrying only a subset of the keys
+// is modelled faithfully (`null` = "do not modify this key" → not serialized).
+// The companion validates types/ranges server-side; the Kotlin side only
+// needs to skip `null` fields when serializing and use the defensive `optX`
+// helpers when parsing.
+
+/**
+ * PATCH-like body for `PUT /api/settings` and the parsed shape of
+ * `GET /api/settings`. `null` fields are omitted on serialization (not
+ * written) so a PUT only touches the keys the caller wants to change.
+ */
+data class JetsonSettings(
+    val drawTracking: Boolean? = null,
+    val boxTracking: Boolean? = null,
+    val centroidTracking: Boolean? = null,
+    val offsetCountingLine: Int? = null,
+)
+
+/** `POST /api/power` response → `{"status":"poweroff_requested"}`. */
+data class PoweroffResponse(val status: String)
+
+/**
+ * Serialize [JetsonSettings] to a JSON object, omitting `null` fields so a
+ * PUT body is a true PATCH (only the present keys are sent). Field names use
+ * the snake_case contract of `runtime-settings.json`.
+ */
+internal fun JetsonSettings.toJson(): JSONObject = JSONObject().also { o ->
+    drawTracking?.let { o.put("draw_tracking", it) }
+    boxTracking?.let { o.put("box_tracking", it) }
+    centroidTracking?.let { o.put("centroid_tracking", it) }
+    offsetCountingLine?.let { o.put("offset_counting_line", it) }
+}
+
+/** Parse `GET /api/settings` (or the merged echo of `PUT /api/settings`) into
+ *  [JetsonSettings]. Defensive: a missing/invalid key degrades to `null`. */
+internal fun parseJetsonSettings(json: String): JetsonSettings {
+    val o = JSONObject(json)
+    return JetsonSettings(
+        drawTracking = o.optBooleanOrNull("draw_tracking"),
+        boxTracking = o.optBooleanOrNull("box_tracking"),
+        centroidTracking = o.optBooleanOrNull("centroid_tracking"),
+        offsetCountingLine = o.optIntOrNull("offset_counting_line"),
+    )
+}
+
+/** Parse `POST /api/power` body into [PoweroffResponse]. Defaults to an empty
+ *  status if the key is absent (the endpoint always echoes `status`). */
+internal fun parsePoweroffResponse(json: String): PoweroffResponse =
+    PoweroffResponse(JSONObject(json).optStringOrNull("status") ?: "")
+
+// ---------------------------------------------------------------------------
 // Defensive opt-X helpers (never throw on missing/null keys)
 // ---------------------------------------------------------------------------
 

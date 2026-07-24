@@ -5,6 +5,7 @@ import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
@@ -33,6 +34,18 @@ const val DEFAULT_LAN_IP: String = "192.168.0.180"
  */
 const val DEFAULT_JETSON_IP: String = DEFAULT_HOTSPOT_IP
 
+/** Default value of the "Track in recordings" master toggle. */
+const val DEFAULT_DRAW_TRACKING: Boolean = false
+
+/** Default value of the "Boxes" sub-toggle. */
+const val DEFAULT_BOX_TRACKING: Boolean = true
+
+/** Default value of the "Trails" sub-toggle. */
+const val DEFAULT_CENTROID_TRACKING: Boolean = true
+
+/** Default value of the counting-line position (0-100). */
+const val DEFAULT_OFFSET_COUNTING_LINE: Int = 10
+
 /** Process-wide [DataStore] delegate (single instance per [Context]). */
 private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(
     name = "animal_counter_settings",
@@ -49,6 +62,13 @@ private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(
  *  - `auto_select`: whether auto-select is on (default `true`).
  *  - `jetson_ip`: the manual-override IP used when auto-select is off
  *    (default [DEFAULT_JETSON_IP]).
+ *  - `draw_tracking` / `box_tracking` / `centroid_tracking` /
+ *    `offset_counting_line`: the offline cache of the runtime
+ *    recording/tracking settings (defaults `false` / `true` / `true` /
+ *    `10`). The last known value pushed to the Jetson
+ *    (see [JetsonClient][com.animalcounter.net.JetsonClient]
+ *    `putSettings`) is kept here so the UI can restore its state while
+ *    offline.
  *
  * Also owns the resolved `activeIp`: the single IP the rest of the app
  * (ViewModels) should talk to. [JetsonConnectionManager] is the only
@@ -61,6 +81,12 @@ class SettingsRepository(private val context: Context) {
     private val hotspotIpKey = stringPreferencesKey(HOTSPOT_IP_KEY)
     private val lanIpKey = stringPreferencesKey(LAN_IP_KEY)
     private val autoSelectKey = booleanPreferencesKey(AUTO_SELECT_KEY)
+    private val drawTrackingKey = booleanPreferencesKey(DRAW_TRACKING_KEY)
+    private val boxTrackingKey = booleanPreferencesKey(BOX_TRACKING_KEY)
+    private val centroidTrackingKey =
+        booleanPreferencesKey(CENTROID_TRACKING_KEY)
+    private val offsetCountingLineKey =
+        intPreferencesKey(OFFSET_COUNTING_LINE_KEY)
 
     /**
      * The manual-override Jetson IP. Emits [DEFAULT_JETSON_IP] when no
@@ -90,6 +116,44 @@ class SettingsRepository(private val context: Context) {
     val autoSelect: Flow<Boolean> = context.dataStore.data.map { prefs ->
         prefs[autoSelectKey] ?: true
     }
+
+    /**
+     * Offline cache of the "Track in recordings" master toggle
+     * (`draw_tracking`). Emits `false` when unset. This is the last
+     * value pushed to the Jetson; the on-device runtime-settings.json is
+     * the source of truth at recording start.
+     */
+    val drawTracking: Flow<Boolean> = context.dataStore.data.map { prefs ->
+        prefs[drawTrackingKey] ?: DEFAULT_DRAW_TRACKING
+    }
+
+    /**
+     * Offline cache of the "Boxes" sub-toggle (`box_tracking`). Emits
+     * `true` when unset.
+     */
+    val boxTracking: Flow<Boolean> = context.dataStore.data.map { prefs ->
+        prefs[boxTrackingKey] ?: DEFAULT_BOX_TRACKING
+    }
+
+    /**
+     * Offline cache of the "Trails" sub-toggle
+     * (`centroid_tracking`). Emits `true` when unset.
+     */
+    val centroidTracking: Flow<Boolean> =
+        context.dataStore.data.map { prefs ->
+            prefs[centroidTrackingKey] ?: DEFAULT_CENTROID_TRACKING
+        }
+
+    /**
+     * Offline cache of the counting-line position
+     * (`offset_counting_line`, 0-100). Emits `10` when unset. Changing
+     * this value affects the counting line position and therefore the
+     * count; the UI warns the user accordingly.
+     */
+    val offsetCountingLine: Flow<Int> =
+        context.dataStore.data.map { prefs ->
+            prefs[offsetCountingLineKey] ?: DEFAULT_OFFSET_COUNTING_LINE
+        }
 
     /**
      * The resolved active Jetson IP the app should talk to. Defaults to
@@ -156,6 +220,49 @@ class SettingsRepository(private val context: Context) {
     }
 
     /**
+     * Persist [value] as the master "Track in recordings" toggle
+     * (`draw_tracking`). [value] is the new offline-cached value (the
+     * caller is responsible for pushing it to the Jetson via
+     * `putSettings`).
+     */
+    suspend fun setDrawTracking(value: Boolean) {
+        context.dataStore.edit { prefs ->
+            prefs[drawTrackingKey] = value
+        }
+    }
+
+    /**
+     * Persist [value] as the "Boxes" sub-toggle (`box_tracking`).
+     */
+    suspend fun setBoxTracking(value: Boolean) {
+        context.dataStore.edit { prefs ->
+            prefs[boxTrackingKey] = value
+        }
+    }
+
+    /**
+     * Persist [value] as the "Trails" sub-toggle
+     * (`centroid_tracking`).
+     */
+    suspend fun setCentroidTracking(value: Boolean) {
+        context.dataStore.edit { prefs ->
+            prefs[centroidTrackingKey] = value
+        }
+    }
+
+    /**
+     * Persist [value] as the counting-line position
+     * (`offset_counting_line`). [value] is clamped to the 0-100 range
+     * before being stored.
+     */
+    suspend fun setOffsetCountingLine(value: Int) {
+        val clamped = value.coerceIn(0, 100)
+        context.dataStore.edit { prefs ->
+            prefs[offsetCountingLineKey] = clamped
+        }
+    }
+
+    /**
      * Update the resolved active IP. Intended to be called only by
      * [JetsonConnectionManager][com.animalcounter.net.JetsonConnectionManager];
      * ViewModels read [activeIp].
@@ -171,5 +278,9 @@ class SettingsRepository(private val context: Context) {
         const val HOTSPOT_IP_KEY = "jetson_ip_hotspot"
         const val LAN_IP_KEY = "jetson_ip_lan"
         const val AUTO_SELECT_KEY = "auto_select"
+        const val DRAW_TRACKING_KEY = "draw_tracking"
+        const val BOX_TRACKING_KEY = "box_tracking"
+        const val CENTROID_TRACKING_KEY = "centroid_tracking"
+        const val OFFSET_COUNTING_LINE_KEY = "offset_counting_line"
     }
 }

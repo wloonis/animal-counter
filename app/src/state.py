@@ -9,7 +9,9 @@ these singletons from here so they all bind to the *same* object instances
 (no circular imports — this module imports nothing from the split modules).
 """
 
+import json
 import logging
+import os
 
 from settings import Settings
 from utils.shared_state import SharedState
@@ -40,3 +42,32 @@ shared_state.draw_centroid_radius = settings.DRAW_CENTROID_RADIUS
 # Map the COUNTING_TRACKER_IOU setting (string) to a BaseIoU instance for
 # OCSORTTracker(iou=...). trackers>=2.5.0 expects an IoU instance, not a string.
 _IOU_METRICS = {"iou": IoU, "giou": GIoU, "diou": DIoU, "ciou": CIoU, "biou": BIoU}
+
+# BL-76: shared file used by the Jetson companion to push runtime toggles
+# (hot-reloaded at the start of each recording by main.py). The host path
+# /data/orin/files is mounted RW in the counting pod as /files (same channel
+# as counting-history.jsonl, BL-68).
+RUNTIME_SETTINGS_PATH = "/files/runtime-settings.json"
+
+
+def load_runtime_settings():
+    """Best-effort read of the shared runtime-settings.json file.
+
+    Returns a dict (possibly empty) deserialized from RUNTIME_SETTINGS_PATH.
+    Any read/parse error is logged at WARNING level and yields `{}` — the
+    caller is expected to fall back on os.getenv / existing defaults for the
+    missing keys. Never raises.
+    """
+    try:
+        with open(RUNTIME_SETTINGS_PATH, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+        if isinstance(data, dict):
+            return data
+        logger.warning("runtime-settings.json is not a JSON object: %r", data)
+        return {}
+    except FileNotFoundError:
+        return {}
+    except (OSError, ValueError) as exc:
+        logger.warning("runtime-settings.json unreadable (%s): %s",
+                        type(exc).__name__, exc)
+        return {}

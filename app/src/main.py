@@ -44,7 +44,7 @@ from ui.rendering import Rendering
 from core.history import HistoryWriter, HistoryThread
 
 # Process-wide singletons (leaf module — no circular imports).
-from state import shared_state, settings, logger, _IOU_METRICS
+from state import shared_state, settings, logger, _IOU_METRICS, load_runtime_settings
 # Split thread classes.
 from infer_thread import InferThread
 from display_thread import DisplayThread
@@ -129,6 +129,29 @@ def start(input_source, video_path):
                 iou=_IOU_METRICS.get(settings.COUNTING_TRACKER_IOU.lower(), IoU)(),
             )
 
+            # BL-76: hot-reload runtime toggles from the shared runtime-settings.json
+            # (written by the Jetson companion from the Android app) just before the
+            # per-recording Tracking/Rendering/Counting instantiation. Falls back to
+            # the current os.getenv-backed values for any missing/invalid key. Only the
+            # 4 render-affecting keys are touched; TRACKER_*/COUNTING_*/PIG_* are never
+            # overridden here.
+            rt = load_runtime_settings()
+            if isinstance(rt, dict):
+                if isinstance(rt.get("draw_tracking"), bool):
+                    shared_state.draw_tracking = rt["draw_tracking"]
+                if isinstance(rt.get("box_tracking"), bool):
+                    shared_state.box_tracking = rt["box_tracking"]
+                if isinstance(rt.get("centroid_tracking"), bool):
+                    shared_state.centroid_tracking = rt["centroid_tracking"]
+                _off = rt.get("offset_counting_line")
+                if isinstance(_off, bool) or not isinstance(_off, int):
+                    # bool is a subclass of int — reject it explicitly; only accept
+                    # a plain int in the 0-100 counting-line range.
+                    pass
+                elif 0 <= _off <= 100:
+                    settings.OFFSET_PERCENT_COUNTING_LINE = _off
+                else:
+                    logger.warning("runtime-settings: offset_counting_line out of range (ignored): %r", _off)
             tracking = Tracking(draw_box=shared_state.draw_tracking, shared_state=shared_state)
             counting = Counting(shared_state=shared_state, pig_confidence_threshold=settings.PIG_CONFIDENCE_THRESHOLD, offset_counting_line=settings.OFFSET_PERCENT_COUNTING_LINE, lost_buffer_frames=settings.COUNTING_LOST_BUFFER_FRAMES, reassoc_line_band=settings.COUNTING_REASSOC_LINE_BAND, reassoc_max_dist_x=settings.COUNTING_REASSOC_MAX_DIST_X, reassoc_max_dist_y=settings.COUNTING_REASSOC_MAX_DIST_Y, hysteresis_px=settings.COUNTING_HYSTERESIS_PX, mirror_guard=settings.COUNTING_MIRROR_GUARD, mirror_max_age=settings.COUNTING_MIRROR_MAX_AGE, mirror_line_band=settings.COUNTING_MIRROR_LINE_BAND, mirror_new_band=settings.COUNTING_MIRROR_NEW_BAND, mirror_max_dist_y=settings.COUNTING_MIRROR_MAX_DIST_Y, resurrection_threshold=settings.COUNTING_RESURRECTION_THRESHOLD, resurrection_min_jump=settings.COUNTING_RESURRECTION_MIN_JUMP, guard_max_age=settings.COUNTING_GUARD_MAX_AGE, reid_window=settings.COUNTING_REID_WINDOW, reid_min_age=settings.COUNTING_REID_MIN_AGE)
             rendering = Rendering(draw_box=shared_state.draw_tracking, offset_counting_line=settings.OFFSET_PERCENT_COUNTING_LINE)
