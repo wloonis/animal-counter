@@ -128,7 +128,8 @@
 # Import the DS3231 RTC playbook as its own play. `configure_rtc.yml` is a
 # standalone, directly-runnable playbook (it carries its own
 # `hosts: all` / `become: true` / `gather_facts: yes` header + vars +
-# handlers, like configure_companion.yml), so it must be pulled in with
+# handlers, like the companion deploy playbook in the sister repo), so it
+# must be pulled in with
 # `import_playbook` (which expands a full play) rather than `import_tasks`
 # (which only accepts a flat tasks list). It runs BEFORE the k3s import
 # below so the `rtc-ds3231.service` boot unit is installed before the k3s

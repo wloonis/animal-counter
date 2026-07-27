@@ -282,12 +282,12 @@ CLI above (what the relay agent uses) and plannotator for plan review.
   guard eligibility, tracker params), it is standard. k3s/ansible/docs/UI/
   infra-only changes → standard.
 - **Skip validation entirely for branches that touch NO file under `app/`**
-  (companion host service, ansible playbooks, docs, k3s manifests, scripts).
-  The counting-video validation only proves the *counting pipeline* still
-  counts correctly — it is meaningless for infra/docs/ansible/companion-only
-  changes and only risks a false mismatch from the model mis-parsing a green
-  run (BL-64 hit this). The `archon-jetson-dev` workflow's `jetson-validate`
-  node auto-detects this (`git diff --name-only main...HEAD -- app/` empty →
+  (ansible playbooks, docs, k3s manifests, scripts, RTC). The counting-video
+  validation only proves the *counting pipeline* still counts correctly — it is
+  meaningless for infra/docs/ansible-only changes and only risks a false
+  mismatch from the model mis-parsing a green run (BL-64 hit this). The
+  `archon-jetson-dev` workflow's `jetson-validate` node auto-detects this
+  (`git diff --name-only main...HEAD -- app/` empty →
   signals VALIDATED without running the script). Don't force a validation run
   on such branches.
 - **`validation/config.json` `mode` field MUST stay `"standard"` by default.**
@@ -448,73 +448,61 @@ rollback).
 
 ---
 
-## 9. Android app — building the APK (toolchain already installed)
+## 9. Sister repo — Android app + Jetson companion
 
-The Android app lives under `android/` (Compose, AGP 8.7.0, Kotlin 2.0.21,
-Gradle 8.9, `compileSdk=35`, `build-tools 34.0.0`, `minSdk=33`, Java 17
-target). The user reloads it on their phone via **sideload of a debug APK**.
+The **Android phone app** and the **Jetson host companion** (the HTTP bridge
+the app talks to) have been **extracted** into a dedicated repository:
 
-**The build toolchain is ALREADY INSTALLED — do NOT reinstall it.** It was
-set up in a prior session and lives in user space (no `sudo` needed):
+**`wloonis/animal-counter-companion`** — https://github.com/wloonis/animal-counter-companion
 
-- **JDK 17 (Temurin)** → `~/.local/jdk/jdk-17.0.19+10`
-  (`$JAVA_HOME`). AGP 8.7.0 supports JDK 17–21; we use 17 to match
-  `kotlinOptions.jvmTarget = 17`.
-- **Android SDK** → `~/Android/Sdk` (`$ANDROID_HOME` /
-  `$ANDROID_SDK_ROOT`). Contains `platform-tools` (adb),
-  `platforms/android-35`, `build-tools/34.0.0`, and
-  `cmdline-tools/latest` (sdkmanager). Licenses already accepted.
-- **Gradle cache** → `~/.gradle` (~2.2G: Gradle 8.9 dist + all deps
-cached). A first build downloads nothing; a clean build takes ~1m30s.
-- **`android/local.properties`** points the SDK: `sdk.dir=/home/tt/Android/Sdk`.
-  It is **NOT gitignored** in `android/.gitignore` and must **never be
-  committed** (it's machine-local; reference `sdk.dir` only, don't `git add`
-  `local.properties`).
+This repo keeps the **counting core** only: OC-SORT tracking, the counting
+pipeline, TensorRT, the K3s `countingapp` pod, the Jetson system/K3s/RTC setup,
+and the `validate_on_jetson.sh` reference-video validation. The split happened
+at tag `v1.1.0` (the last monorepo release).
 
-**Build a debug APK (sideloadable, signed with the debug keystore):**
+### What lives where
 
-```bash
-cd /mnt/c/Dev/ai/animal-counter/android
-export JAVA_HOME=/home/tt/.local/jdk/jdk-17.0.19+10
-export ANDROID_HOME=/home/tt/Android/Sdk
-export ANDROID_SDK_ROOT=$ANDROID_HOME
-chmod +x gradlew
-./gradlew :app:assembleDebug --no-daemon --console=plain
-# Output: android/app/build/outputs/apk/debug/app-debug.apk
-```
+| Concern | Repo |
+|---------|------|
+| Counting pipeline (tracking, crossing, guards, `app/`) | **here** (`animal-counter`) |
+| K3s countingapp deploy + Jetson system/RTC/K3s-boot playbooks | **here** |
+| `validate_on_jetson.sh` reference-video validation | **here** |
+| `counting-history.jsonl` **writer** (`app/src/core/history.py`) | **here** |
+| `runtime-settings.json` / `.arret_requested` **reader** (`app/src/state.py`, `display_thread.py`) | **here** |
+| Android phone app (`android/`) | **sister repo** |
+| Jetson host companion (`jetson-companion.py` + systemd unit) | **sister repo** |
+| Companion deploy playbook | **sister repo** (`ansible/playbooks/deploy_companion.yml`) |
+| `counting-history.jsonl` **reader** (`HistoryIndex`) | **sister repo** |
+| `runtime-settings.json` / `.arret_requested` **writer** | **sister repo** |
 
-Copy to the user's Desktop for transfer to the phone:
+### The IPC contract
 
-```bash
-cp app/build/outputs/apk/debug/app-debug.apk \
-   /mnt/c/Users/tt/Desktop/animal-counter-<label>-debug.apk
-```
+The companion and the countingapp communicate **only** via shared files in
+`/data/orin/files` (hostPath `/files` in the pod) — there is no HTTP/RPC
+between them. The authoritative contract is
+[`docs/IPC_CONTRACT.md`](docs/IPC_CONTRACT.md), which is kept **identical in
+both repos**. The tightest coupling is the `counting-history.jsonl` schema
+(this repo writes it; the sister repo reads it). Any change to that schema is a
+**coordinated change across both repos** — update `docs/IPC_CONTRACT.md` in
+both, prefer additive changes (new fields / new `type` values; the reader
+tolerates unknown fields).
 
-Previous debug APKs on the Desktop follow the
-`animal-counter-<bl-or-feature>-debug.apk` naming convention (e.g.
-`animal-counter-bl69-debug.apk`, `animal-counter-bl72-debug.apk`,
-`animal-counter-bl29-icon-debug.apk`).
+### Conventions for agents here
 
-**App icon resources** (in case of icon changes): `android/app/src/main/res/`
-uses an **adaptive icon** — `mipmap-anydpi-v26/ic_launcher{,_round}.xml`
-reference `@drawable/ic_launcher_foreground` + `@color/ic_launcher_background`
-(teal `#FF00879B`). The foreground is raster PNGs at per-density `drawable-*/`
-(not a vector). Legacy pre-v26 PNGs live in `mipmap-{mdpi…xxxhdpi}/`
-(`ic_launcher.png` square, `ic_launcher_round.png` circular RGBA). Regenerate
-with `ffmpeg` (resize + circular `geq` alpha mask). Manifest references
-`@mipmap/ic_launcher` + `@mipmap/ic_launcher_round` (unchanged).
-
-**Notes:**
-- A debug APK is signed with the per-machine **debug keystore**
-  (`~/.android/debug.keystore`, auto-generated by Gradle). If the phone
-  already has the app installed from a **different** debug keystore (built on
-  another machine), the signatures won't match → uninstall the old app first
-  before sideloading, or the install will fail with `INSTALL_FAILED_UPDATE
-  _INCOMPATIBLE`.
-- `release` build type has `isMinifyEnabled = false` and **no signingConfig**
-  → `assembleRelease` produces an **unsigned** APK (not installable). For a
-  installable release build, a signing config + keystore must be added first.
-  Use `assembleDebug` for sideload.
-- The build is a no-app-counting-code change → no Jetson validation applies
-  (the Archon workflow's `jetson-validate` node auto-skips when no `app/`
-  counting file changes; the android tree is under `android/`, not `app/`).
+- **Do not** add Android/companion code here. The Android app, the companion,
+  and the companion deploy playbook are in the sister repo. If a change seems
+  to need them, open the work in `wloonis/animal-counter-companion`.
+- The Android **build toolchain** (JDK 17 + Android SDK) is documented in the
+  sister repo's `AGENTS.md`, not here.
+- The companion is **no longer deployed from this repo** —
+  `ansible/playbooks/system/configure_companion.yml` and
+  `scripts/install_companion_standalone.sh` were removed; use the sister repo's
+  `ansible/playbooks/deploy_companion.yml`.
+- **GitHub issue numbering** (`BL-<n>`) is **shared system-wide** across both
+  repos — always check `gh issue list --state all` in BOTH repos and increment
+  from the highest existing `BL-<n>` anywhere. This repo is the historical
+  source of the BL counter.
+- Validation rules in §7 still apply: a branch that touches only
+  `app/` counting **decision** logic may need `--full`; infra/docs/k3s/RTC-only
+  branches skip validation. There is no more "companion-only" branch type here
+  — companion work happens in the sister repo.
