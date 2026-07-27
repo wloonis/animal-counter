@@ -4,8 +4,8 @@ The Jetson Orin Nano has **no coin-cell battery and no working onboard RTC**,
 so on every power cut the system clock falls back to the build date (or
 `1970-01-01`). The existing clock stack ([`docs/12_jetson_network_k3s_boot.md`])
 covers this with `fake-hwclock` (rough, restored-at-boot clock) and the
-[companion service][`docs/09_jetson_companion.md`] (phone pushes exact time
-over the hotspot). But both need either a previous good shutdown
+[companion service](https://github.com/wloonis/animal-counter-companion) (phone pushes exact time
+over the hotspot; see [`IPC_CONTRACT.md`](IPC_CONTRACT.md)). But both need either a previous good shutdown
 (`fake-hwclock` saves the clock on shutdown, so it is wrong after a long
 power cut) or a phone present (companion). A **hardware RTC** is the only
 source that survives a power cut *without* a phone and sets the clock

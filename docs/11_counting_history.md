@@ -1,14 +1,22 @@
 # 11 — Persistent counting-session history (store) (BL-68)
 
+> **Repo split (v1.1.0):** the **reader** side of this log (the `jetson-companion`
+> HTTP service that exposes sessions/summary/videos to the Android app) now lives
+> in the sister repo [`wloonis/animal-counter-companion`](https://github.com/wloonis/animal-counter-companion).
+> This repo keeps only the **writer** (the history thread in `app/src/core/history.py`).
+> The shared-file contract between the two repos is authoritative in
+> [`IPC_CONTRACT.md`](IPC_CONTRACT.md). This doc covers the **store** internals:
+> JSONL schema, writer, compaction, disk guard, settings.
+
 An **append-only JSONL** counting-session history (`counting-history.jsonl`)
 written read-only from the `countingapp` pod onto the hostPath `/files`, with
 a single in-process history thread (heartbeat + compaction) that is resilient
 to power cuts and bounded to ~200 MB on the small SSD. The store is exposed
 **read-only** to the Android app through the `jetson-companion` host service
-(BL-64, port 8090) v2 endpoints — the full HTTP API surface (sessions,
-summary, videos, video streaming) is documented in
-[`09_jetson_companion.md`](09_jetson_companion.md). This doc covers the
-**store** internals: JSONL schema, writer, compaction, disk guard, settings.
+(BL-64, port 8090) — now in the **sister repo**. The HTTP API surface
+is documented there; the shared-file contract is in
+[`IPC_CONTRACT.md`](IPC_CONTRACT.md). This doc covers the **store** internals:
+JSONL schema, writer, compaction, disk guard, settings.
 
 This implements [GitHub issue BL-68](https://github.com/wloonis/animal-counter/issues).
 
