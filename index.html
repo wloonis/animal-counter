@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>animal-counter — Real-time pig counter on NVIDIA Jetson Orin (OC-SORT + TensorRT)</title>
+<meta name="description" content="Open-source real-time bidirectional pig counter running on an NVIDIA Jetson Orin Nano. YOLO detection with a TensorRT engine, OC-SORT tracking with custom anti-ID-switch guards, fixed-camera counting line, and auto-recorded clips — deployed on single-node K3s via Ansible. GPLv3.">
+<meta name="keywords" content="pig counter, animal counting, livestock counting, computer vision, edge AI, NVIDIA Jetson Orin, Jetson Orin Nano, OC-SORT, object tracking, TensorRT, YOLO, real-time object tracking, anti-ID-switch, K3s, Ansible, edge inference">
+<meta name="author" content="LOONIS Wennaël">
+<meta name="robots" content="index, follow, max-image-preview:large">
+<link rel="canonical" href="https://wloonis.github.io/animal-counter/">
+
+<!-- Open Graph / social -->
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="animal-counter">
+<meta property="og:title" content="animal-counter — Real-time pig counter on NVIDIA Jetson Orin (OC-SORT + TensorRT)">
+<meta property="og:description" content="Open-source real-time bidirectional pig counter on an NVIDIA Jetson Orin Nano. YOLO→TensorRT detection, OC-SORT tracking with anti-ID-switch guards, fixed-camera counting line, auto-recorded clips. Deployed on single-node K3s via Ansible. GPLv3.">
+<meta property="og:url" content="https://wloonis.github.io/animal-counter/">
+<meta property="og:image" content="https://wloonis.github.io/animal-counter/og-image.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="animal-counter — Real-time pig counter on NVIDIA Jetson Orin (OC-SORT + TensorRT)">
+<meta name="twitter:description" content="Open-source real-time bidirectional pig counter on an NVIDIA Jetson Orin Nano. OC-SORT + TensorRT, single-node K3s, Ansible. GPLv3.">
+<meta name="twitter:image" content="https://wloonis.github.io/animal-counter/og-image.png">
+
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🐷</text></svg>">
+
+<!-- Structured data: SoftwareApplication -->
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  "name": "animal-counter",
+  "applicationCategory": "MultimediaApplication",
+  "operatingSystem": "Linux",
+  "description": "Real-time bidirectional pig counter on an NVIDIA Jetson Orin Nano. YOLO detection with a TensorRT engine, OC-SORT tracking with custom anti-ID-switch guards, fixed-camera counting line, and auto-recorded clips. Deployed on single-node K3s via Ansible.",
+  "url": "https://wloonis.github.io/animal-counter/",
+  "downloadUrl": "https://github.com/wloonis/animal-counter/releases",
+  "license": "https://www.gnu.org/licenses/gpl-3.0.html",
+  "author": { "@type": "Person", "name": "LOONIS Wennaël" },
+  "publisher": { "@type": "Person", "name": "LOONIS Wennaël" },
+  "softwareVersion": "1.2.0",
+  "datePublished": "2026-08-12",
+  "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+  "programmingLanguage": "Python",
+  "keywords": "pig counter, animal counting, livestock counting, OC-SORT, Jetson Orin, TensorRT, edge AI"
+}
+</script>
+
+<style>
+  :root {
+    --bg: #0d1117; --bg2: #161b22; --fg: #e6edf3; --muted: #8b949e;
+    --accent: #58a6ff; --accent2: #f78166; --border: #30363d; --green: #3fb950;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    background: var(--bg); color: var(--fg); line-height: 1.6; -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  .container { max-width: 980px; margin: 0 auto; padding: 0 24px; }
+  header { padding: 64px 0 32px; border-bottom: 1px solid var(--border); }
+  .eyebrow { color: var(--accent2); font-weight: 600; letter-spacing: .08em; text-transform: uppercase; font-size: .8rem; }
+  h1 { font-size: clamp(2rem, 6vw, 3.2rem); line-height: 1.1; margin: 16px 0 8px; letter-spacing: -.02em; }
+  h1 .pig { filter: grayscale(0); }
+  .tagline { font-size: 1.25rem; color: var(--muted); max-width: 60ch; }
+  .cta { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 28px; }
+  .btn { display: inline-flex; align-items: center; gap: 8px; padding: 12px 20px; border-radius: 8px; font-weight: 600; border: 1px solid var(--border); background: var(--bg2); color: var(--fg); }
+  .btn:hover { border-color: var(--accent); text-decoration: none; }
+  .btn.primary { background: var(--accent); color: #0d1117; border-color: var(--accent); }
+  .badges { margin-top: 20px; display: flex; flex-wrap: wrap; gap: 8px; }
+  .badge { font-size: .78rem; padding: 4px 10px; border-radius: 20px; border: 1px solid var(--border); color: var(--muted); background: var(--bg2); }
+  section { padding: 56px 0; border-bottom: 1px solid var(--border); }
+  h2 { font-size: 1.6rem; margin: 0 0 20px; letter-spacing: -.01em; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 20px; }
+  .card { background: var(--bg2); border: 1px solid var(--border); border-radius: 12px; padding: 22px; }
+  .card h3 { margin: 0 0 8px; font-size: 1.1rem; color: var(--fg); }
+  .card p { margin: 0; color: var(--muted); font-size: .95rem; }
+  .card .ic { font-size: 1.6rem; margin-bottom: 6px; }
+  .pipe { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 8px; }
+  .step { background: var(--bg2); border: 1px solid var(--border); border-radius: 10px; padding: 10px 14px; font-size: .9rem; }
+  .arr { color: var(--muted); }
+  code { background: var(--bg2); border: 1px solid var(--border); border-radius: 6px; padding: 2px 7px; font-size: .9em; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .meta { color: var(--muted); font-size: .95rem; }
+  ul.feat { margin: 0; padding-left: 1.1em; }
+  ul.feat li { margin: 6px 0; }
+  footer { padding: 40px 0 60px; color: var(--muted); font-size: .9rem; }
+  footer a { color: var(--muted); }
+  .demo { margin-top: 24px; border: 1px dashed var(--border); border-radius: 12px; padding: 48px; text-align: center; color: var(--muted); background: var(--bg2); }
+  @media (max-width: 600px) { header { padding: 40px 0 24px; } section { padding: 40px 0; } }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="container">
+    <div class="eyebrow">Open-source · Edge AI · GPLv3</div>
+    <h1><span class="pig">🐷</span> animal-counter</h1>
+    <p class="tagline">Real-time bidirectional <strong>pig counter</strong> on an NVIDIA Jetson Orin Nano — YOLO&nbsp;→&nbsp;TensorRT detection, OC-SORT tracking with custom anti-ID-switch guards, and a fixed-camera counting line. Deployed on single-node K3s via Ansible.</p>
+    <div class="cta">
+      <a class="btn primary" href="https://github.com/wloonis/animal-counter">View on GitHub</a>
+      <a class="btn" href="https://github.com/wloonis/animal-counter/releases">Releases</a>
+      <a class="btn" href="https://github.com/wloonis/animal-counter-companion">Companion app</a>
+    </div>
+    <div class="badges">
+      <span class="badge">Python</span>
+      <span class="badge">OC-SORT</span>
+      <span class="badge">TensorRT</span>
+      <span class="badge">Jetson Orin Nano</span>
+      <span class="badge">K3s</span>
+      <span class="badge">Ansible</span>
+      <span class="badge">GPL-3.0</span>
+    </div>
+  </div>
+</header>
+
+<section id="how">
+  <div class="container">
+    <h2>How it works</h2>
+    <p class="meta">A fixed camera watches the aisle. Every frame runs through a hardware-accelerated detection + tracking pipeline, and a virtual counting line registers each animal that crosses it — right→left counts <code>+1</code>, left→right counts <code>-1</code>.</p>
+    <div class="pipe">
+      <span class="step">📷 Video frame</span><span class="arr">→</span>
+      <span class="step">🔍 YOLO detection</span><span class="arr">→</span>
+      <span class="step">⚡ TensorRT engine</span><span class="arr">→</span>
+      <span class="step">🧭 OC-SORT tracking</span><span class="arr">→</span>
+      <span class="step">🛡️ Anti-ID-switch guards</span><span class="arr">→</span>
+      <span class="step">🔢 Counting line</span><span class="arr">→</span>
+      <span class="step">🎥 Auto-recorded clips</span>
+    </div>
+    <div class="demo">📹 Demo video / GIF coming soon — drop a screen capture here to boost star conversion.</div>
+  </div>
+</section>
+
+<section id="features">
+  <div class="container">
+    <h2>Features</h2>
+    <div class="grid">
+      <div class="card"><div class="ic">🧭</div><h3>OC-SORT tracking</h3><p>Keeps stable track IDs across frames. Custom anti-ID-switch guards prevent double-counting when animals occlude each other or re-enter the frame.</p></div>
+      <div class="card"><div class="ic">⚡</div><h3>TensorRT acceleration</h3><p>YOLO weights compiled to a TensorRT engine for low-latency edge inference on the Jetson Orin Nano GPU.</p></div>
+      <div class="card"><div class="ic">🔢</div><h3>Bidirectional counting line</h3><p>A fixed virtual line: crossings right→left are <code>+1</code>, left→right are <code>-1</code>. Hysteresis tuned against regressions on real footage.</p></div>
+      <div class="card"><div class="ic">🎥</div><h3>Auto-recorded clips</h3><p>Counting sessions are recorded to video clips with the live count overlay, for audit and replay.</p></div>
+      <div class="card"><div class="ic">📦</div><h3>Single-node K3s</h3><p>The <code>countingapp</code> pod runs on K3s with a <code>hostPath</code> live-code mount for rsync + hot restart. Deployed and rendered via Ansible + Jinja2 templates.</p></div>
+      <div class="card"><div class="ic">✅</div><h3>Reference-video validation</h3><p>A validation script runs a reference clip and compares the pig count to the expected value derived from the filename — a built-in regression gate.</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="companion">
+  <div class="container">
+    <h2>Companion app</h2>
+    <p class="meta">A separate repo, <a href="https://github.com/wloonis/animal-counter-companion"><strong>animal-counter-companion</strong></a>, holds the <strong>Android phone app</strong> and the <strong>Jetson host companion</strong> (an HTTP bridge). The companion and the <code>countingapp</code> pod communicate only via shared files in <code>/data/orin/files</code> — there is no HTTP/RPC between them. See <code>docs/IPC_CONTRACT.md</code> (kept identical in both repos).</p>
+  </div>
+</section>
+
+<section id="getstarted">
+  <div class="container">
+    <h2>Get started</h2>
+    <ul class="feat">
+      <li>Clone: <code>git clone https://github.com/wloonis/animal-counter.git</code></li>
+      <li>Read the <a href="https://github.com/wloonis/animal-counter/blob/main/README.md">README</a> for the full setup (Jetson prep, K3s, Ansible deploy, validation).</li>
+      <li>Grab the latest <a href="https://github.com/wloonis/animal-counter/releases">release</a> (currently v1.2.0).</li>
+      <li>Licensed under the <a href="https://www.gnu.org/licenses/gpl-3.0.html">GNU GPL v3</a> — contributions welcome via pull request.</li>
+    </ul>
+  </div>
+</section>
+
+<footer>
+  <div class="container">
+    <p>animal-counter · Copyright © 2026 LOONIS Wennaël · <a href="https://www.gnu.org/licenses/gpl-3.0.html">GNU GPL v3</a> · <a href="https://github.com/wloonis/animal-counter">Source on GitHub</a></p>
+  </div>
+</footer>
+
+</body>
+</html>
