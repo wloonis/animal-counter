@@ -1,4 +1,7 @@
 #!/bin/bash
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 LOONIS Wennaël
+
 
 # Jetson Preparation Script
 # One-shot script to discover Jetson and run bootstrap

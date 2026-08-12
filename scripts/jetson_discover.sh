@@ -1,4 +1,7 @@
 #!/bin/bash
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 LOONIS Wennaël
+
 
 # Jetson Discovery Script
 # Scans network for Jetson devices on SSH port (22)
