@@ -368,13 +368,16 @@ CLI above (what the relay agent uses) and plannotator for plan review.
 
 ## 8. Pi bundled patch — local fix for #6101 / #6102 (PR #6501)
 
-**Archon branch:** `archon-dev-0807-v2` (tracking `origin/dev` + 1 commit: the
-pi pin below). `origin/dev` now contains #2124 **merged** (per-node extension
-posture, #2073), #2126 (interactive-loop completion), #2144 (portable per-node
-posture), and ~14 other PRs. **#2124 is #2073, NOT #6101** — its own diff says
-"we MUST reuse a process-cached, already-reloaded loader", so the runtime
-stays **shared** across nodes and the stale-ctx bug persists; the patch below is
-still required.
+**Archon branch:** `archon-dev-0807-v2` (a superset of `origin/dev` + 5 local
+commits: the pi pin below + 4 patch-script tooling commits under `patches/`;
+no Archon `*.ts` source is modified). `origin/dev` now contains #2124 **merged**
+(per-node extension posture, #2073), #2126 (interactive-loop completion), #2144
+(portable per-node posture), and ~14 other PRs. **#2124 is #2073, NOT #6101** —
+its own diff says "we MUST reuse a process-cached, already-reloaded loader", so
+the runtime stays **shared** across nodes and the stale-ctx bug persists; the
+patch below is still required. **Verified against pi 0.84.1 (latest npm):**
+`clearInvalidation` is still absent from `loader.js`/`runner.js`, so the exact
+`0.80.7` pin + the #6501 patch remain required — do not bump the bundle yet.
 
 The bundled pi-coding-agent is **pinned to exact `0.80.7`** (not `^0.80.6`):
 caret resolves to 0.80.9, whose `@earendil-works/pi-ai` ships a broken
@@ -440,11 +443,49 @@ runtime, so the poisoned marker from the previous node's dispose is cleared.
 
 **When the upstream fix eventually lands** (a future pi release merges #6501 or
 an equivalent), drop this patch: delete the script + remove this section. Until
-then this is the **one** local patch on pi. Archon itself has **0 local patches**
-— it runs purely on `origin/dev` (the pi pin commit is the only local commit on
-the Archon branch). Fallback branches: `archon-dev-0807-exp` (pre-merge #2124
-cherry-pick, kept as rollback), `archon-piv-patches` (0.4.1 + 3 patches, older
-rollback).
+then this is the **one** local patch on pi itself. Archon `*.ts` source has **0
+local patches** — it runs purely on `origin/dev`; the only local commits on the
+Archon branch are the pi pin and the `patches/` tooling scripts. Fallback
+branches: `archon-dev-0807-exp` (pre-merge #2124 cherry-pick, kept as rollback),
+`archon-piv-patches` (0.4.1 + 3 patches, older rollback).
+
+### 8.1 Plannotator phase-leak reset (separate, on the installed extension)
+
+A **second** patch — not on pi, on the installed `@plannotator/pi-extension` —
+is still required. Plannotator's `phase` (and `lastSubmittedPath`,
+`checklistItems`) is **module-level**, and Archon's
+`getOrCreateReloadedExtensionLoader` keeps a **process-level cache** of the
+reloaded extension loader (`reloadedExtensionLoaderCache` in
+`packages/providers/src/community/pi/resource-loader.ts`), so every workflow
+node in one run shares one loader → one runtime → one set of extension module
+instances. The planner node's `enterPlanning()` sets `phase = "planning"`, which
+leaks into the implement node; the implement node then inherits the planner's
+planning/executing system prompt and (with `glm-5.2`) refuses to write code,
+deadlocking the loop (idle timeout, no commits). Plannotator's own
+`session_shutdown` handler only clears `sessionAlive`/`currentPiSession` — it
+does **not** reset `phase` — so the leak is not handled upstream.
+
+**Fix** (`patches/plannotator-phase-leak-reset.sh`, applied to the installed
+`~/.pi/agent/npm/node_modules/@plannotator/pi-extension/index.ts` — loaded from
+src, no dist): track the session identity that owns the phase and reset to
+`idle` in `before_agent_start` when a **different** session starts. Uses
+plannotator's own `getPiSessionIdentity`/`PiSessionIdentity` (already imported
+in `index.ts`). Idempotent; re-run after any `pi install` / update of the
+extension.
+```bash
+bash /home/tt/repository/Archon/patches/plannotator-phase-leak-reset.sh
+```
+
+**History — a previously-needed sibling patch is now obsolete.** An earlier
+combined script also wrapped plannotator's `continueWhenIdle` in a try/catch
+guard (the plan-approval stale-ctx crash: after approval the planner session is
+torn down but `continueWhenIdle`'s captured `ctx.isIdle()` threw an uncaught
+"stale extension ctx" inside `setTimeout`, crashing Bun and orphaning the run).
+That guard is **now upstream** in `@plannotator/pi-extension` >= 0.26.x:
+`continueWhenIdle` is wrapped with an `isCtxAlive`/`sessionAlive` liveness probe
++ try/catch (plannotator issue #1140). Do **not** re-apply that guard — its
+anchor no longer matches 0.26.x and it is redundant. The renamed script keeps
+**only** the phase-leak reset.
 
 ---
 

@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 LOONIS Wennaël
+
 ---
 # Grow the root partition to fill all available space on its disk.
 #

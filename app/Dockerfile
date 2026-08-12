@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 LOONIS Wennaël
+
 FROM dustynv/l4t-pytorch:r36.4.0
 #FROM pytorch:r36.4.tegra-aarch64-cu126-22.04-cuda
 
