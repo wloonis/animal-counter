@@ -475,14 +475,40 @@ does **not** reset `phase` — so the leak is not handled upstream.
 
 **Fix** (`patches/plannotator-phase-leak-reset.sh`, applied to the installed
 `~/.pi/agent/npm/node_modules/@plannotator/pi-extension/index.ts` — loaded from
-src, no dist): track the session identity that owns the phase and reset to
-`idle` in `before_agent_start` when a **different** session starts. Uses
-plannotator's own `getPiSessionIdentity`/`PiSessionIdentity` (already imported
-in `index.ts`). Idempotent; re-run after any `pi install` / update of the
+src, no dist): reset `phase` (and `phaseOwnerIdentity`, `lastSubmittedPath`,
+`checklistItems`) to `idle` in plannotator's `session_shutdown` handler. When the
+planner session tears down (it is a **different** session from the implementer —
+confirmed in the BL-79 transcripts: planner `01a01f74` → implement `01a01f8b`),
+the shared runtime is cleaned so the implement node starts in `idle` instead of
+inheriting `planning`. Idempotent; re-run after any `pi install` / update of the
 extension.
 ```bash
 bash /home/tt/repository/Archon/patches/plannotator-phase-leak-reset.sh
 ```
+
+**Why `session_shutdown` and not an identity check in `before_agent_start`.** An
+earlier version of this patch tried to reset `phase` in `before_agent_start`
+when a "different session" started, comparing `sessionId`/`sessionFile`/`cwd`.
+That is **ineffective in the shared-runtime model**: `runtimeToken` is a single
+`Symbol` created once at `plannotator()` init (shared across nodes),
+`ctx.sessionManager` is stale/shared (the #6101 class — `getSessionId()` returns
+the same id across nodes), and `cwd` is the same worktree. No identity field
+reliably distinguishes nodes, so the reset condition was always false and the
+leak persisted — observed on the BL-79 run, where the implement session (a
+*different* transcript sessionId) still inherited `phase = "planning"`, told
+itself *"I'm in Plannotator planning mode, which restricts edits to markdown
+files only"*, refused to edit `.py` files, and looped re-submitting `PLAN.md`
+instead of emitting `IMPL_DONE`. The `session_shutdown` teardown reset does not
+depend on identity comparison. (The leftover `before_agent_start` identity reset
+in `index.ts` is harmless and kept as belt-and-suspenders.)
+
+**Caveat / fallback.** The `session_shutdown` handler's own comment notes some
+teardown paths *"never reach our `session_shutdown` handler"*. If a future run
+shows the leak recurring, the fallback is a **workflow-level override**: the
+`implement` node prompt in `.archon/workflows/archon-jetson-dev.yaml` explicitly
+tells the agent to disregard any stale *"plannotator planning mode / restrict
+edits to markdown"* injection and edit source files freely. Both guards ship
+together.
 
 **History — a previously-needed sibling patch is now obsolete.** An earlier
 combined script also wrapped plannotator's `continueWhenIdle` in a try/catch
