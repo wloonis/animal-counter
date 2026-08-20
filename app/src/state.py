@@ -61,10 +61,11 @@ shared_state.draw_centroid_radius = settings.DRAW_CENTROID_RADIUS
 _IOU_METRICS = {"iou": IoU, "giou": GIoU, "diou": DIoU, "ciou": CIoU, "biou": BIoU}
 
 # BL-76: shared file used by the Jetson companion to push runtime toggles
-# (hot-reloaded at the start of each recording by main.py). The host path
-# /data/orin/files is mounted RW in the counting pod as /files (same channel
-# as counting-history.jsonl, BL-68).
-RUNTIME_SETTINGS_PATH = "/files/runtime-settings.json"
+# (hot-reloaded at the start of each recording by main.py). BL-79 split:
+# config/control files live in /conf (hostPath /data/orin/conf), separate
+# from data files in /files (hostPath /data/orin/files, e.g.
+# counting-history.jsonl, BL-68). Both hostPaths are mounted RW in the pod.
+RUNTIME_SETTINGS_PATH = "/conf/runtime-settings.json"
 
 
 def load_runtime_settings():
