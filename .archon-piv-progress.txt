@@ -172,3 +172,4 @@ Task 3: ADD model class catalog helpers in state.py — bc267e6
 Task 4: ADD BL-78 counting-class fields to SharedState (legacy defaults) — 693e2bd
 Task 5: WIRE BL-78 class catalog + counting_class_ids resolution in main.py — 01f661c
 Task 6: filter inference to counting_class_ids set — d1c2f2f
+Task 7: plumb counting_class_ids in infer_thread.py — 2891a00
