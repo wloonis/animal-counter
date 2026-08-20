@@ -46,7 +46,10 @@ starting a new batch).
 > **Sister repo:** the Android phone app + the Jetson host companion (HTTP bridge) live in
 > [`wloonis/animal-counter-companion`](https://github.com/wloonis/animal-counter-companion).
 > They were extracted at tag `v1.1.0`. The two repos talk only via the shared files
-> documented in [`docs/IPC_CONTRACT.md`](docs/IPC_CONTRACT.md).
+> documented in [`docs/IPC_CONTRACT.md`](docs/IPC_CONTRACT.md): **`/files`**
+> (hostPath `/data/orin/files`) for **data** (`counting-history.jsonl`, mp4 clips,
+> dataset) and **`/conf`** (hostPath `/data/orin/conf`) for **config/contrôle**
+> (`runtime-settings.json`, `.arret_requested` — BL-79 split).
 
 ---
 
