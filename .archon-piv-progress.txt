@@ -170,3 +170,4 @@ Task 1: ADD TRAINING_DEFAULT_COUNTING_CLASS to .env.local.example — 1c801c4
 Task 2: EDIT build_model.yml — capture classes.yaml at build (slurp+from_yaml parse, fail-fast validate, write+rsync classes.yaml) — 26bb388
 Task 3: ADD model class catalog helpers in state.py — bc267e6
 Task 4: ADD BL-78 counting-class fields to SharedState (legacy defaults) — 693e2bd
+Task 5: WIRE BL-78 class catalog + counting_class_ids resolution in main.py — 01f661c
