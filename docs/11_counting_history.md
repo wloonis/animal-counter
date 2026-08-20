@@ -119,6 +119,7 @@ it is skipped on open. Line types:
   "status": "clean",
   "synthetic": false,           // true for power-loss recovery session_end
   "counters": { ... },          // B — final counters
+  "counts":  { ... },           // BL-78 — final per-species sub-counts {class_name: count}
   "video":   { ... },           // E — video metadata
   "system":  { ... },           // F — disk_free, cpu_load_avg, mem_used
   "ts": "2025-07-15T18:00:00Z"
@@ -151,6 +152,7 @@ it is skipped on open. Line types:
   "session_id": "uuid4",
   "ts": "2025-07-15T14:30:05Z",
   "count": 9,
+  "counts": { ... },          // BL-78 — per-species sub-counts {class_name: count}
   "last_segment": "/files/tocompress-counting-20250715-143000.mp4",
   "thermal": { ... },          // C — temp samples (best-effort)
   "system":  { ... }           // F — disk_free, cpu_load_avg, mem_used
