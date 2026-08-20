@@ -509,23 +509,25 @@ at tag `v1.1.0` (the last monorepo release).
 | K3s countingapp deploy + Jetson system/RTC/K3s-boot playbooks | **here** |
 | `validate_on_jetson.sh` reference-video validation | **here** |
 | `counting-history.jsonl` **writer** (`app/src/core/history.py`) | **here** |
-| `runtime-settings.json` / `.arret_requested` **reader** (`app/src/state.py`, `display_thread.py`) | **here** |
+| `runtime-settings.json` / `.arret_requested` **reader** (`app/src/state.py`, `display_thread.py`) — reads `/conf` (BL-79 split) | **here** |
 | Android phone app (`android/`) | **sister repo** |
 | Jetson host companion (`jetson-companion.py` + systemd unit) | **sister repo** |
 | Companion deploy playbook | **sister repo** (`ansible/playbooks/deploy_companion.yml`) |
 | `counting-history.jsonl` **reader** (`HistoryIndex`) | **sister repo** |
-| `runtime-settings.json` / `.arret_requested` **writer** | **sister repo** |
+| `runtime-settings.json` / `.arret_requested` **writer** (must write `/data/orin/conf` — BL-80 companion migration) | **sister repo** |
 
 ### The IPC contract
 
 The companion and the countingapp communicate **only** via shared files in
-`/data/orin/files` (hostPath `/files` in the pod) — there is no HTTP/RPC
-between them. The authoritative contract is
-[`docs/IPC_CONTRACT.md`](docs/IPC_CONTRACT.md), which is kept **identical in
-both repos**. The tightest coupling is the `counting-history.jsonl` schema
-(this repo writes it; the sister repo reads it). Any change to that schema is a
-**coordinated change across both repos** — update `docs/IPC_CONTRACT.md` in
-both, prefer additive changes (new fields / new `type` values; the reader
+two hostPaths on the Jetson — `/files` (data: `counting-history.jsonl`, mp4
+clips, dataset) and `/conf` (config/contrôle: `runtime-settings.json`,
+`.arret_requested`) — there is no HTTP/RPC between them. The authoritative
+contract is [`docs/IPC_CONTRACT.md`](docs/IPC_CONTRACT.md), which is kept
+**identical in both repos**. The tightest coupling is the `counting-history.jsonl`
+schema (this repo writes it; the sister repo reads it). Any change to that
+schema is a **coordinated change across both repos** — update
+`docs/IPC_CONTRACT.md` in both, prefer additive changes (new fields / new
+`type` values; the reader
 tolerates unknown fields).
 
 ### Conventions for agents here

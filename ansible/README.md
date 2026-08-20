@@ -165,6 +165,7 @@ APP_VERSION=local
 APP_PORT=31501
 APP_PATH=/media/nano-counter/data/orin/git/animal-counting/app
 FILES_PATH=/media/nano-counter/data/orin/files
+CONF_PATH=/media/nano-counter/data/orin/conf
 MAX_LOG_FILES=50
 LOG_MAX_SIZE=100M
 IMAGE_NAME=countingapp
@@ -410,6 +411,22 @@ Après exécution complète, le Jetson aura :
 - ✅ Interface Ethernet avec IP statique
 - ✅ SSH sécurisé
 - ✅ Application de comptage de cochons prête au déploiement
+
+## HostPaths partagés (`/files` et `/conf`)
+
+Le pod `countingapp` monte deux hostPaths pour la communication IPC avec le
+companion (voir `docs/IPC_CONTRACT.md`) :
+
+- **`/files`** (`FILES_PATH`, défaut `/data/orin/files`) — **données** :
+  `counting-history.jsonl`, clips `counting-*.mp4`, `dataset/`.
+- **`/conf`** (`CONF_PATH`, défaut `/data/orin/conf`) — **config/contrôle** :
+  `runtime-settings.json` (hot-reload) et `.arret_requested` (power-off
+  sentinel). BL-79 : séparé de `/files` pour isoler la config/contrôle des
+  données.
+
+Le playbook `deploy_countingapp.yml` crée les deux répertoires et migre
+idempotemment `runtime-settings.json` + `.arret_requested` de `/files` vers
+`/conf` au premier déploiement.
 
 ## Commandes Utiles
 

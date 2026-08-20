@@ -26,6 +26,8 @@ spec:
           mountPath: /app
         - name: filebrowser
           mountPath: /files
+        - name: conf
+          mountPath: /conf
         - name: docker-sock
           mountPath: /var/run/docker.sock
         securityContext:
@@ -47,6 +49,10 @@ spec:
       - name: filebrowser
         hostPath:
           path: "{{ files_path }}"
+          type: Directory
+      - name: conf
+        hostPath:
+          path: "{{ conf_path }}"
           type: Directory
       - name: docker-sock
         hostPath:

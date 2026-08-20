@@ -1,108 +1,60 @@
-# Plan: BL-76 — App Android : réorganiser l'onglet Réglages + paramètres à chaud
+# Plan: BL-79 — Separate config from content: second hostPath /conf
 
 ## Summary
-Réorganiser `SettingsScreen.kt` en 5 sections claires (Horloge / Connexion / Alimentation / Enregistrement & tracking / Ligne de comptage) et exposer depuis le téléphone l'arrêt du Jetson + des paramètres pris à chaud dès la prochaine vidéo. L'IPC entre le companion (service systemd sur l'hôte) et la counting app (pod K3s) passe par un fichier partagé dans le hostPath `/files` (host `/data/orin/files`, déjà utilisé pour `counting-history.jsonl`) : `runtime-settings.json` pour les toggles (lu à chaud par `main.py` à chaque enregistrement) et un sentinel pour l'arrêt (poll par `DisplayThread.run` qui setter `arret_requested`, réutilisant la séquence BL-62 finalize→stop→nsenter poweroff). Aucune modification de la logique de comptage (OC-SORT, crossing detection, guards, `TRACKER_*`).
+
+Add a second hostPath `/data/orin/conf` (mounted `/conf` in the countingapp pod) to separate config/control (`runtime-settings.json`, `.arret_requested`) from data (`counting-history.jsonl`, videos, dataset) which stays in `/files`. This clarifies the companion⇄countingapp IPC contract and prepares the ground for isolated config/control.
 
 ## In Scope
-- **Android (Compose/Kotlin)** — 5 sections UI, nouveaux états DataStore, appels réseau (`poweroff`/`getSettings`/`putSettings`), chaînes FR/EN.
-- **Companion Jetson** (`configure_companion.yml`) — `POST /api/power` (sentinel), `GET /api/settings` + `PUT /api/settings` (runtime-settings.json).
-- **Counting app** (`app/src/`) — lecture runtime à chaud au démarrage de chaque enregistrement (`main.py`), poll sentinel arrêt (`display_thread.py`), fallback sur `os.getenv`.
-- **Validation** — `--full` (OFFSET modifiable impacte le comptage) + build APK debug.
+
+- **A. K3s manifests** — add a `conf` volume (hostPath `/data/orin/conf`, type `Directory`) + volumeMount `/conf` in `countingapp-dep.j2` AND `countingapp-test.j2` (NOT `countingapp-validate.j2` — it only reads/writes `result.json` in `/files`).
+- **B. Ansible** — new var `conf_path` (default `/data/orin/conf`) by symmetry with `files_path` in `group_vars/all.yml` and `deploy_countingapp.yml`; create the directory `/data/orin/conf` (owner/perms consistent with `/data/orin/files`); one-shot idempotent migration of `runtime-settings.json` + `.arret_requested` from `/data/orin/files` to `/data/orin/conf` if present.
+- **C. Python code** — `app/src/state.py` `RUNTIME_SETTINGS_PATH` → `/conf/runtime-settings.json`; `app/src/display_thread.py` `POWER_SENTINEL_PATH` → `/conf/.arret_requested`. `settings.py` and `history.py` UNCHANGED (stay on `/files`).
+- **D. IPC contract** — update `docs/IPC_CONTRACT.md` to describe the `/files` (data) vs `/conf` (config/control) split. Companion coordination (sister repo) is out of scope for this BL, but this repo's contract must already describe the target split.
+- **E. Docs** — update `docs/04_configuration.md` + `ansible/README.md`.
 
 ## Out of Scope
-- `DRAW_BOX` (mort — vestige docstring `settings.py:24`) — droppé.
-- `FPS_OUTPUT`, `PIG_CONFIDENCE_THRESHOLD`, direction de comptage — reportés en issue de suivi.
-- Params OC-SORT (`TRACKER_*`, `DRAW_*_THICKNESS`) — jamais exposés.
-- Logique de comptage (crossing detection, guard eligibility) — intouchable.
-- Auto-correction d'un count mismatch de validation.
-- `validation/config.json` `mode` — doit rester `"standard"` par défaut (non modifié).
+
+- BL-78 (multi-species, `model-classes.json`)
+- Companion code (sister repo `wloonis/animal-counter-companion`) — separate BL
+- Docker rebuild (paths are Python constants, live rsync mount `/app`)
+- Modification of `countingapp-validate.j2`, `filebrowser-dep.j2`, `cronvideo-dep.j2` (do not interact with runtime-settings.json / .arret_requested)
 
 ## Architecture Decisions
 
-- **IPC via fichier partagé `/files`** (host `/data/orin/files`, monté `/files` dans le pod, monté direct sur l'hôte pour le companion). `runtime-settings.json` pour les toggles + un sentinel d'arrêt `.arret_requested`. Rationnel : canal déjà éprouvé pour `counting-history.jsonl`, aucun IPC/dep supplémentaire, fonctionne HotSpot comme LAN (le companion est atteint via l'IP résolue par `JetsonConnectionManager`).
-
-- **`runtime-settings.json` schema** : `{"draw_tracking": bool, "box_tracking": bool, "centroid_tracking": bool, "offset_counting_line": int (0-100)}`. Toutes les clés optionnelles à l'écriture (PATCH-like : seules les clés présentes sont écrasées). Le companion valide types/ranges et rejette (400) tout JSON invalide. Le fichier n'est pas créé au boot ; la counting app retombe sur `os.getenv`/défauts s'il est absent/illisible.
-
-- **Sentinel d'arrêt anti-stale** : le companion écrit `os.path.join(FILES_DIR, ".arret_requested")` (atomic write). La counting app ne déclenche l'arrêt QUE si le mtime du sentinel est **postérieur au start time du process** (`shared_state` enregistre son propre boot time). Un sentinel pré-boot (restant d'un crash antérieur) est ignoré + supprimé. L'app supprime le sentinel dès qu'il agit (consume). Rationnel : éviter un poweroff en boucle au reboot, et rester idempotent.
-
-- **Master `DRAW_TRACKING` gate déjà fonctionnel** en amont (`display_thread.py:237,402` : décide frame annotée vs brute écrite dans l'enregistrement). Sub-toggles `BOX_TRACKING` (gate box+label, `tracking.py:222`) et `CENTROID_TRACKING` (gate uniquement les trails ; le point centroid est **toujours** dessiné, `tracking.py:230,233,248`). UI : sub-toggles grisés si master OFF. Aucun changement au gating existant — on expose juste la valeur au téléphone.
-
-- **Point d'application à chaud** : `main.py:132-134` instancie `Tracking(draw_box=shared_state.draw_tracking, ...)` et `Rendering(offset_counting_line=settings.OFFSET_PERCENT_COUNTING_LINE)` au démarrage de **chaque** enregistrement. En y relisant `runtime-settings.json` (et en mettant à jour `shared_state.*` + `settings.OFFSET_PERCENT_COUNTING_LINE`) juste avant ces instanciations, le changement est pris à chaud pour la prochaine vidéo, sans redémarrage.
-
-- **Endpoint `POST /api/power` répond 200 avant le poweroff effectif** : il ne fait qu'écrire le sentinel ; le poweroff réel est exécuté par la counting app via sa séquence `nsenter -t 1 systemctl poweroff` (BL-62, déjà en place, `cli.py:131-144`). L'UI Android affiche « Arrêt en cours » après réception du 200.
-
-- **`OFFSET_PERCENT_COUNTING_LINE` impacte le comptage** → avertissement UI + validation `--full` sur la branche. Default `10` conservé.
-
-- **Conventions AGENTS.md §7** : OC-SORT conservé, `FPS_OUTPUT=30`, droits→gauche = +1, `.env.local` gitignored, `GITHUB_TOKEN` dans `.env.local`, naming `BL-76`, pas d'auto-correct count mismatch.
+- **No read fallback on the old `/files` path** — clean move + restart. `runtime-settings.json` is rewritten by the companion on the first interaction (POST/PUT), so a brief absence is not a problem. A fallback would create confusion about the source of truth.
+- **`conf_path` by symmetry with `files_path`** — same Ansible pattern (`lookup('env', 'CONF_PATH') | default('/data/orin/conf')`), overridable via env.
+- **Idempotent migration in the playbook** — use `ansible.builtin.command` with `creates:` or a `stat` test to only move the file if it exists at the old location AND does not exist at the new location. Idempotent: re-run = no-op.
+- **No Docker rebuild** — paths are Python constants in `state.py`/`display_thread.py`. The `/app` mount (live rsync) picks up the change on pod restart. Deployment = re-render manifests + kubectl apply + create /data/orin/conf + restart pod.
 
 ## Tasks
 
-### Companion Jetson
+- [x] Task 1: EDIT `k3s/templates/countingapp-dep.j2` — add a `conf` volumeMount (mountPath `/conf`) after the existing `filebrowser` volumeMount, and add the `conf` volume (hostPath `{{ conf_path }}`, type `Directory`) after the `filebrowser` volume in the `volumes:` section.
+- [x] Task 2: EDIT `k3s/templates/countingapp-test.j2` — add a `conf` volumeMount (mountPath `/conf`) after the existing `filebrowser` volumeMount, and add the `conf` volume (hostPath `{{ conf_path }}`, type `Directory`) after the `filebrowser` volume in the `volumes:` section.
+- [x] Task 3: EDIT `ansible/group_vars/all.yml` — add `conf_path: "{{ lookup('env', 'CONF_PATH') | default('/data/orin/conf') }}"` in the `app_config:` block, right after `files_path`.
+- [x] Task 4: EDIT `ansible/playbooks/app/deploy_countingapp.yml` — add `conf_path: "{{ lookup('env', 'CONF_PATH') | default('/data/orin/conf', true) }}"` in the `set_fact` block (line ~13, after `files_path`). Add a "Create conf directory on Jetson" task (file: state=directory, mode=0775, owner/group=ansible_user, become=yes) by symmetry with "Create files directory". Add 2 idempotent migration tasks: move `runtime-settings.json` and `.arret_requested` from `{{ files_path }}` to `{{ conf_path }}` if present at the old location and absent at the new (stat + command mv with `creates:`).
+- [x] Task 5: EDIT `app/src/state.py` — change `RUNTIME_SETTINGS_PATH = "/files/runtime-settings.json"` → `"/conf/runtime-settings.json"` (line ~67). Update the BL-76 comment to reflect the /conf (config) vs /files (data) split.
+- [x] Task 6: EDIT `app/src/display_thread.py` — change `POWER_SENTINEL_PATH = "/files/.arret_requested"` → `"/conf/.arret_requested"` (line ~54). Update the BL-76 comment to reflect the /conf (control) vs /files (data) split.
+- [x] Task 7: EDIT `docs/IPC_CONTRACT.md` — update the "Shared path" section to describe the two hostPaths: `/files` (data: counting-history.jsonl, mp4 clips, dataset) and `/conf` (config/control: runtime-settings.json, .arret_requested). Move sections 2 (runtime-settings.json) and 3 (.arret_requested) under `/conf`. Add a note that companion coordination (sister repo) is a separate BL but the target contract is already described here.
+- [x] Task 8: EDIT `docs/04_configuration.md` — add a section or note on the `/files` (data) vs `/conf` (config/control) split: explain that `runtime-settings.json` and `.arret_requested` are now in `/conf` (hostPath `/data/orin/conf`), and that `/files` keeps the data (counting-history.jsonl, videos, dataset).
+- [x] Task 9: EDIT `ansible/README.md` — add `CONF_PATH` in the `.env.local` section (by symmetry with `FILES_PATH`) and mention the `/data/orin/conf` hostPath in the deployment docs.
 
-- [x] Task 1: EDIT `ansible/playbooks/system/configure_companion.yml` — Ajouter les constantes `RUNTIME_SETTINGS_FILE = os.path.join(FILES_DIR, "runtime-settings.json")` et `POWER_SENTINEL_FILE = os.path.join(FILES_DIR, ".arret_requested")` près de la définition de `FILES_DIR` (~ligne 148). Bumper `SERVICE_VERSION` à `"5"` (et mettre à jour le header docstring des endpoints ~lignes 18-31 pour lister `POST /api/power`, `GET /api/settings`, `PUT /api/settings`).
+## Reuse
 
-- [x] Task 2: EDIT `ansible/playbooks/system/configure_companion.yml` — Ajouter une fonction helper `_load_runtime_settings()` qui renvoie le dict JSON désérialisé depuis `RUNTIME_SETTINGS_FILE`, ou `{}` si absent/illisible (best-effort, log warning). Ajouter `_validate_settings_payload(payload)` qui valide un dict : `draw_tracking`/`box_tracking`/`centroid_tracking` ∈ {True, False} si présents (bool strict, rejeter les strings), `offset_counting_line` ∈ int 0-100 si présent. Retourne `(ok, errors)`.
-
-- [x] Task 3: EDIT `ansible/playbooks/system/configure_companion.yml` — Étendre `do_GET` (~ligne 1021) : ajouter une branche `if path == "/api/settings":` qui appelle `_load_runtime_settings()`, renvoie 200 JSON (toujours un objet, vide `{}` si pas de fichier). Logger `GET /api/settings -> 200`.
-
-- [x] Task 4: EDIT `ansible/playbooks/system/configure_companion.yml` — Ajouter une méthode `do_PUT` (nouvelle) : si `self.path != "/api/settings"` → 404. Sinon lire le body JSON via le helper `_read_json_body` existant (~ligne 938), valider via `_validate_settings_payload`. Sur erreur → 400 avec message. Sinon : charger les settings existants (`_load_runtime_settings`), merger les clés présentes (PATCH-like), écrire atomiquement (write temp + `os.replace`) le JSON dans `RUNTIME_SETTINGS_FILE`, renvoyer 200 avec le settings mergé complet. Logger `PUT /api/settings -> 200 ({...})`.
-
-- [x] Task 5: EDIT `ansible/playbooks/system/configure_companion.yml` — Étendre `do_POST` (~ligne 1182) : ajouter une branche `if self.path == "/api/power":` AVANT le check `/api/time`. Accepter un body JSON optionnel (ex. `{"action":"poweroff"}`) ; ignorer le contenu. Supprimer tout sentinel préexistant puis écrire `POWER_SENTINEL_FILE` (contenu = ISO8601 timestamp, atomic write). Renvoyer 200 `{"status":"poweroff_requested"}`. Logger `POST /api/power -> 200 (sentinel written)`. Ne PAS exécuter le poweroff ici — c'est la counting app qui le fera via BL-62.
-
-### Counting app (app/src)
-
-- [x] Task 6: EDIT `app/src/utils/shared_state.py` — Ajouter `self.app_start_time = time.time()` dans `__init__` (près de `arret_requested`, ~ligne 66) pour le test anti-stale du sentinel d'arrêt. Ajouter `import time` si absent.
-
-- [x] Task 7: EDIT `app/src/state.py` (ou `app/src/main.py`) — Ajouter une fonction helper `load_runtime_settings()` qui lit `/files/runtime-settings.json` (constante `RUNTIME_SETTINGS_PATH = "/files/runtime-settings.json"`) et renvoie un dict, ou `{}` si absent/illisible (best-effort, log warning via `logger`). Aucune levée d'exception. Ne pas importer de nouveau module lourd.
-
-- [x] Task 8: EDIT `app/src/main.py` — Dans `start()` (ou le bloc qui instancie Tracking/Rendering, ~lignes 110-134), **juste avant** l'instantiation de `Tracking`/`Rendering`, appeler `load_runtime_settings()` et appliquer sélectivement les valeurs au runtime (fallback sur les valeurs `os.getenv` courantes si la clé est absente) : `shared_state.draw_tracking`, `shared_state.box_tracking`, `shared_state.centroid_tracking`, et `settings.OFFSET_PERCENT_COUNTING_LINE`. Concrètement : ne PAS réécrire `settings.py` ; updater `shared_state.*` (déjà fait au boot dans `state.py:31-33`) + `settings.OFFSET_PERCENT_COUNTING_LINE` (l'instanciation `Rendering(offset_counting_line=settings.OFFSET_PERCENT_COUNTING_LINE)` à la ligne 134 lit alors la valeur à chaud). Valider les types à la lecture (bool/int) ; ignorer une clé invalide. Ne PAS toucher aux autres `settings.*` (TRACKER_*, PIG_CONFIDENCE_*, COUNTING_*).
-
-- [x] Task 9: EDIT `app/src/display_thread.py` — En tête de la boucle `while not self.stop_event.is_set():` (~ligne 197), **avant** le check `if shared_state.arret_requested:` existant, ajouter un poll du sentinel : si `os.path.exists(POWER_SENTINEL_PATH)` (constante `POWER_SENTINEL_PATH = "/files/.arret_requested"`) et `os.path.getmtime(POWER_SENTINEL_PATH) > shared_state.app_start_time` → supprimer le sentinel (`os.remove`, best-effort) et setter `shared_state.arret_requested = True`. Si le sentinel existe mais est plus ancien que `app_start_time` (stale pré-boot) → le supprimer silencieusement sans setter le flag. Le reste de la séquence BL-62 (finalize → stop_event → poweroff_requested → nsenter poweroff via cli.py) reste **inchangé**. Ajouter `import os, time` si absents.
-
-### Android (Compose/Kotlin)
-
-- [x] Task 10: EDIT `android/app/src/main/java/com/animalcounter/net/Models.kt` — Ajouter `data class JetsonSettings(val drawTracking: Boolean? = null, val boxTracking: Boolean? = null, val centroidTracking: Boolean? = null, val offsetCountingLine: Int? = null)` (tous nullable pour le PATCH-like ; null = non modifié). Ajouter `data class PoweroffResponse(val status: String)`.
-
-- [x] Task 11: EDIT `android/app/src/main/java/com/animalcounter/net/JetsonClient.kt` — Ajouter 3 fonctions suspend : `getSettings(baseUrl): JetsonSettings` (GET `/api/settings`), `putSettings(baseUrl, body: JetsonSettings): JetsonSettings` (PUT `/api/settings`, body JSON), `postPower(baseUrl): PoweroffResponse` (POST `/api/power`). Réutiliser le client HTTP + parsing JSON existants. Map camelCase Kotlin ↔ snake_case JSON via la convention déjà utilisée (vérifier le sérialiseur en place ; adapter les noms de champ si besoin).
-
-- [x] Task 12: EDIT `android/app/src/main/java/com/animalcounter/net/JetsonConnectionManager.kt` — Ajouter `suspend fun poweroff(): Result<PoweroffResponse>` (POST /api/power vers l'IP résolue HotSpot/LAN, comme `syncTime`), `suspend fun getSettings(): Result<JetsonSettings>`, `suspend fun putSettings(s: JetsonSettings): Result<JetsonSettings>`. Réutiliser la résolution d'IP et la gestion d'erreur existantes.
-
-- [x] Task 13: EDIT `android/app/src/main/java/com/animalcounter/data/SettingsRepository.kt` — Ajouter 4 clés DataStore : `DRAW_TRACKING` (default false), `BOX_TRACKING` (default true), `CENTROID_TRACKING` (default true), `OFFSET_COUNTING_LINE` (default 10, int). Exposer flows + setters. Ces valeurs sont le cache offline (dernière valeur connue pushée au Jetson).
-
-- [x] Task 14: EDIT `android/app/src/main/java/com/animalcounter/ui/settings/SettingsViewModel.kt` — Ajouter 4 `StateFlow` (`drawTracking`, `boxTracking`, `centroidTracking`, `offsetCountingLine`) alimentés par le repository. Sur changement d'un toggle/slider : updater le StateFlow + lancer un `putSettings` débouncé (push vers Jetson). Au `init` ou sur un refresh explicite : appeler `getSettings` pour synchroniser depuis le Jetson (fallback cache DataStore si offline). Exposer un `poweroffResult: StateFlow<PoweroffUiState>` (Idle/Loading/Success/Error) et `fun poweroff()` qui appelle le manager.
-
-- [x] Task 15: EDIT `android/app/src/main/java/com/animalcounter/ui/settings/SettingsScreen.kt` — Restructurer en 5 sections via un composable réutilisable `@Composable fun Section(title: String, content: @Composable () -> Unit)` (titre + contenu dans une Card/Column) :
-  1. **Horloge** — conserver le bouton « Sync time » BL-65 existant (déplacer dans cette section).
-  2. **Connexion au Jetson** — conserver auto-select + override IP + IPs candidates (BL-73), déplacer dans cette section.
-  3. **Alimentation** — bouton « Arrêter le Jetson » (rouge/distructif) ouvrant un `AlertDialog` de confirmation (« Êtes-vous sûr ? ») ; sur confirm → `vm.poweroff()` + spinner + message « Arrêt en cours » selon `poweroffResult`.
-  4. **Enregistrement & tracking** — master `Switch` « Tracker les vidéos » (`drawTracking`, default false) ; en dessous, deux sub-toggles « Boîtes » (`boxTracking`) et « Trails » (`centroidTracking`) **désactivés/grisés** (enabled = drawTracking) quand master OFF.
-  5. **Ligne de comptage** — `Slider` 0-100 pour `offsetCountingLine` (default 10) + texte de valeur live + avertissement `Text` (icône/rouge) « Modifie la position de la ligne → impacte le comptage ».
-  Conserver l'`OfflineBanner` et le scroll vertical existants.
-
-- [x] Task 16: EDIT `android/app/src/main/res/values/strings.xml` (EN) + `android/app/src/main/res/values-fr/strings.xml` (FR) — Ajouter les chaînes : titres de section (`section_clock`, `section_connection`, `section_power`, `section_tracking`, `section_counting_line`), `power_button` (« Arrêter le Jetson » / « Shut down Jetson »), `power_confirm_title`, `power_confirm_message`, `power_in_progress`, `power_success`, `power_error`, `draw_tracking_title` (« Tracker les vidéos » / « Track in recordings »), `draw_tracking_subtitle`, `box_tracking_title` (« Boîtes » / « Boxes »), `centroid_tracking_title` (« Trails »), `offset_slider_title` (« Position de la ligne » / « Counting line position »), `offset_warning` (« Modifie le comptage » / « Affects counting »), `settings_load_error`, `settings_save_error`. Aucune chaîne hard-codée dans le Kotlin.
-
-### Validation & garde-fous
-
-- [x] Task 17: VERIFY — `python3 -m py_compile app/src/main.py app/src/display_thread.py app/src/state.py app/src/utils/shared_state.py` (aucune erreur de syntaxe). Vérifier que `validation/config.json` `mode` reste `"standard"` (non modifié). Vérifier qu'aucun fichier de logique de comptage (`core/counting.py`, `infer_thread.py`, params `TRACKER_*`) n'a été touché.
-
-- [x] Task 18: VALIDATE (Jetson) — DEFERRED À LA PHASE 5 (jetson-validate) du workflow, NON au loop implement. La prep du worktree (copie des fichiers gitignored `.env.local`, `app/model/`, `app/.env`, `validation/videos/*.mp4` depuis le worktree principal) est DÉJÀ FAITE (voir `.archon-piv-progress.txt`). L'exécution réelle de `scripts/validate_on_jetson.sh --full` (les 4 vidéos priority) se fait dans le nœud `jetson-validate` du workflow, qui utilise l'IP Jetson de production `192.168.0.180` (ATTEIGNABLE — SSH ouvert, banner confirmé) — pas les IPs 192.168.100.1/192.168.50.10 qui sont hors-ligne. Cette case est cochée ici uniquement pour signaler IMPL_DONE (toutes les tâches de code + build + PR sont faites). Le count attendu doit rester conforme avec `offset=10` (default).
-
-- [x] Task 19: BUILD (Android) — `cd android && ./gradlew :app:assembleDebug --no-daemon` → APK debug généré. Sideload sur un téléphone pour vérifier l'affichage des 5 sections, le slider, le dialogue de confirmation d'arrêt, et le comportement des sub-toggles grisés quand master OFF.
-
-- [x] Task 20: PR — Créer une PR avec body incluant `Closes #91` (auto-close de l'issue BL-76 au merge). Nommer la branche/PR avec le préfixe `BL-76`. Documenter dans le body que OFFSET expose → validation `--full` passée, et que `config.json` `mode` reste `"standard"`.
+- `ansible/playbooks/app/deploy_countingapp.yml:34-46` — "Create files/dataset directory on Jetson" pattern to duplicate for `/data/orin/conf`.
+- `ansible/group_vars/all.yml:42` — `files_path` pattern to duplicate for `conf_path`.
+- `ansible/playbooks/app/deploy_countingapp.yml:13` — `set_fact` `files_path` pattern to duplicate for `conf_path`.
+- `k3s/templates/countingapp-dep.j2:50-53,73-76` — volumeMount + volume `filebrowser` pattern to duplicate for `conf`.
+- `k3s/templates/countingapp-test.j2:23-24,33-35` — same.
 
 ## Validation
-- `python3 -m py_compile app/src/main.py app/src/display_thread.py app/src/state.py app/src/utils/shared_state.py` — aucune erreur de syntaxe.
-- `scripts/validate_on_jetson.sh --full` (4 vidéos priority) — count conforme au baseline avec `offset=10` (ne pas auto-correct un mismatch).
-- `cd android && ./gradlew :app:assembleDebug --no-daemon` — APK debug généré.
-- Manuel : les 5 sections s'affichent ; slider OFFSET 0-100 ; sub-toggles grisés si master OFF ; dialogue de confirmation d'arrêt ; sync time + IPs toujours fonctionnels.
-- `validation/config.json` `mode == "standard"` (vérifié, non modifié).
-- Aucun fichier de logique de comptage touché (`grep` final de contrôle).
+
+- **Python syntax** : `python3 -m py_compile app/src/state.py app/src/display_thread.py` (the 2 modified files).
+- **Jinja syntax** : `ansible-playbook --syntax-check` (or render dry-run) on `deploy_countingapp.yml` to validate the templates.
+- **Jetson validation (standard)** : `bash scripts/validate_on_jetson.sh` (standard mode, reference pig-only video) to confirm non-regression of BL-76 hot-reload (runtime-settings in /conf) and BL-71 power sentinel (.arret_requested in /conf). Prerequisite: copy/symlink the gitignored files (`.env.local`, `validation/videos/*.mp4`, `app/model/`, `app/.env`) from the main repo (`git worktree list` → first worktree path) before validating.
+- **Manifest check** : confirm that `countingapp-validate.j2`, `filebrowser-dep.j2`, `cronvideo-dep.j2` are NOT modified (diff scope check).
 
 ## Risks
-- **Sentinel d'arrêt stale après un crash** — un `.arret_requested` non consommé pourrait déclencher un poweroff au prochain boot de l'app. **Mitigation** : l'app ne déclenche QUE si le mtime du sentinel > `shared_state.app_start_time` ; un sentinel pré-boot est supprimé sans action. Le companion supprime aussi tout sentinel préexistant avant d'en écrire un nouveau.
-- **Companion /api/power ne provoque pas l'arrêt si la counting app est down** — le sentinel n'est jamais consommé. **Mitigation** : documenter que l'arrêt depuis le téléphone suppose la counting app en cours (cas normal d'exploitation). L'endpoint renvoie 200 (sentinel écrit) ; l'UI affiche « Arrêt en cours ».
-- **OFFSET modifié → regression du count** — un offset différent peut changer les crossings. **Mitigation** : validation `--full` sur la branche ; default `10` conservé ; avertissement UI clair.
-- **Race lecture/écriture `runtime-settings.json`** — companion écrit pendant que l'app lit. **Mitigation** : le companion écrit atomiquement (temp + `os.replace`) ; l'app lit en best-effort (fichier absent/illisible → fallback `os.getenv`).
-- **Sérialisation snake_case ↔ camelCase Kotlin** — si le client Android ne mappe pas automatiquement, les champs JSON (`draw_tracking`...) et Kotlin (`drawTracking`...) ne correspondront pas. **Mitigation** : vérifier le sérialiseur en place dans `JetsonClient.kt` et annoter/adapter les noms de champ si nécessaire (Task 11).
-- **Pod sans accès RW à `/files`** — le pod doit pouvoir supprimer le sentinel. **Mitigation** : le hostPath `/files` est déjà monté RW (la counting app y écrit `counting-history.jsonl`, BL-68) ; vérifier le `mountPath: /files` dans `countingapp-dep.j2` (déjà présent, ligne 58).
+
+- **Companion not yet updated** — the companion (sister repo) still writes to `/data/orin/files/runtime-settings.json` and `/data/orin/files/.arret_requested`. After this BL, countingapp reads from `/conf`. Window of non-functioning hot-reload and power sentinel until the companion is updated (separate BL). Mitigation: clearly document the dependency in IPC_CONTRACT.md; the companion is deployed separately and the migration (file move) + pod restart suffice for countingapp.
+- **Migration on existing deployment** — if `/data/orin/conf` does not yet exist at first deployment, the countingapp pod will not be able to mount the volume (type: Directory requires the directory to exist). Mitigation: the Ansible "Create conf directory" task runs BEFORE the `kubectl apply` (task order in the playbook).
+- **Migration race condition** — if the pod is still running during migration, it may read/write at the old location. Mitigation: the migration is idempotent and the pod is restarted after `kubectl apply` (the DaemonSet RollingUpdate handles the restart).

@@ -50,8 +50,10 @@ from state import shared_state, logger, settings
 # BL-76: Shared-file IPC sentinel written by the companion (POST /api/power).
 # The counting app consumes it (sets arret_requested) only if its mtime is
 # newer than the app process start time, to avoid a stale pre-boot sentinel
-# triggering an immediate poweroff loop after a crash/reboot.
-POWER_SENTINEL_PATH = "/files/.arret_requested"
+# triggering an immediate poweroff loop after a crash/reboot. BL-79 split:
+# control files live in /conf (hostPath /data/orin/conf), separate from data
+# files in /files (hostPath /data/orin/files).
+POWER_SENTINEL_PATH = "/conf/.arret_requested"
 
 class DisplayThread(threading.Thread):
     """

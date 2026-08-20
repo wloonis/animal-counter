@@ -83,7 +83,7 @@ on Roboflow** — the repo does not ship a model. `ansible/playbooks/model/build
 | Template | Kind | Role |
 |----------|------|------|
 | `countingapp-ns.j2` | Namespace | `countingapp-dev` |
-| `countingapp-dep.j2` | **DaemonSet** | The app pod (`countingapp:local`, `serve`), hostPaths for `/dev/video0`, `/app` (code), `/files` (videos), `/tmp/.X11-unix` (X11), `/var/run/docker.sock` |
+| `countingapp-dep.j2` | **DaemonSet** | The app pod (`countingapp:local`, `serve`), hostPaths for `/dev/video0`, `/app` (code), `/files` (videos/history/data), `/conf` (runtime-settings + `.arret_requested` config/contrôle — BL-79), `/tmp/.X11-unix` (X11), `/var/run/docker.sock` |
 | `countingapp-svc.j2` | Service (ClusterIP) | `:31501` (declared containerPort named `web`; the operator UI is the on-screen X11/cv2 window, **not** HTTP — the app does not serve HTTP) — no externalIP |
 | `filebrowser-dep.j2` / `filebrowser-svc.j2` / `filebrowser-cmap.j2` / `filebrowser-sct.j2` | Deployment + Service + ConfigMap + Secret | Web file manager for recorded videos (image `ghcr.io/gtsteffaniak/filebrowser:stable`) |
 | `cronvideo-dep.j2` | Deployment | Rolling ffmpeg compression (`tocompress-*` → `count*`, keep 50, delete `.mp4` > 2 GiB) |
@@ -111,7 +111,7 @@ spec:
         resources:
           requests: { cpu: "500m", memory: "2Gi", nvidia.com/gpu: 1 }
           limits:   { cpu: "2",    memory: "4Gi", nvidia.com/gpu: 1 }
-        volumeMounts: [dev-video0, dev-app(/app), filebrowser(/files), dev-x11, docker-sock]
+        volumeMounts: [dev-video0, dev-app(/app), filebrowser(/files), conf(/conf), dev-x11, docker-sock]
 ```
 
 ### Pausing the live app for validation

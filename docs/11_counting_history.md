@@ -70,7 +70,7 @@ with the existing `write_result_json` branch in `main.py`. The validate
 
 | Pod path            | Host path                              | Purpose                              |
 |---------------------|----------------------------------------|--------------------------------------|
-| `/files`            | `/data/orin/files`                     | The persistent hostPath volume         |
+| `/files`            | `/data/orin/files`                     | The persistent **data** hostPath (config/contrôle is in `/conf` — BL-79) |
 | `/files/counting-history.jsonl` | `/data/orin/files/counting-history.jsonl` | The live JSONL (append-only) |
 | `/files/counting-history.<ts>.jsonl.gz` | `/data/orin/files/counting-history.<ts>.jsonl.gz` | Rotated gz archives (cold) |
 

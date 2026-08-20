@@ -59,6 +59,8 @@ spec:
           mountPath: /app
         - name: filebrowser
           mountPath: /files
+        - name: conf
+          mountPath: /conf
         - name: dev-x11
           mountPath: /tmp/.X11-unix
         - name: docker-sock
@@ -90,6 +92,11 @@ spec:
       - name: filebrowser
         hostPath:
           path: "{{ files_path }}"
+          type: Directory
+
+      - name: conf
+        hostPath:
+          path: "{{ conf_path }}"
           type: Directory
 
       - name: dev-x11
