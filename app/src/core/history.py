@@ -623,11 +623,28 @@ class HistoryWriter:
                             record_start_count = int(rsc)
                 except Exception:
                     record_start_count = None
+        # BL-78: additive per-species sub-counts dict {class_name: count}
+        # read from shared_state.sub_counts (resolved via class_names).
+        counts = {}
+        if self.shared_state is not None:
+            try:
+                sub = getattr(self.shared_state, "sub_counts", None)
+                names = getattr(self.shared_state, "class_names", None)
+                if sub:
+                    for cid, val in sub.items():
+                        nm = None
+                        if names is not None and 0 <= int(cid) < len(names):
+                            nm = names[int(cid)]
+                        key = nm if nm is not None else str(int(cid))
+                        counts[key] = int(val)
+            except Exception:
+                counts = {}
         line = {
             "type": "heartbeat",
             "session_id": self.session_id,
             "ts": _utcnow_iso(),
             "count": count,
+            "counts": counts,
             "status": status,
             "auto_mode": auto_mode,
             "last_segment": last_segment,
@@ -676,6 +693,21 @@ class HistoryWriter:
                         }
                 except Exception:
                     e = {}
+            # BL-78: final per-species sub-counts {class_name: count} (additive).
+            counts = {}
+            if self.shared_state is not None:
+                try:
+                    sub = getattr(self.shared_state, "sub_counts", None)
+                    names = getattr(self.shared_state, "class_names", None)
+                    if sub:
+                        for cid, val in sub.items():
+                            nm = None
+                            if names is not None and 0 <= int(cid) < len(names):
+                                nm = names[int(cid)]
+                            key = nm if nm is not None else str(int(cid))
+                            counts[key] = int(val)
+                except Exception:
+                    counts = {}
             line = {
                 "type": "session_end",
                 "session_id": self.session_id,
@@ -685,6 +717,7 @@ class HistoryWriter:
                 "status": end_reason if end_reason in ("clean", "power-loss") else "clean",
                 "synthetic": False,
                 "counters": b,
+                "counts": counts,
                 "video": e,
                 "system": _sample_system(),
                 "ts": end_at,

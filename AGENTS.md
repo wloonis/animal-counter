@@ -544,18 +544,22 @@ at tag `v1.1.0` (the last monorepo release).
 | `validate_on_jetson.sh` reference-video validation | **here** |
 | `counting-history.jsonl` **writer** (`app/src/core/history.py`) | **here** |
 | `runtime-settings.json` / `.arret_requested` **reader** (`app/src/state.py`, `display_thread.py`) — reads `/conf` (BL-79 split) | **here** |
+| `model-classes.json` **writer** (`app/src/state.py::publish_model_classes_json`) — app→companion class catalog (BL-78) | **here** |
+| `counting_class_ids` **reader** (`app/src/main.py` hot-reload, validated against `model-classes.json`) — which classes the countingapp counts (BL-78) | **here** |
 | Android phone app (`android/`) | **sister repo** |
 | Jetson host companion (`jetson-companion.py` + systemd unit) | **sister repo** |
 | Companion deploy playbook | **sister repo** (`ansible/playbooks/deploy_companion.yml`) |
 | `counting-history.jsonl` **reader** (`HistoryIndex`) | **sister repo** |
 | `runtime-settings.json` / `.arret_requested` **writer** (must write `/data/orin/conf` — BL-80 companion migration) | **sister repo** |
+| `model-classes.json` **reader** (labels per-species sub-counts) | **sister repo** |
+| `counting_class_ids` **writer** (proposes counted classes in `runtime-settings.json`) | **sister repo** (BL-80) |
 
 ### The IPC contract
 
 The companion and the countingapp communicate **only** via shared files in
 two hostPaths on the Jetson — `/files` (data: `counting-history.jsonl`, mp4
 clips, dataset) and `/conf` (config/contrôle: `runtime-settings.json`,
-`.arret_requested`) — there is no HTTP/RPC between them. The authoritative
+`.arret_requested`, `model-classes.json` (BL-78)) — there is no HTTP/RPC between them. The authoritative
 contract is [`docs/IPC_CONTRACT.md`](docs/IPC_CONTRACT.md), which is kept
 **identical in both repos**. The tightest coupling is the `counting-history.jsonl`
 schema (this repo writes it; the sister repo reads it). Any change to that

@@ -61,7 +61,11 @@ from ui.rendering import Rendering
 from core.history import HistoryWriter, HistoryThread
 
 # Process-wide singletons (leaf module — no circular imports).
-from state import shared_state, settings, logger, _IOU_METRICS, load_runtime_settings
+from state import (
+    shared_state, settings, logger, _IOU_METRICS,
+    load_runtime_settings, load_classes_yaml, publish_model_classes_json,
+    resolve_counting_class_ids,
+)
 # Split thread classes.
 from infer_thread import InferThread
 from display_thread import DisplayThread
@@ -130,6 +134,26 @@ def start(input_source, video_path):
     try:
         shared_state.recording = False
 
+        # BL-78: load the model class catalog (classes.yaml, written at build
+        # time by ansible/playbooks/model/build_model.yml). Best-effort: when
+        # the file is absent (legacy deployed model without a rebuild) the
+        # shared_state keeps its __init__ legacy defaults (['human','pig'],
+        # default_counting_class=1, counting_class_ids=[1]) → byte-identical
+        # pre-BL-78 counting behavior. publish_model_classes_json mirrors the
+        # catalog to the read-only /conf/model-classes.json (IPC file #5,
+        # app→companion) so the companion can label sub-counts.
+        model_classes = load_classes_yaml()
+        if model_classes is not None:
+            shared_state.class_names = list(model_classes.get("names") or [])
+            shared_state.default_counting_class = model_classes.get(
+                "default_counting_class", 1)
+            shared_state.model_version = model_classes.get("model_version")
+            publish_model_classes_json(
+                shared_state.class_names,
+                shared_state.default_counting_class,
+                shared_state.model_version,
+            )
+
         if shared_state.infer_thread is None or (shared_state.infer_thread and not shared_state.infer_thread.is_alive()):
             engine_file_path = "./model/my_model.engine"
 
@@ -169,8 +193,32 @@ def start(input_source, video_path):
                     settings.OFFSET_PERCENT_COUNTING_LINE = _off
                 else:
                     logger.warning("runtime-settings: offset_counting_line out of range (ignored): %r", _off)
+
+                # BL-78: resolve the effective counting_class_ids set (3 levels:
+                # model default from classes.yaml → companion override in
+                # runtime-settings.json → validated against the model class
+                # catalog). Per-recording resolution (same semantics as
+                # offset_counting_line): a companion change takes effect on
+                # the NEXT recording, never mid-recording. Invalid/unknown IDs
+                # are dropped with a WARNING; fallback to the model default when
+                # the override is absent/empty/all-invalid. sub_counts is reset
+                # for the new recording ({class_id: 0}).
+                shared_state.counting_class_ids = resolve_counting_class_ids(
+                    rt,
+                    {"names": shared_state.class_names,
+                     "default_counting_class": shared_state.default_counting_class},
+                )
+                shared_state.sub_counts = {
+                    cid: 0 for cid in shared_state.counting_class_ids}
+                logger.info("counting_class_ids resolved: %r",
+                            shared_state.counting_class_ids)
             tracking = Tracking(draw_box=shared_state.draw_tracking, shared_state=shared_state)
             counting = Counting(shared_state=shared_state, pig_confidence_threshold=settings.PIG_CONFIDENCE_THRESHOLD, offset_counting_line=settings.OFFSET_PERCENT_COUNTING_LINE, lost_buffer_frames=settings.COUNTING_LOST_BUFFER_FRAMES, reassoc_line_band=settings.COUNTING_REASSOC_LINE_BAND, reassoc_max_dist_x=settings.COUNTING_REASSOC_MAX_DIST_X, reassoc_max_dist_y=settings.COUNTING_REASSOC_MAX_DIST_Y, hysteresis_px=settings.COUNTING_HYSTERESIS_PX, mirror_guard=settings.COUNTING_MIRROR_GUARD, mirror_max_age=settings.COUNTING_MIRROR_MAX_AGE, mirror_line_band=settings.COUNTING_MIRROR_LINE_BAND, mirror_new_band=settings.COUNTING_MIRROR_NEW_BAND, mirror_max_dist_y=settings.COUNTING_MIRROR_MAX_DIST_Y, resurrection_threshold=settings.COUNTING_RESURRECTION_THRESHOLD, resurrection_min_jump=settings.COUNTING_RESURRECTION_MIN_JUMP, guard_max_age=settings.COUNTING_GUARD_MAX_AGE, reid_window=settings.COUNTING_REID_WINDOW, reid_min_age=settings.COUNTING_REID_MIN_AGE)
+            # BL-78: plumb the resolved counting set to the counting pipeline.
+            # Forward-compatible: settable attribute (constructor gains the
+            # param in Task 9). DisplayThread/InferThread already import
+            # shared_state and read shared_state.counting_class_ids directly.
+            counting.counting_class_ids = list(shared_state.counting_class_ids)
             rendering = Rendering(draw_box=shared_state.draw_tracking, offset_counting_line=settings.OFFSET_PERCENT_COUNTING_LINE)
 
             max_queue_size = 3

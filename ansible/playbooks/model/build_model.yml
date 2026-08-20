@@ -24,6 +24,7 @@
     roboflow_version: "{{ lookup('env', 'TRAINING_ROBOFLOW_VERSION') }}"
     roboflow_format: "{{ lookup('env', 'TRAINING_ROBOFLOW_FORMAT') }}"
     roboflow_api_key: "{{ lookup('env', 'TRAINING_ROBOFLOW_API_KEY') }}"
+    default_counting_class: "{{ lookup('env', 'TRAINING_DEFAULT_COUNTING_CLASS') | default('1', true) }}"
 
     files_to_move:
       - train
@@ -97,6 +98,55 @@
       delegate_to: localhost
       become: false
 
+    - name: Slurp data.yaml
+      ansible.builtin.slurp:
+        src: "{{ project_dir }}/data.yaml"
+      register: data_yaml_slurp
+      delegate_to: localhost
+      become: false
+
+    - name: Parse data.yaml (nc + names)
+      ansible.builtin.set_fact:
+        _data_yaml: "{{ data_yaml_slurp.content | b64decode | from_yaml }}"
+
+    - name: Normalize dataset names to a list
+      ansible.builtin.set_fact:
+        dataset_nc: "{{ _data_yaml.nc | int }}"
+        dataset_names: "{{ (_data_yaml.names | dictsort | map(attribute=1) | list) if (_data_yaml.names is mapping) else _data_yaml.names }}"
+
+    - name: Fail-fast if default_counting_class out of range
+      ansible.builtin.fail:
+        msg: >-
+          default_counting_class={{ default_counting_class }} is out of range
+          [0, {{ dataset_nc }}); resolved class name: {{ dataset_names[default_counting_class | int] | default('<invalid>') }}
+      when: (default_counting_class | int) < 0 or (default_counting_class | int) >= (dataset_nc | int)
+      delegate_to: localhost
+      become: false
+
+    - name: Log resolved default counting class
+      ansible.builtin.debug:
+        msg: >-
+          Resolved default_counting_class={{ default_counting_class | int }}
+          ({{ dataset_names[default_counting_class | int] }}) from nc={{ dataset_nc }}
+          names={{ dataset_names }}
+      delegate_to: localhost
+      become: false
+
+    - name: Write classes.yaml (model classes source of truth)
+      ansible.builtin.copy:
+        dest: "{{ local_app_path }}/model/classes.yaml"
+        mode: '0644'
+        content: |
+          model_version: {{ roboflow_version }}
+          nc: {{ dataset_nc }}
+          names:
+          {% for class_name in dataset_names %}
+          - {{ class_name }}
+          {% endfor %}
+          default_counting_class: {{ default_counting_class | int }}
+      delegate_to: localhost
+      become: false
+
     - name: Backup existing runs directory
       ansible.builtin.shell: |
         if [ -d "{{ project_dir }}/runs" ]; then
@@ -149,6 +199,18 @@
         rsync -avz --no-owner --no-group
         -e "sshpass -e ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
         "{{ local_app_path }}/model/my_model.onnx"
+        {{ ansible_user }}@{{ ansible_host }}:{{ app_path }}/model/
+      environment:
+        SSHPASS: "{{ ansible_become_password }}"
+      delegate_to: localhost
+      become: false
+      tags: build
+
+    - name: Copy classes.yaml to Jetson
+      command: >
+        rsync -avz --no-owner --no-group
+        -e "sshpass -e ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
+        "{{ local_app_path }}/model/classes.yaml"
         {{ ansible_user }}@{{ ansible_host }}:{{ app_path }}/model/
       environment:
         SSHPASS: "{{ ansible_become_password }}"

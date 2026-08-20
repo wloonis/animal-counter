@@ -53,6 +53,10 @@ class Counting:
         self.area_in_list = []
         self.area_out_list = []
         self.shared_state = shared_state
+        # BL-78: per-species sub-counters {class_id: count}. Reset per
+        # recording (initialized in count() from the resolved counting_class_ids
+        # set). The global counter_to_right remains the sum of sub-counters.
+        self.sub_counts = {}
         self.pig_confidence_threshold = pig_confidence_threshold
         self.offset_counting_line=offset_counting_line
         # ID-switch recovery guard state
@@ -161,7 +165,22 @@ class Counting:
             s["conf_sum"] += float(np.sum(scores))
             s["conf_count"] += int(len(scores))
 
-    def count(self, image_raw, result_boxes, result_trackid, result_classid, result_scores=None, counting_class=0, counter_to_right=0):
+    def _species_name(self, class_id):
+        """Resolve a class id to its species name (BL-78).
+
+        Best-effort: returns the name from ``shared_state.class_names`` when
+        available and the id is in range, else the raw id as a string. Never
+        raises — used in event details that must never break counting.
+        """
+        try:
+            names = getattr(self.shared_state, "class_names", None) if self.shared_state is not None else None
+            if names is not None and 0 <= int(class_id) < len(names):
+                return names[int(class_id)]
+        except Exception:
+            pass
+        return str(int(class_id))
+
+    def count(self, image_raw, result_boxes, result_trackid, result_classid, result_scores=None, counting_class_ids=None, counter_to_right=0):
         """
         Count objects crossing a vertical line.
         
@@ -171,12 +190,37 @@ class Counting:
             result_trackid (numpy.ndarray): Track IDs.
             result_classid (numpy.ndarray): Class IDs.
             result_scores (numpy.ndarray, optional): Detection scores. Defaults to None.
-            counting_class (int, optional): Class ID to count. Defaults to 0.
+            counting_class_ids (Iterable[int]|None, optional): Set of class IDs to
+                count (BL-78). Detections whose class is NOT in this set are
+                ignored by the guards/crossing logic. Defaults to ``{1}`` (legacy
+                pre-BL-78 pig-only behavior) when None/empty.
             counter_to_right (int, optional): Current count of objects to the right. Defaults to 0.
             
         Returns:
             int: Updated count of objects moving to the right.
         """
+        # BL-78: normalize counting_class_ids into a set for membership tests.
+        # Legacy fallback {1} when absent/empty preserves pre-BL-78 behavior.
+        if counting_class_ids is None:
+            counting_class_ids = {1}
+        else:
+            counting_class_ids = set(int(c) for c in counting_class_ids)
+            if len(counting_class_ids) == 0:
+                counting_class_ids = {1}
+        # BL-78: per-species sub-counters maintained alongside the global
+        # counter_to_right. The global stays the sum of sub-counters
+        # (retro-compatible invariant). Mirrored on shared_state for the
+        # heartbeat/crossed event surfacing (Task 10). Lazy-init only — the
+        # per-recording RESET is done in main.py's hot-reload block; we must NOT
+        # wipe accumulated counts here (count() runs every frame).
+        if self.shared_state is not None:
+            ss = self.shared_state
+            if getattr(ss, "sub_counts", None) is None or len(ss.sub_counts) == 0:
+                ss.sub_counts = {cid: 0 for cid in counting_class_ids}
+        if not hasattr(self, "sub_counts") or self.sub_counts is None:
+            self.sub_counts = {}
+        for cid in counting_class_ids:
+            self.sub_counts.setdefault(cid, 0)
         img_height, img_width = image_raw.shape[:2]
         x = int((img_width / 2) + (img_width * self.offset_counting_line / 100))
         # Hysteresis dead-band: crossings only fire past x±H to absorb jitter.
@@ -284,7 +328,7 @@ class Counting:
                     # ----------------------------------------------------------
                     _age = self.frame_counter - self.last_seen.get(track_id, self.frame_counter - 1)
                     _jump = abs(element[0] - last_x)
-                    if (_jump > self.resurrection_min_jump and _age > self.resurrection_threshold) and (class_id == counting_class):
+                    if (_jump > self.resurrection_min_jump and _age > self.resurrection_threshold) and (class_id in counting_class_ids):
                         logger.warning(
                             f"[COUNT] RESURRECTION: ID={track_id} reappeared after "
                             f"{_age} frames, jump={_jump:.0f}px; reset area (no crossing) "
@@ -324,7 +368,7 @@ class Counting:
                     if (track_id in self.area_in_list
                             and element[0] <= x_low
                             and _age >= self.reid_min_age
-                            and class_id == counting_class):
+                            and class_id in counting_class_ids):
                         _supp_tid = None
                         for rc in self.recent_crossings:
                             if rc["tid"] == track_id:
@@ -373,7 +417,7 @@ class Counting:
                     if (track_id in self.area_out_list
                             and element[0] >= x_high
                             and _age >= self.reid_min_age
-                            and class_id == counting_class):
+                            and class_id in counting_class_ids):
                         _supp_tid = None
                         for rc in self.recent_crossings:
                             if rc["tid"] == track_id:
@@ -409,10 +453,16 @@ class Counting:
 
                     if self.detections[track_id][2] >= x_high and track_id in self.area_out_list:
                         counter_to_right -= 1
+                        # BL-78: mirror on the per-species sub-counter (global = sum).
+                        cid = int(class_id)
+                        self.sub_counts[cid] = self.sub_counts.get(cid, 0) - 1
+                        if self.shared_state is not None and getattr(self.shared_state, "sub_counts", None) is not None:
+                            self.shared_state.sub_counts[cid] = self.shared_state.sub_counts.get(cid, 0) - 1
                         logger.info(f"[TRACK] ID={track_id} crossed RIGHT // Count {counter_to_right}")
                         self.count_right_to_left += 1
                         self._emit_event("crossed", {
                             "direction": "RIGHT", "track_id": int(track_id),
+                            "class_id": cid, "species": self._species_name(cid),
                             "count": int(counter_to_right),
                         })
                         self.recent_crossings.append({"frame": self.frame_counter, "tid": track_id, "direction": "RIGHT"})
@@ -436,10 +486,16 @@ class Counting:
                             })
                         else:
                             counter_to_right += 1
+                            # BL-78: mirror on the per-species sub-counter (global = sum).
+                            cid = int(class_id)
+                            self.sub_counts[cid] = self.sub_counts.get(cid, 0) + 1
+                            if self.shared_state is not None and getattr(self.shared_state, "sub_counts", None) is not None:
+                                self.shared_state.sub_counts[cid] = self.shared_state.sub_counts.get(cid, 0) + 1
                             logger.info(f"[TRACK] ID={track_id} crossed LEFT // Count {counter_to_right}")
                             self.count_left_to_right += 1
                             self._emit_event("crossed", {
                                 "direction": "LEFT", "track_id": int(track_id),
+                                "class_id": cid, "species": self._species_name(cid),
                                 "count": int(counter_to_right),
                             })
                             self.recent_crossings.append({"frame": self.frame_counter, "tid": track_id, "direction": "LEFT"})
@@ -464,7 +520,7 @@ class Counting:
                     # back left->right and got an ID-switch at the line on its
                     # return: without it, the -1 of the return would be lost.)
                     fused = False
-                    if element[3] == counting_class:
+                    if element[3] in counting_class_ids:
                         want_side = "in" if element[0] <= x else "out"
                         for lost_id, data in list(self.lost_tracks.items()):
                             # Guard eligibility age: use GUARD_MAX_AGE (short), not
@@ -481,9 +537,13 @@ class Counting:
                             dx = abs(element[0] - data["cx"])
                             dy = abs(element[1] - data["cy"])
                             if dx <= self.reassoc_max_dist_x and dy <= self.reassoc_max_dist_y:
+                                cid = int(element[3])
                                 if element[0] <= x:
                                     # crossed LEFT (+1): pig went right->left
                                     counter_to_right += 1
+                                    self.sub_counts[cid] = self.sub_counts.get(cid, 0) + 1
+                                    if self.shared_state is not None and getattr(self.shared_state, "sub_counts", None) is not None:
+                                        self.shared_state.sub_counts[cid] = self.shared_state.sub_counts.get(cid, 0) + 1
                                     direction = "LEFT"
                                     target_list = self.area_out_list
                                     other_list = self.area_in_list
@@ -495,12 +555,16 @@ class Counting:
                                     self.id_switch_recoveries += 1
                                     self._emit_event("id_switch_recovery", {
                                         "direction": "LEFT", "track_id": int(track_id),
+                                        "class_id": cid, "species": self._species_name(cid),
                                         "fused_with": int(lost_id),
                                         "count": int(counter_to_right),
                                     })
                                 else:
                                     # crossed RIGHT (-1): pig came back left->right
                                     counter_to_right -= 1
+                                    self.sub_counts[cid] = self.sub_counts.get(cid, 0) - 1
+                                    if self.shared_state is not None and getattr(self.shared_state, "sub_counts", None) is not None:
+                                        self.shared_state.sub_counts[cid] = self.shared_state.sub_counts.get(cid, 0) - 1
                                     direction = "RIGHT"
                                     target_list = self.area_in_list
                                     other_list = self.area_out_list
@@ -512,6 +576,7 @@ class Counting:
                                     self.id_switch_recoveries += 1
                                     self._emit_event("id_switch_recovery", {
                                         "direction": "RIGHT", "track_id": int(track_id),
+                                        "class_id": cid, "species": self._species_name(cid),
                                         "fused_with": int(lost_id),
                                         "count": int(counter_to_right),
                                     })
@@ -534,7 +599,7 @@ class Counting:
                                 break
 
                     if not fused:
-                        if element[3] == counting_class and track_id not in self.area_in_list and element[0] > x:
+                        if element[3] in counting_class_ids and track_id not in self.area_in_list and element[0] > x:
                             self.area_in_list.append(track_id)
                             # --------------------------------------------------
                             # Mirror guard: new ID on the RIGHT + a track recently
@@ -583,7 +648,7 @@ class Counting:
                                             "fused_with": int(lost_id),
                                         })
                                     break
-                        elif element[3] == counting_class and track_id not in self.area_out_list and element[0] <= x:
+                        elif element[3] in counting_class_ids and track_id not in self.area_out_list and element[0] <= x:
                             self.area_out_list.append(track_id)
 
             for element in current_status:

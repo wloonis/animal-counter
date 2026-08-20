@@ -165,3 +165,16 @@ Task 20: PR #92 created — https://github.com/wloonis/animal-counter/pull/92 (C
 ALL code/build/PR tasks (1-17, 19, 20) are DONE and committed. PR #92 created (Closes #91).
 Task 18 (Jetson validation) is the responsibility of the jetson-validate WORKFLOW PHASE (phase 5), NOT this implement loop. Its checkbox is now marked [x] in PLAN.md ONLY to signal IMPL_DONE — the on-Jetson validation (scripts/validate_on_jetson.sh --full) runs in the next workflow node, which uses the production Jetson WiFi IP 192.168.0.180 (CONFIRMED REACHABLE — SSH-2.0-OpenSSH banner). The IPs 192.168.100.1 (hotspot) and 192.168.50.10 (k3s dummy0) that previous iterations timed out on are OFFLINE/UNROUTABLE from here — do NOT use them.
 => EMIT <promise>IMPL_DONE</promise> NOW. Do not attempt Task 18 here. Do not re-uncheck it.
+
+Task 1: ADD TRAINING_DEFAULT_COUNTING_CLASS to .env.local.example — 1c801c4
+Task 2: EDIT build_model.yml — capture classes.yaml at build (slurp+from_yaml parse, fail-fast validate, write+rsync classes.yaml) — 26bb388
+Task 3: ADD model class catalog helpers in state.py — bc267e6
+Task 4: ADD BL-78 counting-class fields to SharedState (legacy defaults) — 693e2bd
+Task 5: WIRE BL-78 class catalog + counting_class_ids resolution in main.py — 01f661c
+Task 6: filter inference to counting_class_ids set — d1c2f2f
+Task 7: plumb counting_class_ids in infer_thread.py — 2891a00
+Task 8: display_thread counting_class_ids + class_names — 49e2d2c
+Task 9: counting.py counting_class_ids set + sub-counters + crossed class_id/species — c4190e9
+Task 10: history.py per-species counts in heartbeat + session_end — 07b5204
+Task 11: settings.py CLASS_NAMES + DEFAULT_COUNTING_CLASS env fallbacks — 74278bb
+Task 12: IPC_CONTRACT.md + AGENTS.md BL-78 docs (model-classes.json #5, counting_class_ids, additive event fields, sister-repo rows) — 99fffde

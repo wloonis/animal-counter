@@ -265,4 +265,18 @@ class Settings:
         # Maximum number of gz archives kept; the oldest is deleted beyond this.
         self.HISTORY_ARCHIVE_MAX = int(os.getenv("HISTORY_ARCHIVE_MAX", 20))
         ### Counting history (BL-68) - End
+
+        ### Model class catalog (BL-78) - Start
+        # Env-backed FALLBACKS only — used when classes.yaml is absent (legacy
+        # deployed models). At runtime, app/model/classes.yaml (captured at
+        # build by build_model.yml) is the source of truth and overrides these
+        # via state.load_classes_yaml(); main.py populates shared_state.class_names
+        # / default_counting_class / model_version from it. The fallbacks below
+        # reproduce the exact pre-BL-78 hardcoded behavior (['human','pig'], 1).
+        _names_env = os.getenv("CLASS_NAMES", "human,pig")
+        self.CLASS_NAMES = [s.strip() for s in _names_env.split(",") if s.strip()]
+        if len(self.CLASS_NAMES) == 0:
+            self.CLASS_NAMES = ["human", "pig"]
+        self.DEFAULT_COUNTING_CLASS = int(os.getenv("DEFAULT_COUNTING_CLASS", 1))
+        ### Model class catalog (BL-78) - End
         

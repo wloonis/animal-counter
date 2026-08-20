@@ -91,3 +91,17 @@ class SharedState:
         # it and emit a clean session_end. None in validate/test mode.
         self.history_writer = None
         self.history_session_id = None
+        # BL-78: configurable counting classes (multi-species, model-driven).
+        # Populated at startup from classes.yaml (state.load_classes_yaml);
+        # counting_class_ids is re-resolved per recording in the main.py BL-76
+        # hot-reload block. These __init__ defaults reproduce the exact
+        # pre-BL-78 behavior when classes.yaml is absent (legacy deployed
+        # models without it boot and count identically).
+        self.class_names = ['human', 'pig']
+        self.default_counting_class = 1
+        self.model_version = None
+        self.counting_class_ids = [1]
+        # Per-species sub-counters {class_id: count}; reset per recording to
+        # {cid: 0 for cid in counting_class_ids}. The global counter_to_right
+        # is the sum of these (retro-compatible invariant).
+        self.sub_counts = {}
