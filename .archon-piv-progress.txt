@@ -177,3 +177,4 @@ Task 8: display_thread counting_class_ids + class_names — 49e2d2c
 Task 9: counting.py counting_class_ids set + sub-counters + crossed class_id/species — c4190e9
 Task 10: history.py per-species counts in heartbeat + session_end — 07b5204
 Task 11: settings.py CLASS_NAMES + DEFAULT_COUNTING_CLASS env fallbacks — 74278bb
+Task 12: IPC_CONTRACT.md + AGENTS.md BL-78 docs (model-classes.json #5, counting_class_ids, additive event fields, sister-repo rows) — 99fffde
