@@ -4,7 +4,7 @@
 # via @plannotator/pi-extension → human reviews and approves over HTTP on
 # 127.0.0.1:19432 → Pi implements task-by-task with py_compile validation →
 # Pi runs scripts/validate_on_jetson.sh on the Jetson → parses JSON report →
-#   - pass → finalize (push + PR draft)
+#   - pass → docs-sync (sync README/docs to the changed surface) → finalize (push + PR draft)
 #   - count_mismatch → HITL PAUSE (no auto-fix — anti metric-gaming)
 #   - execution_error → auto-diagnose + fix + retry (limited by max_iterations)
 #
@@ -34,7 +34,7 @@ description: |
   NOT for: Standard PIV without Jetson validation (use archon-plannotator-piv).
   NOT for: Quick fixes, PR reviews, JS/TS projects.
 
-  Six phases:
+  Seven phases:
   1. CLARIFY: Pi asks 2-3 targeted questions, converges on intent.
   2. PLAN: Pi writes PLAN.md and submits via plannotator HTTP UI.
   3. VERIFY-PLAN: Bash sanity check that PLAN.md exists with tasks.
@@ -42,11 +42,17 @@ description: |
      python3 -m py_compile validation + commits.
   5. JETSON-VALIDATE: Pi runs scripts/validate_on_jetson.sh, parses the JSON
      report, and handles three outcomes:
-     - pass → signal VALIDATED → proceed to finalize
+     - pass → signal VALIDATED → proceed to docs-sync
      - count_mismatch → HITL PAUSE (user guides the fix — no auto-correction)
      - execution_error → auto-diagnose + fix + retry (limited by max_iterations
        from validation/config.json; escalate to HITL if exceeded)
-  6. FINALIZE: Push branch + create draft PR on GitHub.
+  6. DOCS-SYNC: Fresh Pi session syncs README.md, AGENTS.md, docs/**, and
+     ansible/README.md to the changed surface (paths, symbols, env vars,
+     hostPaths, contracts) so no doc references the pre-change state. Runs
+     AFTER validation PASS so docs match validated code. Autonomous (no human
+     gate); the relay surfaces the doc commit. Flags shared/contract docs
+     (e.g. docs/IPC_CONTRACT.md) whose sister-repo copy must be resynchronized.
+  7. FINALIZE: Push branch + create draft PR on GitHub.
 
 provider: pi
 model: ollama/glm-5.2
@@ -252,6 +258,13 @@ nodes:
       - [ ] Task 2: {ACTION} `{path}` — {what and why}
       - [ ] Task N: {ACTION} `{path}` — {what and why}
 
+      ## Documentation Impact
+      - {docs that reference the changed paths/symbols/env vars/contracts —
+         grep README.md, AGENTS.md, docs/**/*.md, ansible/README.md for stale
+         references to anything your tasks rename/move/remove; list each doc
+         + what goes stale. The downstream docs-sync phase re-verifies this,
+         but enumerate it here so the plan is doc-aware from the start.}
+
       ## Validation
       - {command(s) that prove the feature works}
 
@@ -261,7 +274,11 @@ nodes:
 
       Every task must be atomic, name a specific file, and describe a
       verifiable action. You may READ CLAUDE.md and README.md for conventions,
-      but do NOT read or edit any source files.
+      but do NOT read or edit any source files. For the **Documentation
+      Impact** section, grep the docs for references to any path/symbol/env
+      var/contract your tasks change (renamed paths, moved hostPaths, renamed
+      settings, removed env vars, changed IPC files) and list each stale doc
+      — the docs-sync phase is the safety net, but the plan must be doc-aware.
 
       ## Step 2: Submit for review
 
@@ -733,12 +750,100 @@ nodes:
         mismatch.
 
   # ═══════════════════════════════════════════════════════════════
-  # PHASE 5: FINALIZE — Push, create PR, generate summary
+  # PHASE 5: DOCS-SYNC — Sync README/docs to the changed surface
+  # Runs AFTER validation PASS so docs match validated code.
+  # Autonomous (no human gate) — docs are low-risk; relay surfaces the commit.
+  # ═══════════════════════════════════════════════════════════════
+
+  - id: docs-sync
+    depends_on: [jetson-validate]
+    model: medium
+    context: fresh
+    idle_timeout: 600000
+    prompt: |
+      # Jetson Dev — Documentation Sync
+
+      You are an autonomous documentation-sync agent in a FRESH session. The
+      implementation has been validated on the Jetson (PASS). Your job is to
+      ensure the repo's documentation still matches the code that was just
+      changed — no doc should reference the pre-change state (old paths,
+      renamed symbols, removed env vars, moved hostPaths, changed contracts).
+
+      **Golden Rule**: ONLY factual corrections tied to the diff. NO stylistic
+      rewrites, NO new sections, NO reformatting. If a doc is already correct,
+      leave it alone. Minimal edits — touch only the stale line(s).
+
+      ---
+
+      ## Step 1: Identify the changed surface
+
+      ```bash
+      BASE=$(git merge-base HEAD $BASE_BRANCH)
+      git diff --name-only $BASE..HEAD
+      git diff $BASE..HEAD -- app/ k3s/ ansible/ scripts/ | head -400
+      ```
+
+      Build a mental list of **concepts that moved/renamed/removed**:
+      - renamed or moved file paths / hostPaths / mount points
+      - renamed/removed/added env vars or settings keys
+      - renamed/removed functions, classes, constants referenced in docs
+      - changed IPC contracts, file formats, shared-file locations
+      - changed commands, playbook tags, validation modes
+
+      ## Step 2: Find stale doc references
+
+      Grep the doc surface for each changed concept:
+      ```bash
+      grep -rn "<old path|old symbol|old env var|old mount>" \
+        README.md AGENTS.md docs/ ansible/README.md 2>/dev/null
+      ```
+
+      Also check the PLAN.md "Documentation Impact" section (if the planner
+      enumerated it) — but VERIFY each entry against the actual diff; the
+      planner's list is a hint, not ground truth.
+
+      ## Step 3: Update stale references
+
+      For each doc with a factually stale reference caused by this diff, use
+      the edit tool to correct it (match the doc's existing wording/style).
+      Only touch the stale line(s) — minimal edits.
+
+      **Never** stage: `.pr-body.md`, `*.scratch.md`, `*-report.md`,
+      `review/`, or anything under `$ARTIFACTS_DIR`.
+
+      ## Step 4: Shared / contract docs (sister-repo)
+
+      If a doc is a **shared contract kept identical across both repos**
+      (notably `docs/IPC_CONTRACT.md` — identical in `wloonis/animal-counter`
+      and `wloonis/animal-counter-companion`), you can only update THIS repo's
+      copy. Note the sister-repo resync requirement in the DOCS.md beacon
+      (Step 5) so the relay/finalize surfaces it. Do NOT attempt to edit the
+      other repo.
+
+      ## Step 5: Commit + beacon
+
+      If you updated any docs:
+      ```bash
+      git add README.md AGENTS.md docs/ ansible/README.md
+      git commit -m "docs: sync to changed surface ($BASE_BRANCH..HEAD)"
+      ```
+
+      Write `.archon-relay/DOCS.md` (the write tool creates the directory):
+      ```
+      STATE: DOCS_SYNCED
+      UPDATED: {files you edited, or "none — docs already matched the diff"}
+      SHARED_CONTRACT_RESYNC: {docs/IPC_CONTRACT.md if you touched it, else none}
+      ```
+
+      Then exit normally. The workflow proceeds to finalize.
+
+  # ═══════════════════════════════════════════════════════════════
+  # PHASE 6: FINALIZE — Push, create PR, generate summary
   # ═══════════════════════════════════════════════════════════════
 
   - id: finalize
     model: medium
-    depends_on: [jetson-validate]
+    depends_on: [docs-sync]
     context: fresh
     prompt: |
       # Jetson Dev — Finalize
@@ -775,6 +880,12 @@ nodes:
       - Body summarizing the implementation AND the Jetson validation result
       - Use a HEREDOC for the body
       - Include the validation report summary (expected vs actual count)
+      - Include a "Documentation" section: list the docs synced by the
+        docs-sync phase (from `.archon-relay/DOCS.md`), and FLAG any
+        shared/contract doc whose sister-repo copy must be resynchronized
+        (e.g. `docs/IPC_CONTRACT.md` is kept identical in
+        `wloonis/animal-counter-companion` — note it so the companion
+        update is not forgotten)
 
       ## Step 4: Output Summary
 
@@ -795,6 +906,10 @@ nodes:
 
       -- Tasks Completed -----------------------------------------------
       {list from progress tracking}
+
+      -- Documentation Synced ------------------------------------------
+      {files updated by the docs-sync phase, or "none — docs already matched"}
+      {shared-contract resync flag if any, else ""}
 
       -- Commits -------------------------------------------------------
       {git log output}
