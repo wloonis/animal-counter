@@ -173,3 +173,4 @@ Task 4: ADD BL-78 counting-class fields to SharedState (legacy defaults) — 693
 Task 5: WIRE BL-78 class catalog + counting_class_ids resolution in main.py — 01f661c
 Task 6: filter inference to counting_class_ids set — d1c2f2f
 Task 7: plumb counting_class_ids in infer_thread.py — 2891a00
+Task 8: display_thread counting_class_ids + class_names — 49e2d2c
