@@ -287,7 +287,7 @@ class Inference:
 
         return image, image_raw, h, w, r_scale, tx1, ty1
 
-    def post_process(self, output, origin_h, origin_w):
+    def post_process(self, output, origin_h, origin_w, counting_class_ids=None):
         """
         Postprocess the output to get detections.
         
@@ -295,6 +295,10 @@ class Inference:
             output (numpy.ndarray): Output from inference.
             origin_h (int): Original height.
             origin_w (int): Original width.
+            counting_class_ids (Iterable[int]|None): Class IDs the countingapp
+                counts (BL-78). Detections whose class is NOT in this set are
+                dropped before OC-SORT. When None or empty, falls back to
+                ``[1]`` (legacy pre-BL-78 behavior = pig only).
             
         Returns:
             numpy.ndarray: Processed detections.
@@ -311,12 +315,21 @@ class Inference:
         scores = scores[mask]
         class_ids = class_ids[mask]
 
-        # Filtrer pour ne garder que les cochons (class_id == 1)
-        # Le modèle détecte : 0 = humain, 1 = cochon
-        pig_mask = class_ids == 1
-        boxes = boxes[pig_mask]
-        scores = scores[pig_mask]
-        class_ids = class_ids[pig_mask]
+        # Filter to the configured counting_class_ids set (BL-78; drops
+        # non-counted classes like human before OC-SORT). The model detects
+        # multiple classes (e.g. 0 = human, 1 = pig); only the counted set
+        # enters the single tracker. When the set is absent/empty, fall back
+        # to [1] (legacy pre-BL-78 pig-only behavior).
+        if counting_class_ids is None:
+            keep_ids = [1]
+        else:
+            keep_ids = list(counting_class_ids)
+            if len(keep_ids) == 0:
+                keep_ids = [1]
+        keep_mask = np.isin(class_ids, keep_ids)
+        boxes = boxes[keep_mask]
+        scores = scores[keep_mask]
+        class_ids = class_ids[keep_mask]
 
         if len(boxes) == 0:
             return np.array([])
