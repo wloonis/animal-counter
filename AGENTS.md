@@ -42,7 +42,7 @@ File: `.archon/workflows/archon-jetson-dev.yaml`. Use for autonomous dev with
 **Jetson business validation** (run a reference video, compare the pig count to
 the expected value derived from the filename).
 
-**Six phases:**
+**Seven phases:**
 
 | # | Node | Type | What happens | Human gate? |
 |---|------|------|-------------|-------------|
@@ -51,7 +51,8 @@ the expected value derived from the filename).
 | 3 | `verify-plan` | bash | Sanity-checks `PLAN.md` has task checkboxes. | No |
 | 4 | `implement` | loop (fresh context) | Pi implements one task at a time, `python3 -m py_compile`, commits. Emits `IMPL_DONE`. | No |
 | 5 | `jetson-validate` | interactive loop | Pi runs `scripts/validate_on_jetson.sh`, parses `validation-report.json`. `pass` → `VALIDATED`; `count_mismatch` → HITL pause; `execution_error` → auto-retry. | **Yes** (only on mismatch) |
-| 6 | `finalize` + `verify-pr-base` | pi + bash | Push branch, create draft PR, verify PR base. | No |
+| 6 | `docs-sync` | single pi session | Fresh session syncs `README.md`, `AGENTS.md`, `docs/**`, `ansible/README.md` to the changed surface (paths/symbols/env vars/hostPaths/contracts). Writes `DOCS.md` beacon; flags shared/contract docs needing sister-repo resync. | No |
+| 7 | `finalize` + `verify-pr-base` | pi + bash | Push branch, create draft PR, verify PR base. | No |
 
 **Validation commands are Python/Jetson, NOT JS/TS.** Never run `bun run
 type-check` / `bun run validate` — they don't exist here. Syntax check is
@@ -100,6 +101,7 @@ so the relay can surface clean, curated state:
 | CLARIFY | `CLARIFY.md` | `WAITING_FOR_USER` / `READY_FOR_PLAN` |
 | PLAN | `PLANNOTATOR.md` | `PLAN_REVIEW_PENDING` / `PLAN_APPROVED` |
 | JETSON-VALIDATE | `VALIDATION.md` | `PASS` / `MISMATCH_PENDING_USER` / `EXEC_ERROR_RETRY` / `ESCALATED` |
+| DOCS-SYNC | `DOCS.md` | `DOCS_SYNCED` (with `UPDATED:` list + `SHARED_CONTRACT_RESYNC:` flag) |
 
 The worktree path comes from `workflow get` (see 4.2). Read the beacon with the
 `read` tool. If a beacon is missing (the model didn't write it), fall back to
@@ -195,12 +197,18 @@ starts a review web server when the planner calls `plannotator_submit_plan`.
    `verify-plan`, which auto-archives the plan to `plans/PR_<slug>.md`.
 5. **implement** → autonomous; report progress from commits/events.
 6. **jetson-validate**:
-   - `PASS` → report success, run proceeds to finalize.
+   - `PASS` → report success, run proceeds to **docs-sync**.
    - `MISMATCH_PENDING_USER` → surface `VALIDATION.md` mismatch to the user →
      on their guidance, `nohup archon workflow approve <run-id> "<guidance>" &`.
      (Do NOT auto-fix.)
    - `EXEC_ERROR_RETRY` → let it auto-retry; `ESCALATED` → surface to user.
-7. **Completed** → report the PR URL from `finalize` + final validation summary.
+7. **docs-sync** → autonomous (no gate). Read `.archon-relay/DOCS.md`: report
+   which docs were synced. If `SHARED_CONTRACT_RESYNC` names a doc (e.g.
+   `docs/IPC_CONTRACT.md`), **surface to the user** that the sister-repo
+   (`wloonis/animal-counter-companion`) copy must be resynchronized — this is
+   not done by the workflow (it can only edit this repo).
+8. **Completed** → report the PR URL from `finalize` + final validation summary
+   + doc-sync summary.
 
 ---
 
