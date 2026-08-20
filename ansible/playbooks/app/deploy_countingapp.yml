@@ -11,6 +11,7 @@
     video_device: "{{ lookup('env', 'VIDEO_DEVICE') | default('/dev/video0', true) }}"
     app_path: "{{ lookup('env', 'APP_PATH') | default('/data/orin/git/animal-counting/app', true) }}"
     files_path: "{{ lookup('env', 'FILES_PATH') | default('/data/orin/files', true) }}"
+    conf_path: "{{ lookup('env', 'CONF_PATH') | default('/data/orin/conf', true) }}"
     max_log_files: "{{ lookup('env', 'MAX_LOG_FILES') | default('50', true) }}"
     log_max_size: "{{ lookup('env', 'LOG_MAX_SIZE') | default('100M', true) }}"
     jetson_ip_wifi: "{{ lookup('env','JETSON_IP') }}"
@@ -50,6 +51,32 @@
     mode: '0775'
     owner: "{{ ansible_user }}"
     group: "{{ ansible_user }}"
+  become: yes
+  tags: always
+
+- name: Create conf directory on Jetson
+  file:
+    path: "{{ conf_path }}"
+    state: directory
+    mode: '0775'
+    owner: "{{ ansible_user }}"
+    group: "{{ ansible_user }}"
+  become: yes
+  tags: always
+
+- name: Migrate runtime-settings.json from files to conf (idempotent)
+  command: mv {{ files_path }}/runtime-settings.json {{ conf_path }}/runtime-settings.json
+  args:
+    removes: "{{ files_path }}/runtime-settings.json"
+    creates: "{{ conf_path }}/runtime-settings.json"
+  become: yes
+  tags: always
+
+- name: Migrate .arret_requested from files to conf (idempotent)
+  command: mv {{ files_path }}/.arret_requested {{ conf_path }}/.arret_requested
+  args:
+    removes: "{{ files_path }}/.arret_requested"
+    creates: "{{ conf_path }}/.arret_requested"
   become: yes
   tags: always
 
