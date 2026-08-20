@@ -109,7 +109,8 @@ class InferThread(threading.Thread):
                     boxes_pp = self.yolo.post_process(
                         output,
                         origin_h,
-                        origin_w
+                        origin_w,
+                        counting_class_ids=shared_state.counting_class_ids,
                     )
 
                     results = [image_raw, boxes_pp, output, use_time, origin_h, origin_w, self.frame_counter, r_scale, tx1, ty1, y_offset, self.yolo.input_h, self.yolo.input_w]
