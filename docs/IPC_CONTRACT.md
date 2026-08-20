@@ -9,22 +9,45 @@ up the animal-counter system. It MUST stay identical in both:
   companion (HTTP bridge). Owns the **reader** side of the history log and the
   **writer** side of the runtime settings / power sentinel.
 
-The companion (host, systemd) and the countingapp (k3s pod, hostPath `/files`)
-communicate **only** via files in the shared directory
-`/data/orin/files` on the Jetson (`/files` inside the pod). There is **no HTTP
-or RPC** between them. Any change to a format below is a coordinated change
-across both repos.
+The companion (host, systemd) and the countingapp (k3s pod, hostPaths `/files`
+and `/conf`) communicate **only** via files in two shared directories on the
+Jetson. There is **no HTTP or RPC** between them. Any change to a format below
+is a coordinated change across both repos.
 
-## Shared path
+> **BL-79 split (this repo):** config/control files (`runtime-settings.json`,
+> `.arret_requested`) moved from `/files` to a dedicated `/conf` hostPath to
+> separate them from data files (`counting-history.jsonl`, mp4 clips, dataset)
+> which stay in `/files`. The companion (sister repo
+> `wloonis/animal-counter-companion`) must be updated in a **separate BL** to
+> write to `/data/orin/conf` instead of `/data/orin/files`. This document
+> describes the **target contract** (post-split); the companion update is
+> coordinated but out of scope for BL-79 in this repo.
+
+## Shared paths (BL-79: two hostPaths)
+
+### `/files` — data
 
 | | Path | Owner |
 |---|------|-------|
 | Host (companion) | `/data/orin/files/` | created by the countingapp deploy |
 | Pod (countingapp) | `/files/` (hostPath mount of the above) | k3s manifest |
 
+Contains: `counting-history.jsonl`, `counting-*.mp4` clips, `dataset/`.
+
+### `/conf` — config/control
+
+| | Path | Owner |
+|---|------|-------|
+| Host (companion) | `/data/orin/conf/` | created by the countingapp deploy |
+| Pod (countingapp) | `/conf/` (hostPath mount of the above) | k3s manifest |
+
+Contains: `runtime-settings.json`, `.arret_requested`.
+
 ## Files
 
-### 1. `counting-history.jsonl` — append-only event log
+### `/files` (data)
+
+#### 1. `counting-history.jsonl` — append-only event log
 
 The countingapp **appends** one JSON object per line. The companion **reads**
 it (read-only, builds an in-memory index, re-indexes on mtime change).
@@ -51,7 +74,23 @@ Schema (one JSON object per line):
 > bumped to parse the new shape. A `schema_version` field SHOULD be added to
 > records to make drift detectable (future work).
 
-### 2. `runtime-settings.json` — live runtime settings (hot-reload)
+#### 2. `counting-{ts}-#N.mp4` — recorded clips
+
+Produced by the countingapp / video-compress pod, **range-streamed** by the
+companion via `GET /api/video/<id>`. Filename pattern:
+
+```
+counting-{session_or_run_ts}-{N}.mp4
+```
+
+The companion globs `counting-*.mp4` in the `/files` path and exposes them by
+`video_id`. A clip may be **temporarily absent** (compression in progress) or
+**cleaned up** (retention) → the companion returns `404`, and the Android app
+shows the "video no longer accessible" state.
+
+### `/conf` (config/control)
+
+#### 1. `runtime-settings.json` — live runtime settings (hot-reload)
 
 The companion **writes** this (from the Android app's `PUT /api/settings`). The
 countingapp **reads** it at the start of every recording
@@ -79,7 +118,7 @@ Schema:
 Keys not present are ignored (defaults from `app/src/settings.py` apply). A
 missing/empty/invalid file → countingapp keeps current settings.
 
-### 3. `.arret_requested` — power-off sentinel
+#### 2. `.arret_requested` — power-off sentinel
 
 The companion **creates** this file (from the Android app's `POST /api/power`).
 The countingapp's `display_thread.py` **polls** for it; when present, it stops
@@ -87,31 +126,19 @@ cleanly after the current recording finishes, then power-offs. The companion
 does NOT remove it (the countingapp consumes it).
 
 Format: empty file (presence is the signal). Filename: `.arret_requested`
-(hidden, in the shared path).
-
-### 4. `counting-{ts}-#N.mp4` — recorded clips
-
-Produced by the countingapp / video-compress pod, **range-streamed** by the
-companion via `GET /api/video/<id>`. Filename pattern:
-
-```
-counting-{session_or_run_ts}-{N}.mp4
-```
-
-The companion globs `counting-*.mp4` in the shared path and exposes them by
-`video_id`. A clip may be **temporarily absent** (compression in progress) or
-**cleaned up** (retention) → the companion returns `404`, and the Android app
-shows the "video no longer accessible" state.
+(hidden, in the `/conf` path).
 
 ## Deployment conventions
 
-- The shared path `/data/orin/files` is created/owned by the **countingapp**
-  repo's deployment (k3s hostPath). The companion deploy only ensures the dir
-  exists; it does NOT manage retention or the pod.
+- The shared paths `/data/orin/files` (data) and `/data/orin/conf`
+  (config/control) are created/owned by the **countingapp** repo's deployment
+  (k3s hostPaths). The companion deploy only ensures the dirs exist; it does
+  NOT manage retention or the pod.
 - The companion must **never starve inference**: its systemd unit caps CPU to
   30%, `Nice=10`, best-effort I/O (BL-71). Do not remove these limits.
 - The companion is **stdlib-only Python** (no pip). It runs as root on the host
-  (needs to read `/data/orin/files` owned by the pod's hostPath).
+  (needs to read `/data/orin/files` and `/data/orin/conf` owned by the pod's
+  hostPaths).
 
 ## Change protocol
 
