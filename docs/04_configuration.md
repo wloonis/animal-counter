@@ -21,6 +21,31 @@ cp app/.env.example app/.env
 The K3s manifest `countingapp-dep.j2` only injects `DISPLAY=:0`; all other
 parameters come from `.env`.
 
+## Shared hostPaths: `/files` (data) vs `/conf` (config/control)
+
+The countingapp pod mounts two hostPaths for companion⇄countingapp IPC
+(see [`IPC_CONTRACT.md`](IPC_CONTRACT.md)):
+
+- **`/files`** (hostPath `/data/orin/files`) — **data**: the append-only
+  event log (`counting-history.jsonl`), recorded clips (`counting-*.mp4`),
+  and the learning dataset (`dataset/`). These files are owned by the
+  countingapp; the companion reads them read-only.
+- **`/conf`** (hostPath `/data/orin/conf`) — **config/control**: live
+  runtime settings (`runtime-settings.json`, hot-reloaded by the companion
+  via `PUT /api/settings`) and the power-off sentinel (`.arret_requested`,
+  written by the companion via `POST /api/power`). These are written by the
+  companion and read by the countingapp.
+
+> **BL-79:** `runtime-settings.json` and `.arret_requested` were
+> previously in `/files`. They are now in a dedicated `/conf` hostPath to
+> separate config/control from data. The companion (sister repo) must be
+> updated to write to `/data/orin/conf` (coordinated in a separate BL).
+
+Both hostPaths are created by the Ansible deployment
+(`ansible/playbooks/app/deploy_countingapp.yml`), which also migrates
+existing `runtime-settings.json` and `.arret_requested` from `/files` to
+`/conf` on first deploy (idempotent).
+
 ## Parameter reference
 
 ### Input & output
