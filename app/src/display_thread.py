@@ -186,10 +186,12 @@ class DisplayThread(threading.Thread):
             self.rendering.handle_click(x, y, shared_state)
 
     def has_pig_high_score(self, class_ids, scores, threshold=settings.PIG_CONFIDENCE_THRESHOLD_START_VIDEO):
-        # class_id == 1 corresponds to pigs
+        # BL-78: a "high-score" detection is one whose class is in the
+        # configured counting_class_ids set (legacy: class_id == 1 = pigs).
         thresh = threshold
+        keep = list(shared_state.counting_class_ids)
         for i in range(len(class_ids)):
-            if class_ids[i] == 1 and scores[i] >= thresh:
+            if class_ids[i] in keep and scores[i] >= thresh:
                 return True
         return False
 
@@ -412,9 +414,10 @@ class DisplayThread(threading.Thread):
                         (settings.OUTPUT_WIDTH, settings.OUTPUT_HEIGHT)
                     )
 
-                # We reset the delay only if the detected pig's score is very good
-                # class_id == 1 corresponds to pigs
-                continue_recording = (result_classid == 1) & (result_scores > settings.PIG_CONFIDENCE_THRESHOLD_START_VIDEO)
+                # We reset the delay only if the detected animal's score is very good
+                # BL-78: keep recording alive while a counted-class detection
+                # (membership in counting_class_ids) exceeds the start threshold.
+                continue_recording = np.isin(result_classid, list(shared_state.counting_class_ids)) & (result_scores > settings.PIG_CONFIDENCE_THRESHOLD_START_VIDEO)
 
                 if continue_recording.any():
                 #if 0 in result_classid and result_scores > settings.PIG_CONFIDENCE_THRESHOLD_START_VIDEO :
@@ -427,7 +430,7 @@ class DisplayThread(threading.Thread):
                     result_trackid=result_trackid,
                     result_classid=result_classid,
                     result_scores=result_scores,
-                    counting_class=1,
+                    counting_class_ids=shared_state.counting_class_ids,
                     counter_to_right=shared_state.counter_to_right
                 )
 
@@ -439,7 +442,7 @@ class DisplayThread(threading.Thread):
                     result_classid=result_classid,
                     result_trackid=result_trackid,
                     frame_counter=frame_counter,
-                    categories=['human', 'pig']
+                    categories=shared_state.class_names
                 )
 
                 img = self.rendering.display_counter(
