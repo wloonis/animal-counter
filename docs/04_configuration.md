@@ -60,6 +60,23 @@ existing `runtime-settings.json` and `.arret_requested` from `/files` to
 | `OUTPUT_VIDEO_PATH` | `/files` | Where annotated output videos are written |
 | `LOG_LEVEL` | `INFO` | `DEBUG`/`INFO`/`WARNING`/`ERROR` |
 
+### Snapshot writer (BL-88)
+
+These are **boot params** (read once at startup from `app/.env` via
+`settings.py`) — they are **not** hot-reloaded via `/conf/runtime-settings.json`
+and require a pod restart to change. The writer itself lives in
+`app/src/display_thread.py` and runs inside the existing display loop (no new
+thread): it encodes the raw counting-resolution frame to JPEG and writes it
+atomically (tmp + `os.replace`) so the companion's `GET /api/snapshot`
+(BL-88, PR #19) can serve a live preview to the Android mask-zone editor.
+
+| Key | Default | Meaning |
+|-----|---------|---------|
+| `SNAPSHOT_ENABLED` | `true` | Master toggle for the raw-frame JPEG snapshot writer |
+| `SNAPSHOT_INTERVAL_SECONDS` | 5.0 | Min wall-clock seconds between snapshot writes (time-gated, not per-frame) |
+| `SNAPSHOT_PATH` | `/files/snapshot.jpg` | Destination path (atomic tmp+rename; the companion serves this file) |
+| `SNAPSHOT_JPEG_QUALITY` | 85 | JPEG encode quality (0–100, passed to `cv2.imencode`) |
+
 ### Counting line & detection
 
 | Key | Default | Meaning |

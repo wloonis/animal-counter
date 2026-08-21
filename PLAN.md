@@ -88,7 +88,7 @@ This is pure display/infrastructure — no counting-decision logic is touched.
   their defaults and a one-line comment each (matching the existing
   `OUTPUT_VIDEO_PATH` / `HISTORY_FILE` style), so a fresh deploy from the
   versioned example gets the feature on by default.
-- [ ] Task 4: UPDATE param table `docs/04_configuration.md` — add a new
+- [x] Task 4: UPDATE param table `docs/04_configuration.md` — add a new
   "Snapshot writer (BL-88)" subsection (or rows in the Input & output table)
   listing `SNAPSHOT_ENABLED` (true), `SNAPSHOT_INTERVAL_SECONDS` (5.0),
   `SNAPSHOT_PATH` (`/files/snapshot.jpg`), `SNAPSHOT_JPEG_QUALITY` (85), noting
