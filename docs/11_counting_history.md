@@ -105,7 +105,9 @@ it is skipped on open. Line types:
   "start_reason": "serve",
   "status": "running",
   "config": { ... },          // D — config snapshot
-  "ts": "2025-07-15T14:30:00Z"
+  "ts": "2025-07-15T14:30:00Z",
+  "counting_line_orientation": "vertical", // BL-83 — effective counting-line orientation (vertical|horizontal)
+  "offset_counting_line": 10               // BL-83 — effective signed counting-line offset (percent)
 }
 ```
 
@@ -122,7 +124,9 @@ it is skipped on open. Line types:
   "counts":  { ... },           // BL-78 — final per-species sub-counts {class_name: count}
   "video":   { ... },           // E — video metadata
   "system":  { ... },           // F — disk_free, cpu_load_avg, mem_used
-  "ts": "2025-07-15T18:00:00Z"
+  "ts": "2025-07-15T18:00:00Z",
+  "counting_line_orientation": "vertical", // BL-83 — effective counting-line orientation (vertical|horizontal)
+  "offset_counting_line": 10               // BL-83 — effective signed counting-line offset (percent)
 }
 ```
 

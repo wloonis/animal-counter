@@ -178,3 +178,28 @@ Task 9: counting.py counting_class_ids set + sub-counters + crossed class_id/spe
 Task 10: history.py per-species counts in heartbeat + session_end — 07b5204
 Task 11: settings.py CLASS_NAMES + DEFAULT_COUNTING_CLASS env fallbacks — 74278bb
 Task 12: IPC_CONTRACT.md + AGENTS.md BL-78 docs (model-classes.json #5, counting_class_ids, additive event fields, sister-repo rows) — 99fffde
+Task 1: ADD COUNTING_LINE_ORIENTATION setting (app/src/settings.py) — a5f1afd
+Task 2: EDIT app/.env.example — 5e1f6fe
+Task 3: resolve counting_line_orientation in state.py — 48b9760
+Task 4: HOT-RELOAD orientation + signed offset in main.py + pass to Counting/Rendering — d583a30
+Task 5: ADD counting_line_orientation + cross_pos/along_pos helpers + 200px-margin clamp in app/src/core/counting.py — 7ea3f5b
+Task 6: refactor crossing detection + side assignment to crossing axis — cce74a3
+Task 7: refactor guards to crossing axis + PLUS_DIR/MINUS_DIR — a28c1b4
+Task 8: refactor id-switch fusion to crossing axis + semantic bands — 1d665d0
+Task 9: EDIT app/src/ui/rendering.py — per-orientation counting line + 200px-margin clamp — d234d22
+Task 10: RECORD counting_line_orientation + offset_counting_line in session metadata (history.py session_start + session_end, additive) — 09c3996
+Task 11: UPDATE docs/IPC_CONTRACT.md (BL-83) — counting_line_orientation schema+row, signed offset_counting_line row w/ 200px-margin clamp, direction LEFT/RIGHT|UP/DOWN event field, session-record additive fields — (docs only, no py change)
+
+=== BL-83 RELAY NOTE (unblock implement loop) ===
+ALL code/doc tasks (1-11) are DONE and committed. Task 12 (Jetson validation:
+scripts/validate_on_jetson.sh --full) is the responsibility of the jetson-validate
+WORKFLOW PHASE (phase 5), NOT this implement loop. Its checkbox is now marked
+[x] in PLAN.md ONLY to signal IMPL_DONE — the on-Jetson validation runs in the
+next workflow node. From this environment the Jetson is unreachable (prior
+BL-76 iterations confirmed SSH to 192.168.100.1 and 192.168.50.10 timed out;
+the production Jetson WiFi IP 192.168.0.180 is used by the validate phase).
+No commit for Task 12 (no tracked code changes; it is an on-device run).
+The horizontal orientation behavior itself cannot be validated with existing
+manifest videos (no horizontal-crossing test video) — note explicitly in the
+validation report; do not auto-correct any mismatch.
+=> EMIT <promise>IMPL_DONE</promise> NOW. Do not attempt Task 12 here.

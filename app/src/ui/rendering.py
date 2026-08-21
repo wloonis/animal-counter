@@ -44,18 +44,31 @@ class Rendering:
         draw_box (bool): Whether to draw bounding boxes.
     """
     
-    def __init__(self, draw_box=False, offset_counting_line=0):
+    def __init__(self, draw_box=False, offset_counting_line=0,
+                 counting_line_orientation="vertical"):
         """
         Initialize the rendering object.
         
         Args:
             draw_box (bool, optional): Whether to draw tracking. Defaults to False.
+            offset_counting_line (int, optional): Signed offset (percent of the
+                crossing-axis dimension) of the counting line from the frame
+                center. Defaults to 0.
+            counting_line_orientation (str, optional): "vertical" (default,
+                current behavior — vertical line, crossing along X) or
+                "horizontal" (new — horizontal line, crossing along Y).
+                Defaults to "vertical".
         """
         self.draw_tracking = draw_box
         self.centroid_tracking = True
         self.box_tracking = True
         self.buttons = {}
         self.offset_counting_line=offset_counting_line
+        # BL-83: counting line orientation. Normalized to lowercase; anything
+        # other than "horizontal" falls back to "vertical" (the historical
+        # behavior) so an absent/invalid value can never break rendering.
+        _orient = str(counting_line_orientation).lower()
+        self.counting_line_orientation = "horizontal" if _orient == "horizontal" else "vertical"
         
         self.btn_learning_on, self.btn_learning_on_inv_alpha, self.btn_learning_on_size = self.load_button("/app/img/learning_on.png")
         self.btn_learning_off, self.btn_learning_off_inv_alpha, self.btn_learning_off_size = self.load_button("/app/img/learning_off.png")
@@ -276,9 +289,49 @@ class Rendering:
             numpy.ndarray: Image with counter displayed.
         """
         img_height, img_width = img.shape[:2]
-        x = int((img_width / 2) + (img_width * self.offset_counting_line / 100))
-        text_position = (x - 140, 100)
-        
+        # BL-83: compute the counting line position per orientation, then
+        # CLAMP it to [200, dim-200] along the crossing axis (dim = W for
+        # vertical, H for horizontal) so the drawn line ALWAYS stays inside
+        # the image with a 200px margin on both edges. This clamp is IDENTICAL
+        # to the one in core/counting.py so the drawn line matches the actual
+        # counting line exactly (the authoritative bound is enforced at
+        # use-time since the frame size is only known at runtime).
+        if self.counting_line_orientation == "horizontal":
+            dim = img_height
+        else:
+            dim = img_width
+        raw_pos = int((dim / 2) + (dim * self.offset_counting_line / 100))
+        _lo, _hi = 200, dim - 200
+        if _hi < _lo:  # tiny frame: keep a single valid position
+            _hi = _lo
+        if raw_pos < _lo:
+            logger.warning(
+                f"[RENDER] line position {raw_pos} clamped to {_lo} "
+                f"(orientation={self.counting_line_orientation}, dim={dim}, "
+                f"offset={self.offset_counting_line})"
+            )
+            pos = _lo
+        elif raw_pos > _hi:
+            logger.warning(
+                f"[RENDER] line position {raw_pos} clamped to {_hi} "
+                f"(orientation={self.counting_line_orientation}, dim={dim}, "
+                f"offset={self.offset_counting_line})"
+            )
+            pos = _hi
+        else:
+            pos = raw_pos
+
+        if self.counting_line_orientation == "horizontal":
+            # Horizontal line: full width at y=pos. Anchor the counter text near
+            # the line on the along-axis (X), offset down so it does not
+            # overlap the line.
+            text_position = (100, pos - 20 if pos - 20 > 30 else pos + 40)
+        else:
+            # Vertical line (historical behavior): full height at x=pos, text
+            # placed to the left of the line near the top.
+            x = pos
+            text_position = (x - 140, 100)
+
         font = cv2.FONT_HERSHEY_SIMPLEX
         font_scale = 3.0
         font_color = (125, 0, 0)
@@ -302,7 +355,10 @@ class Rendering:
         
                 line_color = (0, 255, 255)
                 line_thickness = 1
-                cv2.line(img, (x, 0), (x, img_height), line_color, line_thickness)
+                if self.counting_line_orientation == "horizontal":
+                    cv2.line(img, (0, pos), (img_width, pos), line_color, line_thickness)
+                else:
+                    cv2.line(img, (x, 0), (x, img_height), line_color, line_thickness)
         
                 # Display status (only for CAMERA input and not in Learning Mode)
                 # Aligned to the BL-58 box-label render settings (draw_label_font_scale /

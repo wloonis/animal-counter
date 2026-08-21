@@ -445,6 +445,29 @@ class HistoryWriter:
         )
         return sid
 
+    # -- counting-line settings (BL-83 additive session metadata) -------------
+
+    def _counting_line_settings(self):
+        """Return the effective counting-line orientation + signed offset
+        (BL-83) as an additive metadata dict for the session_start /
+        session_end records.
+
+        Sourced from ``self.settings`` because that is the object
+        ``main.py`` hot-reloads per-recording (``COUNTING_LINE_ORIENTATION``
+        + ``OFFSET_PERCENT_COUNTING_LINE`` take effect on the NEXT
+        recording, never mid-recording). At ``session_start`` this is the
+        session's initial config; at ``session_end`` it is the last
+        recording's effective value.
+        """
+        s = self.settings
+        return {
+            "counting_line_orientation": getattr(
+                s, "COUNTING_LINE_ORIENTATION", "vertical"
+            ),
+            "offset_counting_line": getattr(
+                s, "OFFSET_PERCENT_COUNTING_LINE", 0),
+        }
+
     # -- config snapshot (D) -----------------------------------------------
 
     def _config_snapshot(self):
@@ -513,6 +536,9 @@ class HistoryWriter:
                     "status": "running",
                     "config": cfg,
                     "ts": self.session_start_ts,
+                    # BL-83: additive counting-line orientation + signed
+                    # offset, persisted with the session metadata.
+                    **self._counting_line_settings(),
                 }
                 self._append(start_line)
                 # Startup history line (boot_at, image_tag, git_commit,
@@ -721,6 +747,10 @@ class HistoryWriter:
                 "video": e,
                 "system": _sample_system(),
                 "ts": end_at,
+                # BL-83: additive counting-line orientation + signed
+                # offset (last recording's effective value), persisted
+                # with the session metadata.
+                **self._counting_line_settings(),
             }
             self._append(line)
             logger.info(
