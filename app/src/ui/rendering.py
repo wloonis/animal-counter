@@ -80,6 +80,19 @@ class Rendering:
         self.play_1, self.play_1_inv, self.play_1_size = self.load_button("/app/img/1.png")
         self.play_2, self.play_2_inv, self.play_2_size = self.load_button("/app/img/2.png")
         
+    def update_line(self, offset_counting_line, counting_line_orientation):
+        """BL-86: hot-swap the counting line at an idle window.
+
+        Mirrors the normalization done in ``__init__`` (L70-71): lowercase,
+        anything other than "horizontal" falls back to "vertical". Pure
+        attribute write — no button/reload logic — so the per-frame line-
+        position computation in ``draw_counter`` picks the new values up on
+        the next frame.
+        """
+        self.offset_counting_line = offset_counting_line
+        _orient = str(counting_line_orientation).lower()
+        self.counting_line_orientation = "horizontal" if _orient == "horizontal" else "vertical"
+        
     def overlay_alpha(self, frame, overlay_premult, inv_alpha, x, y):
         h, w = overlay_premult.shape[:2]
 
