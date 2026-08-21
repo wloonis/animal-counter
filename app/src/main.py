@@ -64,7 +64,7 @@ from core.history import HistoryWriter, HistoryThread
 from state import (
     shared_state, settings, logger, _IOU_METRICS,
     load_runtime_settings, load_classes_yaml, publish_model_classes_json,
-    resolve_counting_class_ids,
+    resolve_counting_class_ids, resolve_counting_line_orientation,
 )
 # Split thread classes.
 from infer_thread import InferThread
@@ -187,12 +187,26 @@ def start(input_source, video_path):
                 _off = rt.get("offset_counting_line")
                 if isinstance(_off, bool) or not isinstance(_off, int):
                     # bool is a subclass of int — reject it explicitly; only accept
-                    # a plain int in the 0-100 counting-line range.
+                    # a plain signed int. BL-83: this loose sanity cap (-300..300)
+                    # only garbage-filters; the AUTHORITATIVE bound (line stays
+                    # inside the image with a 200px margin on both edges along the
+                    # crossing axis: vertical x∈[200,W-200], horizontal y∈[200,H-200])
+                    # is enforced by clamping the computed line position at use-time
+                    # in counting.py + rendering.py, where frame dimensions are known.
                     pass
-                elif 0 <= _off <= 100:
+                elif -300 <= _off <= 300:
                     settings.OFFSET_PERCENT_COUNTING_LINE = _off
                 else:
                     logger.warning("runtime-settings: offset_counting_line out of range (ignored): %r", _off)
+
+                # BL-83: resolve the effective counting_line_orientation
+                # ("vertical" | "horizontal") from runtime-settings.json, same
+                # per-recording "next recording" semantics as offset_counting_line.
+                # resolve_counting_line_orientation returns None for absent/invalid
+                # → leave the settings default in place (do not overwrite).
+                _orient = resolve_counting_line_orientation(rt)
+                if _orient is not None:
+                    settings.COUNTING_LINE_ORIENTATION = _orient
 
                 # BL-78: resolve the effective counting_class_ids set (3 levels:
                 # model default from classes.yaml → companion override in
@@ -213,13 +227,13 @@ def start(input_source, video_path):
                 logger.info("counting_class_ids resolved: %r",
                             shared_state.counting_class_ids)
             tracking = Tracking(draw_box=shared_state.draw_tracking, shared_state=shared_state)
-            counting = Counting(shared_state=shared_state, pig_confidence_threshold=settings.PIG_CONFIDENCE_THRESHOLD, offset_counting_line=settings.OFFSET_PERCENT_COUNTING_LINE, lost_buffer_frames=settings.COUNTING_LOST_BUFFER_FRAMES, reassoc_line_band=settings.COUNTING_REASSOC_LINE_BAND, reassoc_max_dist_x=settings.COUNTING_REASSOC_MAX_DIST_X, reassoc_max_dist_y=settings.COUNTING_REASSOC_MAX_DIST_Y, hysteresis_px=settings.COUNTING_HYSTERESIS_PX, mirror_guard=settings.COUNTING_MIRROR_GUARD, mirror_max_age=settings.COUNTING_MIRROR_MAX_AGE, mirror_line_band=settings.COUNTING_MIRROR_LINE_BAND, mirror_new_band=settings.COUNTING_MIRROR_NEW_BAND, mirror_max_dist_y=settings.COUNTING_MIRROR_MAX_DIST_Y, resurrection_threshold=settings.COUNTING_RESURRECTION_THRESHOLD, resurrection_min_jump=settings.COUNTING_RESURRECTION_MIN_JUMP, guard_max_age=settings.COUNTING_GUARD_MAX_AGE, reid_window=settings.COUNTING_REID_WINDOW, reid_min_age=settings.COUNTING_REID_MIN_AGE)
+            counting = Counting(shared_state=shared_state, pig_confidence_threshold=settings.PIG_CONFIDENCE_THRESHOLD, offset_counting_line=settings.OFFSET_PERCENT_COUNTING_LINE, counting_line_orientation=settings.COUNTING_LINE_ORIENTATION, lost_buffer_frames=settings.COUNTING_LOST_BUFFER_FRAMES, reassoc_line_band=settings.COUNTING_REASSOC_LINE_BAND, reassoc_max_dist_x=settings.COUNTING_REASSOC_MAX_DIST_X, reassoc_max_dist_y=settings.COUNTING_REASSOC_MAX_DIST_Y, hysteresis_px=settings.COUNTING_HYSTERESIS_PX, mirror_guard=settings.COUNTING_MIRROR_GUARD, mirror_max_age=settings.COUNTING_MIRROR_MAX_AGE, mirror_line_band=settings.COUNTING_MIRROR_LINE_BAND, mirror_new_band=settings.COUNTING_MIRROR_NEW_BAND, mirror_max_dist_y=settings.COUNTING_MIRROR_MAX_DIST_Y, resurrection_threshold=settings.COUNTING_RESURRECTION_THRESHOLD, resurrection_min_jump=settings.COUNTING_RESURRECTION_MIN_JUMP, guard_max_age=settings.COUNTING_GUARD_MAX_AGE, reid_window=settings.COUNTING_REID_WINDOW, reid_min_age=settings.COUNTING_REID_MIN_AGE)
             # BL-78: plumb the resolved counting set to the counting pipeline.
             # Forward-compatible: settable attribute (constructor gains the
             # param in Task 9). DisplayThread/InferThread already import
             # shared_state and read shared_state.counting_class_ids directly.
             counting.counting_class_ids = list(shared_state.counting_class_ids)
-            rendering = Rendering(draw_box=shared_state.draw_tracking, offset_counting_line=settings.OFFSET_PERCENT_COUNTING_LINE)
+            rendering = Rendering(draw_box=shared_state.draw_tracking, offset_counting_line=settings.OFFSET_PERCENT_COUNTING_LINE, counting_line_orientation=settings.COUNTING_LINE_ORIENTATION)
 
             max_queue_size = 3
             shared_state.frame_queue = Queue(maxsize=max_queue_size)
