@@ -70,9 +70,30 @@ class Settings:
         # FPS Settings
         self.FPS_OUTPUT = int(os.getenv("FPS_OUTPUT", 30))
         
-        # Offset of the counting line in percent
+        # Offset of the counting line in percent (now SIGNED — negative moves
+        # the line toward the start edge). Loose sanity range only; the
+        # AUTHORITATIVE bound is the line staying inside the image with a 200px
+        # margin on both edges along the crossing axis, enforced by clamping the
+        # computed position at use-time in counting.py/rendering.py (frame size
+        # is only known at runtime). Existing 0..100 values stay valid.
         self.OFFSET_PERCENT_COUNTING_LINE = int(os.getenv("OFFSET_PERCENT_COUNTING_LINE", 10))
-        
+
+        # Counting line orientation (BL-83): "vertical" (default = today's
+        # behavior, line is a vertical X position, pigs cross right->left) or
+        # "horizontal" (line is a horizontal Y position, pigs cross down->up).
+        # The +1 convention is preserved for both orientations: +1 fires when
+        # the crossing-axis position DECREASES past the line.
+        #   vertical   : +1 = right->left = LEFT ; -1 = left->right = RIGHT
+        #   horizontal : +1 = down->up   = UP    ; -1 = up->down   = DOWN
+        # The crossing axis (perpendicular to the line) vs. along-line axis
+        # mapping is: vertical cross=x/along=y ; horizontal cross=y/along=x.
+        # Hot-reloaded per-recording from /conf/runtime-settings.json (same
+        # "next recording" semantics as OFFSET_PERCENT_COUNTING_LINE).
+        _orient = os.getenv("COUNTING_LINE_ORIENTATION", "vertical").strip().lower()
+        if _orient not in ("vertical", "horizontal"):
+            _orient = "vertical"
+        self.COUNTING_LINE_ORIENTATION = _orient
+
         # Visualization Options
         self.DRAW_TRACKING = os.getenv("DRAW_TRACKING", "False").lower() == "true"
         self.CENTROID_TRACKING = os.getenv("CENTROID_TRACKING", "True").lower() == "true"
