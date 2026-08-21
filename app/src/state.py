@@ -281,6 +281,86 @@ def resolve_counting_line_orientation(rt):
     return norm
 
 
+def resolve_mask_zones(rt):
+    """Resolve the effective mask_zones (BL-87, detection-level exclusion).
+
+    ``rt`` is the runtime-settings dict (from ``load_runtime_settings()``).
+    Returns a list of validated rect dicts ``[{x,y,w,h}, ...]`` (each field a
+    float in ``[0..1]``, ``w>0``, ``h>0``, ``x+w<=1``, ``y+h<=1``) when
+    ``rt['mask_zones']`` is a non-empty list of valid rects; returns ``None``
+    when the key is absent, the value is not a list, the list is empty, or ANY
+    single rect is invalid (strict reject-all — the whole array is rejected,
+    the caller keeps the prior value). Invalid values are logged at WARNING
+    level. Never raises.
+
+    No silent clamping (matches BL-84 posture for offset/orientation). The
+    companion side (BL-88) rejects the PUT; the countingapp side ignores the
+    invalid field and keeps the prior value.
+    """
+    raw = rt.get("mask_zones") if isinstance(rt, dict) else None
+    if raw is None:
+        return None
+    if not isinstance(raw, list):
+        logger.warning("mask_zones must be a list of rects, got %r; "
+                        "keeping prior", raw)
+        return None
+    if not raw:
+        # Empty list is a valid "no mask" value (clears the mask).
+        return []
+    validated = []
+    for idx, rect in enumerate(raw):
+        if not isinstance(rect, dict):
+            logger.warning("mask_zones[%d] must be a dict, got %r; "
+                            "rejecting entire array (keeping prior)",
+                            idx, rect)
+            return None
+        try:
+            x = rect["x"]
+            y = rect["y"]
+            w = rect["w"]
+            h = rect["h"]
+        except KeyError as exc:
+            logger.warning("mask_zones[%d] missing key %s; rejecting entire "
+                            "array (keeping prior)", idx, exc)
+            return None
+        # Reject bools (subclass of int) and non-numbers; coerce to float.
+        for name, val in (("x", x), ("y", y), ("w", w), ("h", h)):
+            if isinstance(val, bool) or not isinstance(val, (int, float)):
+                logger.warning("mask_zones[%d].%s must be a number, got %r; "
+                                "rejecting entire array (keeping prior)",
+                                idx, name, val)
+                return None
+        x = float(x)
+        y = float(y)
+        w = float(w)
+        h = float(h)
+        # Range checks: each field in [0..1], w>0, h>0, x+w<=1, y+h<=1.
+        for name, val in (("x", x), ("y", y), ("w", w), ("h", h)):
+            if not (0.0 <= val <= 1.0):
+                logger.warning("mask_zones[%d].%s=%r out of range [0..1]; "
+                                "rejecting entire array (keeping prior)",
+                                idx, name, val)
+                return None
+        if w <= 0.0:
+            logger.warning("mask_zones[%d].w must be > 0, got %r; rejecting "
+                            "entire array (keeping prior)", idx, w)
+            return None
+        if h <= 0.0:
+            logger.warning("mask_zones[%d].h must be > 0, got %r; rejecting "
+                            "entire array (keeping prior)", idx, h)
+            return None
+        if x + w > 1.0:
+            logger.warning("mask_zones[%d] x+w=%r > 1; rejecting entire "
+                            "array (keeping prior)", idx, x + w)
+            return None
+        if y + h > 1.0:
+            logger.warning("mask_zones[%d] y+h=%r > 1; rejecting entire "
+                            "array (keeping prior)", idx, y + h)
+            return None
+        validated.append({"x": x, "y": y, "w": w, "h": h})
+    return validated
+
+
 # BL-86: module-level holder for the RuntimeSettingsWatcher instance, so
 # main.start()/stop() can reach it. (main.start() also stores the instance on
 # shared_state.settings_watcher — the SharedState field added in Task 1 —
@@ -335,7 +415,8 @@ class RuntimeSettingsWatcher(threading.Thread):
             return None
         pending = {}
         # Toggles: only accept a plain bool.
-        for key in ("draw_tracking", "box_tracking", "centroid_tracking"):
+        for key in ("draw_tracking", "box_tracking", "centroid_tracking",
+                    "draw_mask_zones"):
             val = rt.get(key)
             if isinstance(val, bool):
                 pending[key] = val
@@ -366,6 +447,12 @@ class RuntimeSettingsWatcher(threading.Thread):
         }
         pending["counting_class_ids"] = list(
             resolve_counting_class_ids(rt, model_catalog))
+        # mask_zones: strict reject-all validation (resolve_mask_zones logs
+        # invalid values and returns None → we don't add it to pending, so
+        # the prior value is kept). Empty list is a valid "clear mask" value.
+        _mz = resolve_mask_zones(rt)
+        if _mz is not None:
+            pending["mask_zones"] = _mz
         return pending
 
     def run(self):

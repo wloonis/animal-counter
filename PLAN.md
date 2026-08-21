@@ -1,172 +1,236 @@
-# Plan: BL-86 — In-process hot-reload of runtime settings (idle-gated, no pod restart)
+# Plan: BL-87 — Mask Zones (detection-level exclusion)
 
 ## Summary
-Add a lightweight mtime-polling watcher thread that validates `/conf/runtime-settings.json`
-changes and stores them thread-safe as "pending"; `DisplayThread.run()` applies them via
-setters / `shared_state` writes **only at an idle window** (`reload_pending AND not
-shared_state.recording`). Nothing ever applies mid-recording. This lets the companion
-(`PUT /api/settings` → writes `/conf/runtime-settings.json`) take effect without restarting
-the pod, replacing the current boot-only read in `start()`.
+
+Add **detection-level exclusion zones** (`mask_zones`): normalized axis-aligned
+rects `{x,y,w,h}` in `[0..1]`. Detections whose centroid `((x1+x2)/2,
+(y1+y2)/2)` falls inside any rect are dropped in `post_process` **before**
+OC-SORT (no track → no count). Hot-reloaded via the existing BL-86 watcher at
+idle (no pod restart), additive to the IPC contract, generic across species. A
+new `draw_mask_zones` toggle (default `true`, independent of `draw_tracking`)
+controls a semi-transparent overlay of the masked rects for visual feedback.
 
 ## In Scope
-- Watcher thread polling `mtime` of `/conf/runtime-settings.json` (~2 s): on change, re-read +
-  validate (reuse existing `load_runtime_settings` / `resolve_counting_line_orientation` /
-  `resolve_counting_class_ids`); if valid, store thread-safe on `shared_state.pending_settings` +
-  set `shared_state.reload_pending=True`. Never applies.
-- Idle checkpoint inside `DisplayThread.run()`: when `reload_pending AND not recording`, apply
-  ALL pending settings (toggles + line offset/orientation + counting_class_ids) → clear
-  `reload_pending`. Single applier thread → no setter race.
-- Apply all runtime settings uniformly gated to idle: `draw_tracking`/`box_tracking`/
-  `centroid_tracking` (write `shared_state`), `offset_counting_line` + `counting_line_orientation`
-  (setters on `Counting` + `Rendering`, incl. `PLUS_DIR`/`MINUS_DIR` re-derivation in `Counting`),
-  `counting_class_ids` (write `shared_state.counting_class_ids` + reset `shared_state.sub_counts`).
-- Reset semantics: `counting_class_ids` change at idle → reset `counter_to_right` + `sub_counts` to
-  0 (fresh-session, matches boot). Line-only (offset/orientation) or toggle-only change → NO reset.
-  BL-70 per-video delta snapshot (`record_start_count`) is separate and unaffected.
-- Boot unchanged: `start()` still reads `/conf` once at startup; the watcher is purely additive
-  (started after threads launch, joined in `stop()`).
+- `post_process` centroid-in-rect pre-filter (after `counting_class_ids` filter, before NMS).
+- `mask_zones` + `draw_mask_zones` fields on `shared_state`; defaults in `settings.py`.
+- `resolve_mask_zones(rt)` strict validator in `state.py`; wired into the BL-86 watcher `_build_pending()` + boot block in `main.py`.
+- Idle apply in `display_thread.py` (no counter reset).
+- `infer_thread.py` passes `mask_zones` to `post_process`.
+- Semi-transparent overlay in `ui/rendering.py` (gated on `draw_mask_zones`, independent of `draw_tracking`).
+- `docs/IPC_CONTRACT.md` additive schema rows + example.
+- `docs/04_configuration.md` + `docs/05_counting_pipeline.md` doc updates.
 
 ## Out of Scope
-- Any change to counting *decision* logic (crossing/guards/tracker params) — standard validation
-  (1 reference video), not `--full`.
-- Companion changes (it already writes `/conf` via `PUT /api/settings`).
-- Mid-recording application of any setting (hard non-negotiable constraint).
-- Optional "en attente/appliqué" status display (follow-up, not required).
+- No changes to counting decision logic (crossing/guards/tracker params) — mask is a pure detection pre-filter.
+- No per-species masks (generic across all species).
+- No polygons (axis-aligned rects only).
+- No mask at counting level (detection-level only).
+- Companion repo changes (BL-88, sister issue #16) — coordinated but separate BL.
 
 ## Architecture Decisions
-- **Watcher stores only; DisplayThread applies** — the watcher never touches `Counting`/
-  `Rendering` instances (owned by DisplayThread). Applying setters from the watcher would race a
-  mid-frame read in DisplayThread. One thread (DisplayThread) is the single applier.
-- **Uniform idle gating for ALL settings** — even purely-visual toggles (zero counting impact)
-  wait for idle, for consistency and to keep one code path.
-- **Setter approach (not per-frame shared_state re-read)** — applies atomically at the idle
-  boundary. `Counting.update_line(offset, orientation)` re-derives `PLUS_DIR`/`MINUS_DIR` because
-  those direction labels are set in `__init__` from orientation.
-- **`counting_class_ids` change resets counters to 0** (fresh-session semantics, matching boot).
-  Line-only / toggle-only changes preserve the running total — only a class-set change makes the
-  old total semantically incoherent.
-- **Boot path unchanged** — `start()` keeps its one-shot `/conf` read (L173-236); the watcher is
-  additive and only picks up *subsequent* changes after boot.
 
-## Reuse
-- `state.load_runtime_settings()` (`app/src/state.py`) — best-effort read of
-  `/conf/runtime-settings.json` → dict (never raises).
-- `state.resolve_counting_line_orientation(rt)` / `state.resolve_counting_class_ids(rt,
-  model_classes)` (`app/src/state.py`) — existing validators, already imported in `main.py` L66-67.
-- `SharedState` (`app/src/utils/shared_state.py`) — add the pending-state fields here.
-- `Counting.offset_counting_line` / `counting_line_orientation` / `PLUS_DIR` / `MINUS_DIR`
-  (`app/src/core/counting.py` L62-79) — read per-frame; a setter hot-swaps them.
-- `Rendering.offset_counting_line` / `counting_line_orientation` (`app/src/ui/rendering.py`
-  L66-71) — read per-frame; a setter hot-swaps them.
+- **Detection-level, not counting-level**: dropping the detection before the
+  tracker means no track is ever created for a masked region → it can never
+  cross the line → it can never be counted. This is simpler and safer than
+  post-hoc filtering at count time (which would leave ghost tracks and corrupt
+  OC-SORT state). Insertion point is **after** the `counting_class_ids` filter
+  and **before** NMS in `post_process` (`core/inference.py`), so masked boxes
+  never compete in NMS either.
+- **Normalized rects, centroid test in pixel space**: rects are stored in
+  `[0..1]` (resolution-independent, survives camera/resolution swaps). At
+  filter time they are scaled to pixels by `origin_w`/`origin_h` (already in
+  `post_process` scope). Centroid = `((x1+x2)/2, (y1+y2)/2)` of the detection
+  box; a detection is dropped if its centroid is inside ANY rect.
+- **Default `[]` = no-op**: when `mask_zones` is None/empty, the pre-filter is
+  skipped entirely → byte-identical current behavior (regression bar = standard
+  validation PASS 9/9).
+- **Strict reject-all validation + WARN**: any single invalid rect (out-of-range
+  x/y/w/h, non-positive w/h, x+w>1, y+h>1, non-dict element, non-list value)
+  → the **entire** `mask_zones` array is rejected (field ignored, prior kept),
+  WARNING logged. No silent clamping (matches BL-84 posture for
+  offset/orientation). The companion side (BL-88) rejects the PUT; the
+  countingapp side ignores the invalid field and keeps the prior value.
+- **No counter reset on mask_zones change**: a mask change alters *where* we
+  count (excluded regions), not *what* we count (the species set). This is
+  analogous to `offset_counting_line`/`counting_line_orientation` (no reset),
+  not to `counting_class_ids` (reset). `counter_to_right` + `sub_counts`
+  are left untouched in the idle apply block.
+- **`draw_mask_zones` is an independent toggle** (default `true`), NOT gated on
+  `draw_tracking`. The operator can see the mask overlay even on raw (untracked)
+  frames, because the mask is a detection-level concept that exists independent
+  of tracking visualization. It is hot-reloadable like the other toggles via the
+  BL-86 watcher.
+- **Reuse the BL-86 watcher pattern verbatim**: `resolve_mask_zones(rt)` mirrors
+  `resolve_counting_line_orientation` / `resolve_counting_class_ids` (module-level
+  function, logs invalid + returns None → not added to pending). The boot block
+  in `main.py` and the idle apply block in `display_thread.py` mirror the
+  existing per-key guards for toggles/offset/orientation/counting_class_ids.
 
 ## Tasks
 
-- [x] **Task 1: Add pending-state fields to `SharedState`** — `app/src/utils/shared_state.py`
-  - Add to `SharedState.__init__`: `self.pending_settings = None` (dict or None),
-    `self.reload_pending = False`, and `self.reload_lock = threading.Lock()` (import `threading`).
-  - These hold the validated pending payload + the flag the DisplayThread polls + the lock that
-    serializes the watcher write vs the DisplayThread read-and-clear.
-  - No behavior change at boot (fields are None/False until the watcher first fires).
+- [x] **Task 1: ADD `resolve_mask_zones(rt)` validator** `app/src/state.py` —
+  New module-level function `resolve_mask_zones(rt)` returning a list of
+  validated rect dicts `[{x,y,w,h},...]` or `None` (reject-all). Validation:
+  `rt["mask_zones"]` must be a list; each element a dict with numeric
+  `x,y,w,h` in `[0..1]`, `w>0`, `h>0`, `x+w<=1`, `y+h<=1`. Any violation →
+  log WARNING + return None (caller keeps prior). Reuse the
+  `resolve_counting_line_orientation` / `resolve_counting_class_ids` style
+  (logger.warning + return None). No clamping.
 
-- [x] **Task 2: Add `Counting.update_line(offset, orientation)` setter** — `app/src/core/counting.py`
-  - New method: validates `orientation` (lowercase, `"vertical"|"horizontal"`, else → `"vertical"`)
-    and clamps `offset` to `-300..300` (mirror the `main.py` sanity cap); sets `self.offset_counting_line`
-    and `self.counting_line_orientation`; re-derives `self.PLUS_DIR` / `self.MINUS_DIR` from the new
-    orientation (same logic as `__init__` L77-79) so direction labels don't go stale on a mid-life
-    orientation swap.
-  - Pure attribute write — no counting-decision logic changes. Per-frame reads in `cross_pos()` /
-    line-position computation pick up the new values on the next frame.
+- [x] **Task 2: ADD defaults** `app/src/settings.py` —
+  Add `MASK_ZONES = []` and `DRAW_MASK_ZONES = True` module-level defaults,
+  aligned with the existing `DRAW_TRACKING`/`BOX_TRACKING`/`CENTROID_TRACKING`
+  defaults and the `.env`→`settings.py` fallback chain documented in
+  `docs/04_configuration.md`.
 
-- [x] **Task 3: Add `Rendering.update_line(offset, orientation)` setter** — `app/src/ui/rendering.py`
-  - New method: normalizes orientation (lowercase, `"horizontal"` else `"vertical"`, mirroring
-    `__init__` L70-71) and sets `self.offset_counting_line` + `self.counting_line_orientation`.
-  - No button/reload logic; pure attribute write.
+- [x] **Task 3: ADD `shared_state` fields** `app/src/utils/shared_state.py` —
+  In `SharedState.__init__`, add `self.mask_zones = []` and
+  `self.draw_mask_zones = True` near the existing `counting_class_ids` /
+  `draw_tracking` fields (L97-130 region). These are read per-frame by
+  `infer_thread.py` (mask_zones) and `rendering.py` (draw_mask_zones).
 
-- [x] **Task 4: Add `RuntimeSettingsWatcher` thread class** — `app/src/state.py`
-  - New `threading.Thread` subclass: `__init__(self, shared_state, stop_event, poll_interval=2.0)`.
-    Polls `os.path.getmtime(RUNTIME_SETTINGS_PATH)` every `poll_interval` seconds; on mtime change,
-    calls `load_runtime_settings()` + `resolve_counting_line_orientation(rt)` +
-    `resolve_counting_class_ids(rt, {names, default_counting_class})` (same model catalog resolution
-    as `main.py` boot block), assembles a validated pending dict, then under
-    `shared_state.reload_lock` sets `shared_state.pending_settings = <dict>` and
-    `shared_state.reload_pending = True`. On any read/parse error, logs a WARNING and does NOT set
-    pending (fail-open: keep current settings). Exits when `stop_event.is_set()`.
-  - Add a module-level `settings_watcher = None` holder in `state.py` so `main.start()`/`stop()`
-    can reach the instance.
+- [x] **Task 4: ADD centroid-in-rect pre-filter** `app/src/core/inference.py` —
+  Change `post_process(self, output, origin_h, origin_w, counting_class_ids=None)`
+  signature to add `mask_zones=None`. After the `counting_class_ids` filter
+  (current L318-330) and **before** NMS (L335), insert: if `mask_zones` is
+  truthy (non-None, non-empty), compute centroids `cx=(boxes[:,0]+boxes[:,2])/2`,
+  `cy=(boxes[:,1]+boxes[:,3])/2`, scale each rect to pixels
+  (`px=int(r["x"]*origin_w)`, etc.), build a boolean keep mask
+  (centroid NOT inside any rect), filter `boxes`/`scores`/`class_ids`. When
+  `mask_zones` is None/empty → skip entirely (no-op). Docstring updated to
+  describe the new param + drop semantics.
 
-- [x] **Task 5: Add idle checkpoint to `DisplayThread.run()`** — `app/src/display_thread.py`
-  - Near the top of the per-frame loop (after the arret/powoff sentinel check, before frame
-    processing), add: `if shared_state.reload_pending and not shared_state.recording:` → take the
-    pending payload under `shared_state.reload_lock` (read + clear `reload_pending` + grab
-    `pending_settings` and set it back to None), then apply it:
-    - toggles: `shared_state.draw_tracking` / `box_tracking` / `centroid_tracking` from pending
-      (only if present/bool, mirroring the boot block's guards).
-    - line: `self.counting.update_line(offset, orientation)` + `self.rendering.update_line(offset,
-      orientation)` (only if offset/orientation present in pending).
-    - class ids: if the pending `counting_class_ids` differs from the current
-      `shared_state.counting_class_ids`, set `shared_state.counting_class_ids = <new list>`,
-      `self.counting.counting_class_ids = list(<new>)`, reset `shared_state.sub_counts = {cid: 0
-      for cid in <new>}`, and reset `shared_state.counter_to_right = 0` (fresh-session). If only
-      line/toggles changed (class set unchanged), do NOT reset counters.
-  - Log at INFO: "runtime settings applied (idle)" with the changed keys; or "pending settings
-    held (recording in progress)" when recording blocks application.
-  - This is the SINGLE applier → no cross-thread setter race.
+- [x] **Task 5: PASS `mask_zones` to `post_process`** `app/src/infer_thread.py` —
+  At the `self.yolo.post_process(...)` call (L111-115), add
+  `mask_zones=shared_state.mask_zones` alongside the existing
+  `counting_class_ids=shared_state.counting_class_ids`.
 
-- [x] **Task 6: Start/stop the watcher in `main.py`** — `app/src/main.py`
-  - In `start()`, after `shared_state.infer_thread.start()` / `shared_state.display_thread.start()`
-    (end of the thread-launch block), instantiate + start `RuntimeSettingsWatcher(shared_state,
-    shared_state.stop_event)` and store it on `shared_state.settings_watcher` (new SharedState
-    field added in Task 1 — note: add `self.settings_watcher = None` to `SharedState.__init__` as
-    part of Task 1).
-  - In `stop()`, before joining InferThread/DisplayThread, signal + join the watcher:
-    `sw = getattr(shared_state, "settings_watcher", None); if sw and sw.is_alive(): sw.join(timeout=2)`
-    (best-effort, like the HistoryThread join already in `stop()`).
+- [x] **Task 6: WIRE `mask_zones` + `draw_mask_zones` into the watcher** `app/src/state.py` —
+  In `RuntimeSettingsWatcher._build_pending()`, after the existing per-key
+  blocks: (a) add `draw_mask_zones` to the bool-toggle acceptance loop
+  (`for key in ("draw_tracking","box_tracking","centroid_tracking",
+  "draw_mask_zones")`); (b) call `resolve_mask_zones(rt)` and if non-None add
+  `pending["mask_zones"] = <validated list>`. This reuses the exact pattern
+  already there for the other keys.
 
-- [x] **Task 7: `py_compile` + standard validation** — `app/src/` and `scripts/validate_on_jetson.sh`
-  - `python3 -m py_compile` on every changed file (no syntax errors).
-  - Run `scripts/validate_on_jetson.sh` (standard mode, 1 reference video) → expect PASS with the
-    same count (no regression; boot path unchanged, vertical + offset 0 default on the reference).
+- [x] **Task 7: RESOLVE at boot** `app/src/main.py` —
+  In the boot block (L180-239), mirror the existing toggle/offset resolution:
+  (a) `if isinstance(rt.get("draw_mask_zones"), bool): shared_state.draw_mask_zones = rt["draw_mask_zones"]`;
+  (b) `_mz = resolve_mask_zones(rt); if _mz is not None: shared_state.mask_zones = _mz`.
+  Placed alongside the `draw_tracking`/`box_tracking`/`centroid_tracking` and
+  `counting_class_ids` boot reads.
+
+- [x] **Task 8: APPLY at idle (no reset)** `app/src/display_thread.py` —
+  In the idle apply block (L262-320): (a) add `"draw_mask_zones"` to the toggles
+  loop (`for key in (...)` + `setattr(shared_state, key, pending[key])`); (b)
+  after the `counting_class_ids` reset block, add a `mask_zones` apply:
+  `_mz = pending.get("mask_zones"); if isinstance(_mz, list):
+  shared_state.mask_zones = _mz; changed.append("mask_zones")` — **NO** reset of
+  `counter_to_right`/`sub_counts` (analogous to the line offset/orientation
+  apply, not the counting_class_ids reset).
+
+- [x] **Task 9: DRAW overlay** `app/src/ui/rendering.py` —
+  In `draw_ui` (L161+), after the existing overlay drawing and gated on
+  `shared_state.draw_mask_zones and shared_state.mask_zones` (independent of
+  `draw_tracking`): for each rect, scale to pixels (`x*w`, `y*h`, `rw*w`,
+  `rh*h`) and draw a semi-transparent filled rect (e.g. `cv2.addWeighted` or a
+  translucent overlay color) + a solid border. Skip when `mask_zones` is empty
+  or `draw_mask_zones` is false. The overlay must be drawn on the frame
+  *before* it is written/displayed so it appears in both the live window and
+  recorded clips consistently with how `draw_tracking` overlays behave.
+
+- [x] **Task 10: UPDATE IPC contract** `docs/IPC_CONTRACT.md` —
+  Additive to the `runtime-settings.json` section (L99-126): (a) add
+  `mask_zones` and `draw_mask_zones` to the example JSON block; (b) add two
+  rows to the schema table:
+  - `mask_zones` | array[object] | each `{x,y,w,h}` in `[0..1]`, `w>0`, `h>0`, `x+w<=1`, `y+h<=1` | `[]` | **(BL-87)** normalized axis-aligned exclusion rects; detections whose centroid falls inside any rect are dropped before tracking (no track → no count). Strict reject-all on any invalid rect (field ignored, prior kept, WARNING). Hot-reloaded at idle. Generic (all species).
+  - `draw_mask_zones` | bool | — | `true` | **(BL-87)** draw a semi-transparent overlay of the `mask_zones` rects (independent of `draw_tracking`). Hot-reloaded.
+  Note that the contract MUST stay identical in both repos (AGENTS.md §9);
+  the companion write side is BL-88 (sister issue #16).
+
+- [x] **Task 11: UPDATE config + pipeline docs** `docs/04_configuration.md` + `docs/05_counting_pipeline.md` —
+  - `docs/04_configuration.md` L118-129: add `mask_zones` and `draw_mask_zones`
+    to the enumerated hot-reloaded fields list + the "no reset on mask_zones
+    change" note. Add `MASK_ZONES`/`DRAW_MASK_ZONES` to the settings.py
+    defaults table (L67-74 region).
+  - `docs/05_counting_pipeline.md` L30: extend the `post_process` description
+    from "(NMS, conf filter)" to include the mask_zones centroid pre-filter
+    step (after class filter, before NMS), with a one-line note on the
+    no-track→no-count semantics.
 
 ## Documentation Impact
-The current docs describe the old "hot-reload per recording / per pod boot" semantics. After
-this change the semantics become "applied at idle window, no pod restart". Stale references:
-- `docs/IPC_CONTRACT.md` L99-126 — "reads at the start of every recording … hot-reload, no restart"
-  and "Hot-reloaded per recording" and "Takes full effect only when a new InferThread/Counting is
-  created (a mid-session change needs a recording restart)". Update to: watcher thread polls for
-  changes, applied at the first idle window (not mid-recording), no pod restart. Note the
-  counter-reset-on-class-id-change rule.
-- `docs/04_configuration.md` L34 — "runtime settings (runtime-settings.json, hot-reloaded by the
-  companion …)". Clarify idle-gated application.
-- `docs/05_counting_pipeline.md` L54-57, L301, L342 — `OFFSET_PERCENT_COUNTING_LINE` line-position
-  description; the "next recording" wording may imply per-recording. Align with idle-gated reload.
-- `docs/11_counting_history.md` L110, L129 — `offset_counting_line` in session metadata; no
-  schema change but the application timing note may need an update.
-- `AGENTS.md` L558, L560 — "runtime-settings.json reader (hot-reload)" /
-  "counting_class_ids reader (hot-reload)". Update to reflect the watcher + idle checkpoint.
-(The downstream docs-sync phase re-verifies these; listed here so the plan is doc-aware.)
+
+- `docs/IPC_CONTRACT.md` — **directly edited** (Task 10): the
+  `runtime-settings.json` schema table + example gain two additive rows. This
+  is the authoritative cross-repo contract; the companion (BL-88) must mirror
+  it exactly.
+- `docs/04_configuration.md` L118-129 — **goes stale**: the enumerated list of
+  hot-reloaded fields (`draw_tracking`, `box_tracking`, `centroid_tracking`,
+  `offset_counting_line`, `counting_line_orientation`, `counting_class_ids`)
+  omits `mask_zones` + `draw_mask_zones`. Also the settings.py defaults table
+  (L67-74) omits the two new defaults. Updated in Task 11.
+- `docs/05_counting_pipeline.md` L30 — **goes stale**: the
+  `post_process (NMS, conf filter)` description omits the new mask pre-filter
+  step. Updated in Task 11.
+- `docs/03_deployment.md` L86 — references `/conf` (runtime-settings) but only
+  lists file names, not field-level schema; **no stale reference** (the hostPath
+  is unchanged). No edit needed.
+- `README.md` — references `docs/IPC_CONTRACT.md` and `docs/04_configuration.md`
+  in the doc table but does not enumerate settings fields; **no stale
+  reference**. No edit needed.
+- `AGENTS.md` §9 (cross-repo contract invariance) — not edited, but the
+  implementer must verify the `mask_zones`/`draw_mask_zones` contract text is
+  byte-identical to the companion repo's copy (BL-88).
 
 ## Validation
-- `python3 -m py_compile app/src/utils/shared_state.py app/src/state.py app/src/core/counting.py
-  app/src/ui/rendering.py app/src/display_thread.py app/src/main.py` — no syntax errors.
-- `bash scripts/validate_on_jetson.sh` (standard mode, `validation/config.json` →
-  `validation-1-#9.mp4`, tolerance 0) → expect PASS, identical count (boot path unchanged, default
-  vertical + offset 0 on the reference → no behavioral change).
-- Manual (acceptance, on the Jetson): change `counting_line_orientation` + `offset_counting_line`
-  + `counting_class_ids` via companion `PUT /api/settings` → confirm taken into account without pod
-  restart at the first idle window; during a recording, confirm stored-but-not-applied; confirm
-  boot is unchanged.
+
+- **Regression (default `[]`)**: run the standard validation
+  (`bash scripts/validate_on_jetson.sh`) with `mask_zones` absent/empty in
+  `/conf/runtime-settings.json` → result must match the reference count (9/9
+  PASS), byte-identical to current behavior.
+- **Functional (right-edge mask)**: set
+  `/conf/runtime-settings.json` → `"mask_zones": [{"x":0.8,"y":0,"w":0.2,"h":1}]`
+  → re-run validation → detections in the right 20% of the frame are dropped
+  → the count should be ≤ the reference (the masked edge contains at least one
+  counted animal in the reference video). Confirm via the `draw_mask_zones`
+  overlay that the rect is drawn over the right edge.
+- **Hot-reload**: with the pod running in `serve` mode, edit
+  `/conf/runtime-settings.json` to add/remove a `mask_zones` entry → confirm
+  via logs that the watcher fires (`runtime settings applied (idle): mask_zones`)
+  at the next idle window, WITHOUT a pod restart, and WITHOUT a counter reset
+  (`counter_to_right` unchanged).
+- **Invalid rect reject**: set `"mask_zones": [{"x":0.9,"w":0.3}]` (x+w>1) →
+  confirm a WARNING is logged and the prior `mask_zones` is kept (the field is
+  ignored).
+- **Overlay toggle**: set `"draw_mask_zones": false` with non-empty
+  `mask_zones` → confirm the overlay disappears but the detection-level drop
+  still applies. Set `draw_tracking: false` + `draw_mask_zones: true` → confirm
+  the mask overlay still draws (independence).
+- **Unit tests**: `cd app && python -m pytest ../tests/ -v` — add/extend tests
+  for `post_process` with `mask_zones` (centroid-in-rect drop, empty=no-op)
+  and `resolve_mask_zones` (valid/invalid/reject-all).
 
 ## Risks
-- **Race on pending read/write** — the watcher writes `pending_settings` while DisplayThread reads
-  + clears it. Mitigation: `shared_state.reload_lock` serializes both sides (Task 1 + Task 4 +
-  Task 5).
-- **Stale `PLUS_DIR`/`MINUS_DIR` after orientation swap** — if the `Counting` setter forgets to
-  re-derive them, direction labels (and any log lines) report the old orientation. Mitigation:
-  Task 2 explicitly re-derives them, mirroring `__init__`.
-- **Spurious counter reset on a no-op class-id payload** — applying a pending payload whose
-  `counting_class_ids` equals the current set would wrongly zero the counter. Mitigation: Task 5
-  compares the pending set to the current set before resetting.
-- **Watcher thread leak on unclean exit** — if `stop()` doesn't join it. Mitigation: Task 6 adds a
-  best-effort join mirroring the existing HistoryThread join.
-- **Boot regression** — accidentally changing the one-shot `/conf` read in `start()`. Mitigation:
-  the watcher is purely additive; `start()`'s L173-236 block is untouched.
+
+- **Centroid vs box overlap ambiguity**: a detection whose box straddles a mask
+  edge but whose centroid is outside is kept; one whose centroid is inside is
+  dropped. This is the confirmed decision (centroid test), but an operator
+  expecting "any overlap" semantics could be surprised. **Mitigation**: the
+  `draw_mask_zones` overlay makes the boundary visible; documented in the IPC
+  contract + config docs.
+- **Strict reject-all masks a typo**: a single bad rect rejects the entire
+  array, so a typo in one rect silently keeps the old mask. **Mitigation**: the
+  WARNING log names the invalid rect; the companion (BL-88) rejects the PUT with
+  a user-facing error so the operator sees it immediately on the phone.
+- **No reset on mask change could confuse an operator** who expects a fresh
+  count after repositioning masks. **Mitigation**: documented (analogous to
+  line offset, which also doesn't reset); the operator can manually reset from
+  the on-screen UI if they want a fresh count.
+- **Performance**: the centroid-in-rect test is O(detections × rects), trivial
+  for typical rect counts (≤ a handful) and detection counts (≤ tens). No
+  measurable impact expected; if concerned, vectorize with NumPy
+  broadcasting. **Mitigation**: vectorized NumPy implementation in Task 4.
+- **Cross-repo contract drift**: the `mask_zones`/`draw_mask_zones` schema must
+  be byte-identical in the companion repo (BL-88). **Mitigation**: Task 10
+  explicitly flags the AGENTS.md §9 invariance; the implementer coordinates
+  with BL-88.

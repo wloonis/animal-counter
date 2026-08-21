@@ -27,7 +27,7 @@ Two threads cooperate through a `frame_queue` (max size 3, backpressure):
 InferThread (capture + detection)
   ├── read frame (camera /dev/video0 or video file)
   ├── YOLO detection (TensorRT) → bounding boxes + scores + classes
-  ├── post_process (NMS, conf filter) → boxes_pp
+  ├── post_process (NMS, conf filter, mask_zones centroid pre-filter) → boxes_pp
   └── frame_queue.put([image, boxes_pp, ...])
 
 DisplayThread (tracking + counting + rendering)
@@ -42,7 +42,13 @@ DisplayThread (tracking + counting + rendering)
 - **Detection**: YOLO (TensorRT), confidence `PIG_CONFIDENCE_THRESHOLD` (0.6),
   stronger threshold on the first frames
   `PIG_CONFIDENCE_THRESHOLD_START_VIDEO` (0.8). YOLO NMS `IOU_THRESHOLD`
-  (0.45), `CONF_THRESH` (0.5).
+  (0.45), `CONF_THRESH` (0.5). **(BL-87)** `post_process` also applies an
+  optional `mask_zones` centroid pre-filter: after the `counting_class_ids`
+  class filter and before NMS, any detection whose centroid
+  `((x1+x2)/2, (y1+y2)/2)` falls inside a normalized exclusion rect is dropped.
+  Dropping the detection before the tracker means no track is ever created for a
+  masked region → it can never cross the line → it can never be counted
+  (no-track→no-count). Default `[]` = no-op (byte-identical behavior).
 - **Tracking**: `OCSORTTracker` (lib `trackers`), see §4.
 - **Counting**: `Counting.count()`, see §3 and §5.
 

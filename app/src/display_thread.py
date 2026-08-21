@@ -277,7 +277,7 @@ class DisplayThread(threading.Thread):
                     # Toggles: write shared_state (read per-frame by
                     # tracking/rendering). Only apply if present/bool.
                     for key in ("draw_tracking", "box_tracking",
-                                "centroid_tracking"):
+                                "centroid_tracking", "draw_mask_zones"):
                         if isinstance(pending.get(key), bool):
                             setattr(shared_state, key, pending[key])
                             changed.append(key)
@@ -315,6 +315,15 @@ class DisplayThread(threading.Thread):
                                 cid: 0 for cid in new_ids}
                             shared_state.counter_to_right = 0
                             changed.append("counting_class_ids(reset)")
+                    # BL-87: mask_zones apply — NO counter reset (a mask
+                    # change alters WHERE we count, not WHAT we count,
+                    # analogous to the line offset/orientation apply above,
+                    # not the counting_class_ids reset). Empty list is a
+                    # valid "clear mask" value (isinstance(list) accepts it).
+                    _mz = pending.get("mask_zones")
+                    if isinstance(_mz, list):
+                        shared_state.mask_zones = _mz
+                        changed.append("mask_zones")
                     if changed:
                         logger.info("runtime settings applied (idle): %s",
                                     ", ".join(changed))

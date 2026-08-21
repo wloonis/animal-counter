@@ -65,6 +65,7 @@ from state import (
     shared_state, settings, logger, _IOU_METRICS,
     load_runtime_settings, load_classes_yaml, publish_model_classes_json,
     resolve_counting_class_ids, resolve_counting_line_orientation,
+    resolve_mask_zones,
     RuntimeSettingsWatcher,
 )
 # Split thread classes.
@@ -195,6 +196,12 @@ def start(input_source, video_path):
                     shared_state.box_tracking = rt["box_tracking"]
                 if isinstance(rt.get("centroid_tracking"), bool):
                     shared_state.centroid_tracking = rt["centroid_tracking"]
+                # BL-87: draw_mask_zones is an independent toggle (default
+                # true), NOT gated on draw_tracking — the mask overlay is a
+                # detection-level concept that exists independent of tracking
+                # visualization. Same boot-read pattern as the other toggles.
+                if isinstance(rt.get("draw_mask_zones"), bool):
+                    shared_state.draw_mask_zones = rt["draw_mask_zones"]
                 _off = rt.get("offset_counting_line")
                 if isinstance(_off, bool) or not isinstance(_off, int):
                     # bool is a subclass of int — reject it explicitly; only accept
@@ -237,6 +244,18 @@ def start(input_source, video_path):
                     cid: 0 for cid in shared_state.counting_class_ids}
                 logger.info("counting_class_ids resolved: %r",
                             shared_state.counting_class_ids)
+
+                # BL-87: resolve the effective mask_zones (detection-level
+                # exclusion rects) from runtime-settings.json. Per-recording
+                # resolution (same semantics as offset_counting_line): a
+                # companion change takes effect on the NEXT recording, never
+                # mid-recording. resolve_mask_zones returns None for
+                # absent/invalid → leave the prior value in place (default []).
+                # No counter reset on a mask change (mask alters WHERE we
+                # count, not WHAT we count — analogous to line offset).
+                _mz = resolve_mask_zones(rt)
+                if _mz is not None:
+                    shared_state.mask_zones = _mz
             tracking = Tracking(draw_box=shared_state.draw_tracking, shared_state=shared_state)
             counting = Counting(shared_state=shared_state, pig_confidence_threshold=settings.PIG_CONFIDENCE_THRESHOLD, offset_counting_line=settings.OFFSET_PERCENT_COUNTING_LINE, counting_line_orientation=settings.COUNTING_LINE_ORIENTATION, lost_buffer_frames=settings.COUNTING_LOST_BUFFER_FRAMES, reassoc_line_band=settings.COUNTING_REASSOC_LINE_BAND, reassoc_max_dist_x=settings.COUNTING_REASSOC_MAX_DIST_X, reassoc_max_dist_y=settings.COUNTING_REASSOC_MAX_DIST_Y, hysteresis_px=settings.COUNTING_HYSTERESIS_PX, mirror_guard=settings.COUNTING_MIRROR_GUARD, mirror_max_age=settings.COUNTING_MIRROR_MAX_AGE, mirror_line_band=settings.COUNTING_MIRROR_LINE_BAND, mirror_new_band=settings.COUNTING_MIRROR_NEW_BAND, mirror_max_dist_y=settings.COUNTING_MIRROR_MAX_DIST_Y, resurrection_threshold=settings.COUNTING_RESURRECTION_THRESHOLD, resurrection_min_jump=settings.COUNTING_RESURRECTION_MIN_JUMP, guard_max_age=settings.COUNTING_GUARD_MAX_AGE, reid_window=settings.COUNTING_REID_WINDOW, reid_min_age=settings.COUNTING_REID_MIN_AGE)
             # BL-78: plumb the resolved counting set to the counting pipeline.

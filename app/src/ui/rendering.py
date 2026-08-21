@@ -235,6 +235,45 @@ class Rendering:
             text_y = h // 2
             cv2.putText(img, msg, (text_x, text_y), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 0, 255), 2)
 
+        # =========================
+        # BL-87: MASK ZONES OVERLAY — semi-transparent exclusion rects.
+        # Independent of draw_tracking (the mask is a detection-level
+        # concept that exists whether or not tracking boxes are drawn), gated
+        # on shared_state.draw_mask_zones (default true). Each rect is stored
+        # normalized in [0..1] so it scales to the current frame dimensions
+        # (resolution-independent, survives camera/resolution swaps). A
+        # translucent filled rect (cv2.addWeighted on the ROI) marks the
+        # excluded area; a solid border makes the boundary visible so the
+        # operator can see exactly where detections are dropped (centroid-
+        # in-rect test). Drawn before the frame is displayed so it appears in
+        # the live window consistently with the other overlays.
+        # =========================
+        if getattr(shared_state, "draw_mask_zones", True) and getattr(shared_state, "mask_zones", None):
+            for rect in shared_state.mask_zones:
+                try:
+                    rx = int(round(rect["x"] * w))
+                    ry = int(round(rect["y"] * h))
+                    rw = int(round(rect["w"] * w))
+                    rh = int(round(rect["h"] * h))
+                except (KeyError, TypeError, ValueError):
+                    continue
+                # Clamp to frame bounds (defensive — validated rects already
+                # satisfy x+w<=1, but rounding could push a pixel past the edge).
+                x1 = max(0, min(rx, w))
+                y1 = max(0, min(ry, h))
+                x2 = max(0, min(rx + rw, w))
+                y2 = max(0, min(ry + rh, h))
+                if x2 <= x1 or y2 <= y1:
+                    continue
+                # Semi-transparent magenta fill on the ROI.
+                overlay = img.copy()
+                cv2.rectangle(overlay, (x1, y1), (x2, y2),
+                              (0, 0, 255), thickness=-1)
+                cv2.addWeighted(overlay, 0.25, img, 0.75, 0, img)
+                # Solid border so the boundary stays crisp.
+                cv2.rectangle(img, (x1, y1), (x2, y2),
+                              (0, 0, 255), thickness=2)
+
         return img
 
 

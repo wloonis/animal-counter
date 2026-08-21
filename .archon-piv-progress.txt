@@ -210,3 +210,14 @@ Task 4: ADD RuntimeSettingsWatcher thread class — 05fc2a3
 Task 5: ADD idle checkpoint to DisplayThread.run() — bceccfa
 Task 6: Start/stop RuntimeSettingsWatcher in main.py — 18cf099
 Task 7: py_compile PASS (all 6 changed files); validate_on_jetson.sh DEFERRED to jetson-validate phase (Jetson unreachable here) — a7290ee
+Task 1: ADD resolve_mask_zones(rt) validator — 92baa6d
+Task 2: ADD defaults MASK_ZONES + DRAW_MASK_ZONES — 3618a57
+Task 3: ADD shared_state fields (mask_zones + draw_mask_zones) — 46c7c38
+Task 4: ADD centroid-in-rect pre-filter — 9c2623b
+Task 5: PASS mask_zones to post_process — 10c7215
+Task 6: WIRE mask_zones + draw_mask_zones into watcher — 88661ec
+Task 7: RESOLVE mask_zones + draw_mask_zones at boot — be6b14a
+Task 8: APPLY mask_zones + draw_mask_zones at idle (no reset) — 6907391
+Task 9: DRAW semi-transparent mask_zones overlay — 8f37f92
+Task 10: UPDATE IPC contract (mask_zones + draw_mask_zones rows + example) — 64368d6
+Task 11: UPDATE config + pipeline docs (mask_zones pre-filter + no-reset) — d57a3f9
