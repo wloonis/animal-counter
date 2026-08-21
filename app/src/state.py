@@ -56,6 +56,14 @@ shared_state.draw_box_line_thickness = settings.DRAW_BOX_LINE_THICKNESS
 shared_state.draw_label_font_scale = settings.DRAW_LABEL_FONT_SCALE
 shared_state.draw_label_thickness = settings.DRAW_LABEL_THICKNESS
 shared_state.draw_centroid_radius = settings.DRAW_CENTROID_RADIUS
+# BL-83: counting line orientation ("vertical" | "horizontal"). Default
+# mirrors the Settings default; main.py hot-reloads it per-recording from
+# runtime-settings.json (same "next recording" semantics as
+# offset_counting_line). Absent/invalid in runtime-settings -> keep this
+# default (resolve_counting_line_orientation returns None).
+# +1 convention: vertical +1 = right->left = LEFT; horizontal +1 = down->up
+# = UP (crossing-axis position DECREASING past the line = +1, unchanged).
+shared_state.counting_line_orientation = settings.COUNTING_LINE_ORIENTATION
 
 # Map the COUNTING_TRACKER_IOU setting (string) to a BaseIoU instance for
 # OCSORTTracker(iou=...). trackers>=2.5.0 expects an IoU instance, not a string.
@@ -239,3 +247,34 @@ def resolve_counting_class_ids(rt, model_classes):
     # Fallback to the model default (or legacy 1 when no catalog).
     fallback = default if isinstance(default, int) and 0 <= default < nc else 1
     return [fallback]
+
+
+def resolve_counting_line_orientation(rt):
+    """Resolve the effective counting_line_orientation (BL-83).
+
+    ``rt`` is the runtime-settings dict (from ``load_runtime_settings()``).
+    Returns the validated lowercase orientation (``"vertical"`` or
+    ``"horizontal"``) when ``rt['counting_line_orientation']`` is a string
+    whose value (case-insensitive) is one of those two; returns ``None`` when
+    the key is absent, not a string, is a bool, or holds any other value —
+    in all those ``None`` cases the caller leaves the settings default in
+    place (does NOT overwrite ``shared_state``/``settings``). Invalid values
+    are logged at WARNING level. Never raises.
+    """
+    raw = rt.get("counting_line_orientation") if isinstance(rt, dict) else None
+    if raw is None:
+        return None
+    if isinstance(raw, bool):
+        logger.warning("counting_line_orientation must be a string, got bool "
+                        "%r; keeping default", raw)
+        return None
+    if not isinstance(raw, str):
+        logger.warning("counting_line_orientation must be a string, got %r; "
+                        "keeping default", raw)
+        return None
+    norm = raw.strip().lower()
+    if norm not in ("vertical", "horizontal"):
+        logger.warning("counting_line_orientation must be 'vertical' or "
+                        "'horizontal', got %r; keeping default", raw)
+        return None
+    return norm
