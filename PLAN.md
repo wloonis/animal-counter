@@ -77,7 +77,7 @@ controls a semi-transparent overlay of the masked rects for visual feedback.
   `resolve_counting_line_orientation` / `resolve_counting_class_ids` style
   (logger.warning + return None). No clamping.
 
-- [ ] **Task 2: ADD defaults** `app/src/settings.py` —
+- [x] **Task 2: ADD defaults** `app/src/settings.py` —
   Add `MASK_ZONES = []` and `DRAW_MASK_ZONES = True` module-level defaults,
   aligned with the existing `DRAW_TRACKING`/`BOX_TRACKING`/`CENTROID_TRACKING`
   defaults and the `.env`→`settings.py` fallback chain documented in
