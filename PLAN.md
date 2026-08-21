@@ -112,7 +112,7 @@ the pod, replacing the current boot-only read in `start()`.
     held (recording in progress)" when recording blocks application.
   - This is the SINGLE applier → no cross-thread setter race.
 
-- [ ] **Task 6: Start/stop the watcher in `main.py`** — `app/src/main.py`
+- [x] **Task 6: Start/stop the watcher in `main.py`** — `app/src/main.py`
   - In `start()`, after `shared_state.infer_thread.start()` / `shared_state.display_thread.start()`
     (end of the thread-launch block), instantiate + start `RuntimeSettingsWatcher(shared_state,
     shared_state.stop_event)` and store it on `shared_state.settings_watcher` (new SharedState
