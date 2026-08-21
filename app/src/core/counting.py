@@ -97,6 +97,23 @@ class Counting:
         self.mirror_line_band = mirror_line_band
         self.mirror_new_band = mirror_new_band
         self.mirror_max_dist_y = mirror_max_dist_y
+        # BL-83: semantic distance-band mapping by orientation. The settings
+        # names reassoc_max_dist_x/y and mirror_max_dist_y are KEPT (no rename
+        # to avoid companion/config churn) but mapped to crossing/along roles:
+        #   vertical   -> cross=x, along=y
+        #   horizontal -> cross=y, along=x
+        # so the SAME tuned values apply to both orientations. The id-switch
+        # fusion uses reassoc_max_dist_{cross,along}; the mirror guard's
+        # mirror_max_dist_y is the y-distance threshold, which is the along
+        # distance for vertical and the cross distance for horizontal (so the
+        # y-distance expression is reused unchanged, only its semantic role
+        # changes).
+        if self.counting_line_orientation == "horizontal":
+            self.reassoc_max_dist_cross = reassoc_max_dist_y
+            self.reassoc_max_dist_along = reassoc_max_dist_x
+        else:
+            self.reassoc_max_dist_cross = reassoc_max_dist_x
+            self.reassoc_max_dist_along = reassoc_max_dist_y
         # Resurrection: track the last frame each ID was actually seen, so we
         # can detect a known ID reappearing after a long absence (re-ID) and
         # avoid firing a crossing on the resulting position jump (Pattern B).
@@ -175,6 +192,24 @@ class Counting:
         if self.counting_line_orientation == "horizontal":
             return element[0]
         return element[1]
+
+    def lost_cross_pos(self, data):
+        """Crossing-axis coordinate of a lost_tracks entry {"cx","cy",...}.
+
+        Returns data["cx"] for vertical, data["cy"] for horizontal (BL-83).
+        """
+        if self.counting_line_orientation == "horizontal":
+            return data["cy"]
+        return data["cx"]
+
+    def lost_along_pos(self, data):
+        """Along-line coordinate of a lost_tracks entry {"cx","cy",...}.
+
+        Returns data["cy"] for vertical, data["cx"] for horizontal (BL-83).
+        """
+        if self.counting_line_orientation == "horizontal":
+            return data["cx"]
+        return data["cy"]
 
     def _emit_event(self, event_type, detail=None):
         """Notify all subscribers of an instrumentation event (read-only).
@@ -596,14 +631,18 @@ class Counting:
                     # occlusion at the line. If a track was recently lost on the
                     # OTHER side, close to the line and spatially near, fuse them
                     # and trigger the crossing the switch would have swallowed:
-                    #   - new ID on the LEFT (<=x) + lost "in" (right)  -> crossed LEFT  (+1)
-                    #   - new ID on the RIGHT (>x) + lost "out" (left)  -> crossed RIGHT (-1)
+                    #   - new ID on the +1 side (cross<=line) + lost "in"  -> crossed PLUS_DIR (+1)
+                    #   - new ID on the -1 side (cross> line) + lost "out" -> crossed MINUS_DIR (-1)
                     # (the -1 branch handles a pig that already crossed (+1), came
-                    # back left->right and got an ID-switch at the line on its
-                    # return: without it, the -1 of the return would be lost.)
+                    # back and got an ID-switch at the line on its return: without
+                    # it, the -1 of the return would be lost.)
+                    # BL-83: all positions/distances are on the abstract crossing /
+                    # along axes (vertical cross=x/along=y; horizontal cross=y/
+                    # along=x) so the SAME tuned bands apply to both orientations.
                     fused = False
                     if element[3] in counting_class_ids:
-                        want_side = "in" if element[0] <= line else "out"
+                        _new_cross = self.cross_pos(element)
+                        want_side = "in" if _new_cross <= line else "out"
                         for lost_id, data in list(self.lost_tracks.items()):
                             # Guard eligibility age: use GUARD_MAX_AGE (short), not
                             # the global LOST_BUFFER_FRAMES. A stale lost track
@@ -614,50 +653,60 @@ class Counting:
                                 continue
                             if data["side"] != want_side:
                                 continue
-                            if abs(data["cx"] - line) > self.reassoc_line_band:
+                            # Crossing-axis proximity of the lost track to the line.
+                            if abs(self.lost_cross_pos(data) - line) > self.reassoc_line_band:
                                 continue
-                            dx = abs(element[0] - data["cx"])
-                            dy = abs(element[1] - data["cy"])
-                            if dx <= self.reassoc_max_dist_x and dy <= self.reassoc_max_dist_y:
+                            # Semantic distance bands: d_cross on the crossing
+                            # axis, d_along on the along-line axis. Vertical maps
+                            # reassoc_max_dist_x->cross / reassoc_max_dist_y->along;
+                            # horizontal maps reassoc_max_dist_y->cross /
+                            # reassoc_max_dist_x->along (constructor).
+                            d_cross = abs(_new_cross - self.lost_cross_pos(data))
+                            d_along = abs(self.along_pos(element) - self.lost_along_pos(data))
+                            if d_cross <= self.reassoc_max_dist_cross and d_along <= self.reassoc_max_dist_along:
                                 cid = int(element[3])
-                                if element[0] <= line:
-                                    # crossed LEFT (+1): pig went right->left
+                                if _new_cross <= line:
+                                    # crossed PLUS_DIR (+1): crossing-axis
+                                    # position DECREASED past the line (right->left
+                                    # for vertical, down->up for horizontal).
                                     counter_to_right += 1
                                     self.sub_counts[cid] = self.sub_counts.get(cid, 0) + 1
                                     if self.shared_state is not None and getattr(self.shared_state, "sub_counts", None) is not None:
                                         self.shared_state.sub_counts[cid] = self.shared_state.sub_counts.get(cid, 0) + 1
-                                    direction = "LEFT"
+                                    direction = self.PLUS_DIR
                                     target_list = self.area_out_list
                                     other_list = self.area_in_list
                                     logger.warning(
-                                        f"[COUNT] ID-SWITCH recovery (LEFT): new "
+                                        f"[COUNT] ID-SWITCH recovery ({self.PLUS_DIR}): new "
                                         f"ID={track_id} fused with lost ID={lost_id} "
                                         f"(+1) count={counter_to_right}"
                                     )
                                     self.id_switch_recoveries += 1
                                     self._emit_event("id_switch_recovery", {
-                                        "direction": "LEFT", "track_id": int(track_id),
+                                        "direction": self.PLUS_DIR, "track_id": int(track_id),
                                         "class_id": cid, "species": self._species_name(cid),
                                         "fused_with": int(lost_id),
                                         "count": int(counter_to_right),
                                     })
                                 else:
-                                    # crossed RIGHT (-1): pig came back left->right
+                                    # crossed MINUS_DIR (-1): crossing-axis
+                                    # position INCREASED past the line (left->right
+                                    # for vertical, up->down for horizontal).
                                     counter_to_right -= 1
                                     self.sub_counts[cid] = self.sub_counts.get(cid, 0) - 1
                                     if self.shared_state is not None and getattr(self.shared_state, "sub_counts", None) is not None:
                                         self.shared_state.sub_counts[cid] = self.shared_state.sub_counts.get(cid, 0) - 1
-                                    direction = "RIGHT"
+                                    direction = self.MINUS_DIR
                                     target_list = self.area_in_list
                                     other_list = self.area_out_list
                                     logger.warning(
-                                        f"[COUNT] ID-SWITCH recovery (RIGHT): new "
+                                        f"[COUNT] ID-SWITCH recovery ({self.MINUS_DIR}): new "
                                         f"ID={track_id} fused with lost ID={lost_id} "
                                         f"(-1) count={counter_to_right}"
                                     )
                                     self.id_switch_recoveries += 1
                                     self._emit_event("id_switch_recovery", {
-                                        "direction": "RIGHT", "track_id": int(track_id),
+                                        "direction": self.MINUS_DIR, "track_id": int(track_id),
                                         "class_id": cid, "species": self._species_name(cid),
                                         "fused_with": int(lost_id),
                                         "count": int(counter_to_right),
@@ -687,15 +736,16 @@ class Counting:
                         if element[3] in counting_class_ids and track_id not in self.area_in_list and self.cross_pos(element) > line:
                             self.area_in_list.append(track_id)
                             # --------------------------------------------------
-                            # Mirror guard: new ID on the RIGHT + a track recently
-                            # lost on the LEFT near the line. This is the mirror of
-                            # the ID-switch bug: a pig crossed (+1), was lost on the
-                            # left, and got a new ID on the right that will cross
-                            # again (+1 = over-count). Modes:
+                            # Mirror guard: new ID on the +1 side (cross>line) +
+                            # a track recently lost on the -1 side ("out") near the
+                            # line. This is the mirror of the ID-switch bug: a pig
+                            # crossed (+1), was lost on the -1 side, and got a new ID
+                            # on the +1 side that will cross again (+1 = over-count).
+                            # Modes:
                             #   off     -> disabled
                             #   log     -> detect & log only (default, safe)
-                            #   enforce -> suppress the upcoming crossed LEFT of
-                            #              this new ID (avoid double count)
+                            #   enforce -> suppress the upcoming crossed PLUS_DIR
+                            #              of this new ID (avoid double count)
                             # --------------------------------------------------
                             if self.mirror_guard != "off":
                                 for lost_id, data in list(self.lost_tracks.items()):
@@ -703,18 +753,27 @@ class Counting:
                                         continue
                                     if data["side"] != "out":
                                         continue
-                                    if abs(data["cx"] - line) > self.mirror_line_band:
+                                    # BL-83: crossing-axis proximity of the lost
+                                    # track to the line (vertical: cx; horizontal: cy).
+                                    if abs(self.lost_cross_pos(data) - line) > self.mirror_line_band:
                                         continue
-                                    if abs(element[0] - line) > self.mirror_new_band:
+                                    # BL-83: crossing-axis proximity of the new ID
+                                    # to the line (vertical: cx; horizontal: cy).
+                                    if abs(self.cross_pos(element) - line) > self.mirror_new_band:
                                         continue
+                                    # BL-83: y-distance band. mirror_max_dist_y is
+                                    # the along-axis distance for vertical and the
+                                    # cross-axis distance for horizontal (the
+                                    # y-distance expression is reused unchanged,
+                                    # only its semantic role changes).
                                     if abs(element[1] - data["cy"]) > self.mirror_max_dist_y:
                                         continue
                                     if self.mirror_guard == "enforce":
                                         self.suppress_count.add(track_id)
                                         logger.warning(
                                             f"[COUNT] MIRROR guard: new ID={track_id} "
-                                            f"on right fused with lost ID={lost_id} "
-                                            f"(suppress future +1)"
+                                            f"on +1 side ({self.PLUS_DIR}) fused with lost "
+                                            f"ID={lost_id} (suppress future +1)"
                                         )
                                         self.guard_interventions["mirror_guard"] += 1
                                         self._emit_event("mirror_guard_enforce", {
@@ -725,8 +784,8 @@ class Counting:
                                     else:  # log mode: observe only, do not change state
                                         logger.info(
                                             f"[COUNT] MIRROR candidate: new ID={track_id} "
-                                            f"on right, lost ID={lost_id} on left "
-                                            f"(would suppress)"
+                                            f"on +1 side ({self.PLUS_DIR}), lost ID={lost_id} "
+                                            f"on -1 side ({self.MINUS_DIR}) (would suppress)"
                                         )
                                         self._emit_event("mirror_candidate", {
                                             "track_id": int(track_id),
