@@ -148,7 +148,7 @@ controls a semi-transparent overlay of the masked rects for visual feedback.
   Note that the contract MUST stay identical in both repos (AGENTS.md §9);
   the companion write side is BL-88 (sister issue #16).
 
-- [ ] **Task 11: UPDATE config + pipeline docs** `docs/04_configuration.md` + `docs/05_counting_pipeline.md` —
+- [x] **Task 11: UPDATE config + pipeline docs** `docs/04_configuration.md` + `docs/05_counting_pipeline.md` —
   - `docs/04_configuration.md` L118-129: add `mask_zones` and `draw_mask_zones`
     to the enumerated hot-reloaded fields list + the "no reset on mask_zones
     change" note. Add `MASK_ZONES`/`DRAW_MASK_ZONES` to the settings.py
