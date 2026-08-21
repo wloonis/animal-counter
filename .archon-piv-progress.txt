@@ -210,3 +210,4 @@ Task 4: ADD RuntimeSettingsWatcher thread class — 05fc2a3
 Task 5: ADD idle checkpoint to DisplayThread.run() — bceccfa
 Task 6: Start/stop RuntimeSettingsWatcher in main.py — 18cf099
 Task 7: py_compile PASS (all 6 changed files); validate_on_jetson.sh DEFERRED to jetson-validate phase (Jetson unreachable here) — a7290ee
+Task 1: ADD resolve_mask_zones(rt) validator — 92baa6d
