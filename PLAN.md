@@ -82,7 +82,7 @@ the pod, replacing the current boot-only read in `start()`.
     `__init__` L70-71) and sets `self.offset_counting_line` + `self.counting_line_orientation`.
   - No button/reload logic; pure attribute write.
 
-- [ ] **Task 4: Add `RuntimeSettingsWatcher` thread class** — `app/src/state.py`
+- [x] **Task 4: Add `RuntimeSettingsWatcher` thread class** — `app/src/state.py`
   - New `threading.Thread` subclass: `__init__(self, shared_state, stop_event, poll_interval=2.0)`.
     Polls `os.path.getmtime(RUNTIME_SETTINGS_PATH)` every `poll_interval` seconds; on mtime change,
     calls `load_runtime_settings()` + `resolve_counting_line_orientation(rt)` +
