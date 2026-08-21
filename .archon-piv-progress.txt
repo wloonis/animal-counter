@@ -181,3 +181,4 @@ Task 12: IPC_CONTRACT.md + AGENTS.md BL-78 docs (model-classes.json #5, counting
 Task 1: ADD COUNTING_LINE_ORIENTATION setting (app/src/settings.py) — a5f1afd
 Task 2: EDIT app/.env.example — 5e1f6fe
 Task 3: resolve counting_line_orientation in state.py — 48b9760
+Task 4: HOT-RELOAD orientation + signed offset in main.py + pass to Counting/Rendering — d583a30
