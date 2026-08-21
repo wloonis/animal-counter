@@ -187,4 +187,5 @@ Task 6: refactor crossing detection + side assignment to crossing axis — cce74
 Task 7: refactor guards to crossing axis + PLUS_DIR/MINUS_DIR — a28c1b4
 Task 8: refactor id-switch fusion to crossing axis + semantic bands — 1d665d0
 Task 9: EDIT app/src/ui/rendering.py — per-orientation counting line + 200px-margin clamp — d234d22
-Task 10: RECORD counting_line_orientation + offset_counting_line in session metadata (history.py session_start + session_end, additive) — TBD
+Task 10: RECORD counting_line_orientation + offset_counting_line in session metadata (history.py session_start + session_end, additive) — 09c3996
+Task 11: UPDATE docs/IPC_CONTRACT.md (BL-83) — counting_line_orientation schema+row, signed offset_counting_line row w/ 200px-margin clamp, direction LEFT/RIGHT|UP/DOWN event field, session-record additive fields — (docs only, no py change)
