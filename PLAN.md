@@ -139,7 +139,7 @@ controls a semi-transparent overlay of the masked rects for visual feedback.
   *before* it is written/displayed so it appears in both the live window and
   recorded clips consistently with how `draw_tracking` overlays behave.
 
-- [ ] **Task 10: UPDATE IPC contract** `docs/IPC_CONTRACT.md` —
+- [x] **Task 10: UPDATE IPC contract** `docs/IPC_CONTRACT.md` —
   Additive to the `runtime-settings.json` section (L99-126): (a) add
   `mask_zones` and `draw_mask_zones` to the example JSON block; (b) add two
   rows to the schema table:
