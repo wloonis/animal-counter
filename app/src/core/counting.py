@@ -46,7 +46,8 @@ class Counting:
                  mirror_max_age=15, mirror_line_band=100,
                  mirror_new_band=120, mirror_max_dist_y=60,
                  resurrection_threshold=5, resurrection_min_jump=150,
-                 guard_max_age=15, reid_window=15, reid_min_age=3):
+                 guard_max_age=15, reid_window=15, reid_min_age=3,
+                 counting_line_orientation="vertical"):
         """Initialize the counting object."""
         self.detections = {}
         self.trails = shared_state.trails if shared_state else {}
@@ -59,6 +60,23 @@ class Counting:
         self.sub_counts = {}
         self.pig_confidence_threshold = pig_confidence_threshold
         self.offset_counting_line=offset_counting_line
+        # BL-83: counting line orientation ("vertical" default | "horizontal").
+        # +1 = crossing-axis position DECREASING past the line:
+        #   vertical   -> +1 = right->left = LEFT
+        #   horizontal -> +1 = down->up    = UP
+        # The crossing axis is abstracted by cross_pos()/along_pos(); the
+        # settings names reassoc_max_dist_x/y and mirror_max_dist_y map to
+        # crossing/along roles by orientation (vertical: cross=x, along=y;
+        # horizontal: cross=y, along=x) so the SAME tuned values apply.
+        _orient = counting_line_orientation
+        if isinstance(_orient, str):
+            _orient = _orient.strip().lower()
+        if _orient not in ("vertical", "horizontal"):
+            _orient = "vertical"
+        self.counting_line_orientation = _orient
+        # Direction labels for the +1 / -1 crossing events, per orientation.
+        self.PLUS_DIR = "UP" if _orient == "horizontal" else "LEFT"
+        self.MINUS_DIR = "DOWN" if _orient == "horizontal" else "RIGHT"
         # ID-switch recovery guard state
         self.lost_tracks = {}            # {track_id: {"cx","cy","side","frame"}}
         self.frame_counter = 0
@@ -138,6 +156,26 @@ class Counting:
             "conf_count": 0,    # number of confidence samples
         }
     
+    def cross_pos(self, element):
+        """Crossing-axis coordinate of a track element/centroid.
+
+        ``element`` is a current_status row ``[cx, cy, tid, cid, ...]``.
+        Returns cx for vertical orientation, cy for horizontal. This is the
+        ONLY place the crossing-axis choice lives (BL-83).
+        """
+        if self.counting_line_orientation == "horizontal":
+            return element[1]
+        return element[0]
+
+    def along_pos(self, element):
+        """Along-line coordinate of a track element/centroid.
+
+        Returns cy for vertical orientation, cx for horizontal (BL-83).
+        """
+        if self.counting_line_orientation == "horizontal":
+            return element[0]
+        return element[1]
+
     def _emit_event(self, event_type, detail=None):
         """Notify all subscribers of an instrumentation event (read-only).
 
@@ -222,10 +260,38 @@ class Counting:
         for cid in counting_class_ids:
             self.sub_counts.setdefault(cid, 0)
         img_height, img_width = image_raw.shape[:2]
-        x = int((img_width / 2) + (img_width * self.offset_counting_line / 100))
-        # Hysteresis dead-band: crossings only fire past x±H to absorb jitter.
-        x_low = x - self.hysteresis_px
-        x_high = x + self.hysteresis_px
+        # BL-83: crossing-axis line position, computed per orientation then
+        # CLAMPED to [200, dim-200] so the line always stays inside the image
+        # with a 200px margin on both edges (dim = W for vertical, H for
+        # horizontal). The offset is a percentage but the frame size is only
+        # known at runtime, so the authoritative bound is enforced HERE.
+        if self.counting_line_orientation == "horizontal":
+            dim = img_height
+        else:
+            dim = img_width
+        raw_line = int((dim / 2) + (dim * self.offset_counting_line / 100))
+        _lo, _hi = 200, dim - 200
+        if _hi < _lo:  # tiny frame: keep a single valid position
+            _hi = _lo
+        if raw_line < _lo:
+            logger.warning(
+                f"[COUNT] line position {raw_line} clamped to {_lo} "
+                f"(orientation={self.counting_line_orientation}, dim={dim}, "
+                f"offset={self.offset_counting_line})"
+            )
+            line = _lo
+        elif raw_line > _hi:
+            logger.warning(
+                f"[COUNT] line position {raw_line} clamped to {_hi} "
+                f"(orientation={self.counting_line_orientation}, dim={dim}, "
+                f"offset={self.offset_counting_line})"
+            )
+            line = _hi
+        else:
+            line = raw_line
+        # Hysteresis dead-band: crossings only fire past line±H to absorb jitter.
+        line_low = line - self.hysteresis_px
+        line_high = line + self.hysteresis_px
 
         # ------------------------------------------------------------------
         # ID-switch recovery guard: detect tracks lost since last frame and
@@ -339,7 +405,7 @@ class Counting:
                             self.area_in_list.remove(track_id)
                         if track_id in self.area_out_list:
                             self.area_out_list.remove(track_id)
-                        if element[0] > x:
+                        if element[0] > line:
                             self.area_in_list.append(track_id)
                         else:
                             self.area_out_list.append(track_id)
@@ -366,7 +432,7 @@ class Counting:
                     # left to fire normally.
                     # ----------------------------------------------------------
                     if (track_id in self.area_in_list
-                            and element[0] <= x_low
+                            and element[0] <= line_low
                             and _age >= self.reid_min_age
                             and class_id in counting_class_ids):
                         _supp_tid = None
@@ -415,7 +481,7 @@ class Counting:
                     # above, for the left->right return direction.
                     # ----------------------------------------------------------
                     if (track_id in self.area_out_list
-                            and element[0] >= x_high
+                            and element[0] >= line_high
                             and _age >= self.reid_min_age
                             and class_id in counting_class_ids):
                         _supp_tid = None
@@ -451,7 +517,7 @@ class Counting:
                                 del self.lost_tracks[track_id]
                             continue
 
-                    if self.detections[track_id][2] >= x_high and track_id in self.area_out_list:
+                    if self.detections[track_id][2] >= line_high and track_id in self.area_out_list:
                         counter_to_right -= 1
                         # BL-78: mirror on the per-species sub-counter (global = sum).
                         cid = int(class_id)
@@ -469,7 +535,7 @@ class Counting:
                         if track_id not in self.area_in_list:
                             self.area_out_list.remove(track_id)
                             self.area_in_list.append(track_id)
-                    elif self.detections[track_id][2] <= x_low and track_id in self.area_in_list:
+                    elif self.detections[track_id][2] <= line_low and track_id in self.area_in_list:
                         if track_id in self.suppress_count:
                             # Mirror guard: this new ID on the right was deemed a
                             # re-ID of an already-counted pig. Suppress the +1.
@@ -521,7 +587,7 @@ class Counting:
                     # return: without it, the -1 of the return would be lost.)
                     fused = False
                     if element[3] in counting_class_ids:
-                        want_side = "in" if element[0] <= x else "out"
+                        want_side = "in" if element[0] <= line else "out"
                         for lost_id, data in list(self.lost_tracks.items()):
                             # Guard eligibility age: use GUARD_MAX_AGE (short), not
                             # the global LOST_BUFFER_FRAMES. A stale lost track
@@ -532,13 +598,13 @@ class Counting:
                                 continue
                             if data["side"] != want_side:
                                 continue
-                            if abs(data["cx"] - x) > self.reassoc_line_band:
+                            if abs(data["cx"] - line) > self.reassoc_line_band:
                                 continue
                             dx = abs(element[0] - data["cx"])
                             dy = abs(element[1] - data["cy"])
                             if dx <= self.reassoc_max_dist_x and dy <= self.reassoc_max_dist_y:
                                 cid = int(element[3])
-                                if element[0] <= x:
+                                if element[0] <= line:
                                     # crossed LEFT (+1): pig went right->left
                                     counter_to_right += 1
                                     self.sub_counts[cid] = self.sub_counts.get(cid, 0) + 1
@@ -599,7 +665,7 @@ class Counting:
                                 break
 
                     if not fused:
-                        if element[3] in counting_class_ids and track_id not in self.area_in_list and element[0] > x:
+                        if element[3] in counting_class_ids and track_id not in self.area_in_list and element[0] > line:
                             self.area_in_list.append(track_id)
                             # --------------------------------------------------
                             # Mirror guard: new ID on the RIGHT + a track recently
@@ -618,9 +684,9 @@ class Counting:
                                         continue
                                     if data["side"] != "out":
                                         continue
-                                    if abs(data["cx"] - x) > self.mirror_line_band:
+                                    if abs(data["cx"] - line) > self.mirror_line_band:
                                         continue
-                                    if abs(element[0] - x) > self.mirror_new_band:
+                                    if abs(element[0] - line) > self.mirror_new_band:
                                         continue
                                     if abs(element[1] - data["cy"]) > self.mirror_max_dist_y:
                                         continue
@@ -648,7 +714,7 @@ class Counting:
                                             "fused_with": int(lost_id),
                                         })
                                     break
-                        elif element[3] in counting_class_ids and track_id not in self.area_out_list and element[0] <= x:
+                        elif element[3] in counting_class_ids and track_id not in self.area_out_list and element[0] <= line:
                             self.area_out_list.append(track_id)
 
             for element in current_status:
