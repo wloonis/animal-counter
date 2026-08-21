@@ -89,7 +89,7 @@ controls a semi-transparent overlay of the masked rects for visual feedback.
   `draw_tracking` fields (L97-130 region). These are read per-frame by
   `infer_thread.py` (mask_zones) and `rendering.py` (draw_mask_zones).
 
-- [ ] **Task 4: ADD centroid-in-rect pre-filter** `app/src/core/inference.py` —
+- [x] **Task 4: ADD centroid-in-rect pre-filter** `app/src/core/inference.py` —
   Change `post_process(self, output, origin_h, origin_w, counting_class_ids=None)`
   signature to add `mask_zones=None`. After the `counting_class_ids` filter
   (current L318-330) and **before** NMS (L335), insert: if `mask_zones` is
