@@ -255,6 +255,81 @@ class DisplayThread(threading.Thread):
                 shared_state.poweroff_requested = True
                 break
 
+            # BL-86: idle checkpoint for in-process hot-reload of runtime
+            # settings (no pod restart). The RuntimeSettingsWatcher thread
+            # (state.py) polls the mtime of /conf/runtime-settings.json and,
+            # on a change, validates the file and stores the pending payload on
+            # shared_state under reload_lock + sets reload_pending. This is the
+            # SINGLE applier — DisplayThread.run() applies the pending settings
+            # ONLY at an idle window (reload_pending AND not recording). This
+            # thread owns the Counting/Rendering instances (constructor args),
+            # so applying setters here avoids a mid-frame setter race. Nothing
+            # ever applies mid-recording (hard constraint). The pending payload
+            # was already validated by the watcher, so the guards here only
+            # mirror the boot block's presence/type checks defensively.
+            if shared_state.reload_pending and not shared_state.recording:
+                with shared_state.reload_lock:
+                    pending = shared_state.pending_settings
+                    shared_state.pending_settings = None
+                    shared_state.reload_pending = False
+                if pending:
+                    changed = []
+                    # Toggles: write shared_state (read per-frame by
+                    # tracking/rendering). Only apply if present/bool.
+                    for key in ("draw_tracking", "box_tracking",
+                                "centroid_tracking"):
+                        if isinstance(pending.get(key), bool):
+                            setattr(shared_state, key, pending[key])
+                            changed.append(key)
+                    # Line offset + orientation: hot-swap on both the
+                    # Counting and Rendering instances. Counting.update_line
+                    # re-derives PLUS_DIR/MINUS_DIR from the new orientation so
+                    # direction labels don't go stale on a mid-life swap.
+                    _off = pending.get("offset_counting_line")
+                    _orient = pending.get("counting_line_orientation")
+                    if _off is not None or _orient is not None:
+                        # Fall back to the current values for whichever key is
+                        # absent in the pending payload (a toggle-only or
+                        # line-only change should not clobber the other).
+                        cur_off = self.counting.offset_counting_line
+                        cur_orient = self.counting.counting_line_orientation
+                        new_off = _off if isinstance(_off, int) and \
+                            not isinstance(_off, bool) else cur_off
+                        new_orient = _orient if isinstance(_orient, str) \
+                            else cur_orient
+                        self.counting.update_line(new_off, new_orient)
+                        self.rendering.update_line(new_off, new_orient)
+                        changed.append("counting_line")
+                    # counting_class_ids: a class-set CHANGE resets the
+                    # counters to 0 (fresh-session semantics, matches boot).
+                    # A line-only / toggle-only change does NOT reset. Compare
+                    # as sets so an unchanged ordering doesn't spuriously zero.
+                    _ids = pending.get("counting_class_ids")
+                    if isinstance(_ids, list):
+                        cur_ids = list(shared_state.counting_class_ids)
+                        if set(int(c) for c in _ids) != set(cur_ids):
+                            new_ids = [int(c) for c in _ids]
+                            shared_state.counting_class_ids = new_ids
+                            self.counting.counting_class_ids = list(new_ids)
+                            shared_state.sub_counts = {
+                                cid: 0 for cid in new_ids}
+                            shared_state.counter_to_right = 0
+                            changed.append("counting_class_ids(reset)")
+                    if changed:
+                        logger.info("runtime settings applied (idle): %s",
+                                    ", ".join(changed))
+                else:
+                    # reload_pending was set but pending was None — nothing
+                    # to apply (e.g. an empty file). Log at DEBUG to avoid noise.
+                    if logger.isEnabledFor(logging.DEBUG):
+                        logger.debug("runtime settings reload pending but "
+                                     "empty; cleared without applying")
+            elif shared_state.reload_pending and shared_state.recording:
+                # Held until the next idle window. Log at INFO so the operator
+                # knows the change is queued (not lost).
+                logger.info("runtime settings held (recording in progress); "
+                            "applied at next idle window")
+
             if logger.isEnabledFor(logging.DEBUG):
                 logger.debug(f"Value Recording: {shared_state.recording}; Value Status: {shared_state.status}; Video Writer: {self.video_writer}; delay reinit: {shared_state.delay_reinit}")
 
