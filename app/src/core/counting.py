@@ -211,6 +211,53 @@ class Counting:
             return data["cx"]
         return data["cy"]
 
+    def update_line(self, offset, orientation):
+        """Hot-swap the counting line offset and orientation at runtime (BL-86).
+
+        Called by the DisplayThread idle checkpoint (the single applier thread)
+        to apply a pending runtime-settings change without restarting the pod.
+        Pure attribute write — no counting-decision logic changes; per-frame
+        reads in ``count()`` (``cross_pos()`` / line-position computation) pick
+        up the new values on the next frame.
+
+        - ``orientation``: normalized to lowercase; ``"vertical"`` |
+          ``"horizontal"``, anything else (including non-str) → ``"vertical"``
+          (same default as ``__init__``).
+        - ``offset``: clamped to ``[-300, 300]`` mirroring the ``main.py``
+          boot-time sanity cap (the AUTHORITATIVE bound is the 200px-margin
+          clamp at use-time in ``count()``).
+        - ``PLUS_DIR`` / ``MINUS_DIR`` are re-derived from the new orientation
+          so direction labels don't go stale on a mid-life orientation swap
+          (same logic as ``__init__``).
+        """
+        _orient = orientation
+        if isinstance(_orient, str):
+            _orient = _orient.strip().lower()
+        if _orient not in ("vertical", "horizontal"):
+            _orient = "vertical"
+        self.counting_line_orientation = _orient
+        # Clamp offset to the same loose sanity range as the boot block.
+        try:
+            _off = int(offset)
+        except (TypeError, ValueError):
+            _off = self.offset_counting_line
+        if _off < -300:
+            _off = -300
+        elif _off > 300:
+            _off = 300
+        self.offset_counting_line = _off
+        # Re-derive direction labels from the (possibly new) orientation.
+        self.PLUS_DIR = "UP" if _orient == "horizontal" else "LEFT"
+        self.MINUS_DIR = "DOWN" if _orient == "horizontal" else "RIGHT"
+        # BL-83: semantic distance-band mapping follows the orientation so the
+        # SAME tuned reassoc/mirror values keep their crossing/along roles.
+        if _orient == "horizontal":
+            self.reassoc_max_dist_cross = self.reassoc_max_dist_y
+            self.reassoc_max_dist_along = self.reassoc_max_dist_x
+        else:
+            self.reassoc_max_dist_cross = self.reassoc_max_dist_x
+            self.reassoc_max_dist_along = self.reassoc_max_dist_y
+
     def _emit_event(self, event_type, detail=None):
         """Notify all subscribers of an instrumentation event (read-only).
 
