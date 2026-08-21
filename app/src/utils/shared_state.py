@@ -55,6 +55,14 @@ class SharedState:
         self.draw_tracking = True
         self.centroid_tracking = True
         self.box_tracking = True
+        # BL-87: detection-level exclusion zones (normalized axis-aligned
+        # rects {x,y,w,h} in [0..1]). Detections whose centroid falls inside
+        # any rect are dropped in post_process BEFORE OC-SORT (no track → no
+        # count). Empty list = no-op (byte-identical pre-BL-87 behavior).
+        self.mask_zones = []
+        # BL-87: independent overlay toggle (NOT gated on draw_tracking) so
+        # the operator can see the mask rects even on raw/untracked frames.
+        self.draw_mask_zones = True
         # BL-58 render tuning (purely visual; mirrored from Settings in main.py)
         self.draw_box_line_thickness = 2
         self.draw_label_font_scale = 0.6
