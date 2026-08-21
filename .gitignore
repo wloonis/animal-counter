@@ -128,3 +128,5 @@ validation/videos/*.mp4
 /android/.idea/
 /android/*.iml
 /android/app/*.iml
+PLAN.md
+.archon-piv-progress.txt
