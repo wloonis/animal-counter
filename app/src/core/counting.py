@@ -393,7 +393,11 @@ class Counting:
                     # lost_tracks (it is back).
                     # ----------------------------------------------------------
                     _age = self.frame_counter - self.last_seen.get(track_id, self.frame_counter - 1)
-                    _jump = abs(element[0] - last_x)
+                    # BL-83: resurrection jump measured on the crossing axis
+                    # (cx for vertical, cy for horizontal). last_x/last_y are the
+                    # previous frame's centroid; cross_pos of a [cx, cy] pair picks
+                    # the right component per orientation.
+                    _jump = abs(self.cross_pos(element) - self.cross_pos([last_x, last_y]))
                     if (_jump > self.resurrection_min_jump and _age > self.resurrection_threshold) and (class_id in counting_class_ids):
                         logger.warning(
                             f"[COUNT] RESURRECTION: ID={track_id} reappeared after "
@@ -405,7 +409,8 @@ class Counting:
                             self.area_in_list.remove(track_id)
                         if track_id in self.area_out_list:
                             self.area_out_list.remove(track_id)
-                        if element[0] > line:
+                        # BL-83: area reset by crossing-axis position vs line.
+                        if self.cross_pos(element) > line:
                             self.area_in_list.append(track_id)
                         else:
                             self.area_out_list.append(track_id)
@@ -432,14 +437,16 @@ class Counting:
                     # left to fire normally.
                     # ----------------------------------------------------------
                     if (track_id in self.area_in_list
-                            and element[0] <= line_low
+                            and self.cross_pos(element) <= line_low
                             and _age >= self.reid_min_age
                             and class_id in counting_class_ids):
                         _supp_tid = None
                         for rc in self.recent_crossings:
                             if rc["tid"] == track_id:
                                 continue
-                            if rc["direction"] != "LEFT":
+                            # BL-83: +1 event direction is PLUS_DIR (LEFT vertical,
+                            # UP horizontal).
+                            if rc["direction"] != self.PLUS_DIR:
                                 continue
                             if self.frame_counter - rc["frame"] > self.reid_window:
                                 continue
@@ -458,7 +465,7 @@ class Counting:
                             )
                             self.guard_interventions["reid_rebind"] += 1
                             self._emit_event("reid_suppress", {
-                                "direction": "LEFT", "track_id": int(track_id),
+                                "direction": self.PLUS_DIR, "track_id": int(track_id),
                                 "suppressed_by": int(_supp_tid), "age": int(_age),
                                 "jump": float(_jump), "count": int(counter_to_right),
                             })
@@ -481,14 +488,16 @@ class Counting:
                     # above, for the left->right return direction.
                     # ----------------------------------------------------------
                     if (track_id in self.area_out_list
-                            and element[0] >= line_high
+                            and self.cross_pos(element) >= line_high
                             and _age >= self.reid_min_age
                             and class_id in counting_class_ids):
                         _supp_tid = None
                         for rc in self.recent_crossings:
                             if rc["tid"] == track_id:
                                 continue
-                            if rc["direction"] != "RIGHT":
+                            # BL-83: -1 event direction is MINUS_DIR (RIGHT
+                            # vertical, DOWN horizontal).
+                            if rc["direction"] != self.MINUS_DIR:
                                 continue
                             if self.frame_counter - rc["frame"] > self.reid_window:
                                 continue
@@ -506,7 +515,7 @@ class Counting:
                             )
                             self.guard_interventions["reid_rebind"] += 1
                             self._emit_event("reid_suppress", {
-                                "direction": "RIGHT", "track_id": int(track_id),
+                                "direction": self.MINUS_DIR, "track_id": int(track_id),
                                 "suppressed_by": int(_supp_tid), "age": int(_age),
                                 "jump": float(_jump), "count": int(counter_to_right),
                             })
@@ -531,14 +540,14 @@ class Counting:
                         self.sub_counts[cid] = self.sub_counts.get(cid, 0) - 1
                         if self.shared_state is not None and getattr(self.shared_state, "sub_counts", None) is not None:
                             self.shared_state.sub_counts[cid] = self.shared_state.sub_counts.get(cid, 0) - 1
-                        logger.info(f"[TRACK] ID={track_id} crossed RIGHT // Count {counter_to_right}")
+                        logger.info(f"[TRACK] ID={track_id} crossed {self.MINUS_DIR} // Count {counter_to_right}")
                         self.count_right_to_left += 1
                         self._emit_event("crossed", {
-                            "direction": "RIGHT", "track_id": int(track_id),
+                            "direction": self.MINUS_DIR, "track_id": int(track_id),
                             "class_id": cid, "species": self._species_name(cid),
                             "count": int(counter_to_right),
                         })
-                        self.recent_crossings.append({"frame": self.frame_counter, "tid": track_id, "direction": "RIGHT"})
+                        self.recent_crossings.append({"frame": self.frame_counter, "tid": track_id, "direction": self.MINUS_DIR})
                         if track_id not in self.area_in_list:
                             self.area_out_list.remove(track_id)
                             self.area_in_list.append(track_id)
@@ -564,14 +573,14 @@ class Counting:
                             self.sub_counts[cid] = self.sub_counts.get(cid, 0) + 1
                             if self.shared_state is not None and getattr(self.shared_state, "sub_counts", None) is not None:
                                 self.shared_state.sub_counts[cid] = self.shared_state.sub_counts.get(cid, 0) + 1
-                            logger.info(f"[TRACK] ID={track_id} crossed LEFT // Count {counter_to_right}")
+                            logger.info(f"[TRACK] ID={track_id} crossed {self.PLUS_DIR} // Count {counter_to_right}")
                             self.count_left_to_right += 1
                             self._emit_event("crossed", {
-                                "direction": "LEFT", "track_id": int(track_id),
+                                "direction": self.PLUS_DIR, "track_id": int(track_id),
                                 "class_id": cid, "species": self._species_name(cid),
                                 "count": int(counter_to_right),
                             })
-                            self.recent_crossings.append({"frame": self.frame_counter, "tid": track_id, "direction": "LEFT"})
+                            self.recent_crossings.append({"frame": self.frame_counter, "tid": track_id, "direction": self.PLUS_DIR})
                         if track_id not in self.area_out_list:
                             self.area_in_list.remove(track_id)
                             self.area_out_list.append(track_id)
