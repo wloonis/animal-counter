@@ -415,7 +415,8 @@ class RuntimeSettingsWatcher(threading.Thread):
             return None
         pending = {}
         # Toggles: only accept a plain bool.
-        for key in ("draw_tracking", "box_tracking", "centroid_tracking"):
+        for key in ("draw_tracking", "box_tracking", "centroid_tracking",
+                    "draw_mask_zones"):
             val = rt.get(key)
             if isinstance(val, bool):
                 pending[key] = val
@@ -446,6 +447,12 @@ class RuntimeSettingsWatcher(threading.Thread):
         }
         pending["counting_class_ids"] = list(
             resolve_counting_class_ids(rt, model_catalog))
+        # mask_zones: strict reject-all validation (resolve_mask_zones logs
+        # invalid values and returns None → we don't add it to pending, so
+        # the prior value is kept). Empty list is a valid "clear mask" value.
+        _mz = resolve_mask_zones(rt)
+        if _mz is not None:
+            pending["mask_zones"] = _mz
         return pending
 
     def run(self):
