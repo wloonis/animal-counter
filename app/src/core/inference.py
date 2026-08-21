@@ -287,7 +287,7 @@ class Inference:
 
         return image, image_raw, h, w, r_scale, tx1, ty1
 
-    def post_process(self, output, origin_h, origin_w, counting_class_ids=None):
+    def post_process(self, output, origin_h, origin_w, counting_class_ids=None, mask_zones=None):
         """
         Postprocess the output to get detections.
         
@@ -299,6 +299,13 @@ class Inference:
                 counts (BL-78). Detections whose class is NOT in this set are
                 dropped before OC-SORT. When None or empty, falls back to
                 ``[1]`` (legacy pre-BL-78 behavior = pig only).
+            mask_zones (list[dict]|None): Normalized axis-aligned exclusion
+                rects ``[{x,y,w,h},...]`` in ``[0..1]`` (BL-87). Detections
+                whose centroid ``((x1+x2)/2, (y1+y2)/2)`` falls inside ANY
+                rect are dropped here, **before** NMS and OC-SORT, so masked
+                regions never create a track (no track → no count). When None
+                or empty, the pre-filter is skipped entirely (no-op, identical
+                to pre-BL-87 behavior).
             
         Returns:
             numpy.ndarray: Processed detections.
@@ -333,6 +340,30 @@ class Inference:
 
         if len(boxes) == 0:
             return np.array([])
+
+        # Detection-level exclusion zones (BL-87): drop detections whose
+        # centroid falls inside any normalized axis-aligned rect before NMS
+        # and OC-SORT, so masked regions never create a track (no track → no
+        # count). Rects are stored in [0..1] and scaled to pixels here by
+        # origin_w/origin_h. When mask_zones is None/empty → no-op (identical
+        # to pre-BL-87 behavior).
+        if mask_zones:
+            cx = (boxes[:, 0] + boxes[:, 2]) / 2.0
+            cy = (boxes[:, 1] + boxes[:, 3]) / 2.0
+            keep_zone = np.ones(len(boxes), dtype=bool)
+            for r in mask_zones:
+                px1 = int(r["x"] * origin_w)
+                py1 = int(r["y"] * origin_h)
+                px2 = int((r["x"] + r["w"]) * origin_w)
+                py2 = int((r["y"] + r["h"]) * origin_h)
+                inside = (cx >= px1) & (cx <= px2) & (cy >= py1) & (cy <= py2)
+                keep_zone &= ~inside
+            boxes = boxes[keep_zone]
+            scores = scores[keep_zone]
+            class_ids = class_ids[keep_zone]
+
+            if len(boxes) == 0:
+                return np.array([])
 
         # NMS: suppress duplicate detections (same pig, IoU > threshold) to
         # prevent competing tracklets that cause OC-SORT ID switches (BL-59).
