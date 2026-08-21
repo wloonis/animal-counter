@@ -115,8 +115,25 @@ existing `runtime-settings.json` and `.arret_requested` from `/files` to
 
 ## Applying changes
 
-- **Runtime parameter change** (no rebuild): edit `app/.env` on the Jetson and
-  restart the pod:
+- **Live runtime-settings change** (BL-86, no pod restart): the fields in
+  `/conf/runtime-settings.json` — `draw_tracking`, `box_tracking`,
+  `centroid_tracking`, `offset_counting_line`, `counting_line_orientation`,
+  `counting_class_ids` — are **hot-reloaded in-process**. Write them from the
+  companion via `PUT /api/settings` (or edit `/conf/runtime-settings.json`
+  directly). A lightweight `RuntimeSettingsWatcher` thread in the countingapp
+  polls the file mtime (~2 s); on a valid change it stores the new values as
+  **pending** and applies them **only at the next idle window** (when no
+  recording is in progress) — never mid-recording. So a settings change takes
+  effect at the end of the current recording (or immediately if already idle),
+  with no pod restart.
+  - `counting_class_ids` change at idle resets the running counter +
+    per-species sub-counters to 0 (fresh-session semantics); a line-only
+    (`offset_counting_line` / `counting_line_orientation`) or toggle-only
+    change does **not** reset.
+  - This does **not** cover `app/.env` (build/boot params) — those still need
+    a pod restart (see next).
+- **Boot/build parameter change** (no rebuild): edit `app/.env` on the Jetson
+  and restart the pod:
   ```bash
   ssh $JETSON_USER@$JETSON_IP "kubectl delete pod -n countingapp-dev -l app=countingapp"
   ```
