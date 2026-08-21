@@ -224,3 +224,5 @@ Task 11: UPDATE config + pipeline docs (mask_zones pre-filter + no-reset) — d5
 Task 1: ADD boot params app/src/settings.py — 4f35331
 Task 2: ADD snapshot writer app/src/display_thread.py — 9755d67
 Task 3: DOCUMENT env vars app/.env.example — e5108f5
+Task 4: UPDATE param table docs/04_configuration.md — 36144d6
+Task 5: UPDATE shared-file contract docs/IPC_CONTRACT.md — 0c6ad74

@@ -94,7 +94,7 @@ This is pure display/infrastructure — no counting-decision logic is touched.
   `SNAPSHOT_PATH` (`/files/snapshot.jpg`), `SNAPSHOT_JPEG_QUALITY` (85), noting
   they are boot params (not hot-reloaded) and that the writer is in
   `display_thread.py`.
-- [ ] Task 5: UPDATE shared-file contract `docs/IPC_CONTRACT.md` — in the
+- [x] Task 5: UPDATE shared-file contract `docs/IPC_CONTRACT.md` — in the
   `/files` (data) "Files" section, add a new entry for `snapshot.jpg`:
   countingapp **writes** it periodically (atomic tmp+rename, ~5 s, raw
   counting-resolution JPEG q85), companion **reads** it via
