@@ -296,6 +296,19 @@ class Settings:
         self.HISTORY_ARCHIVE_MAX = int(os.getenv("HISTORY_ARCHIVE_MAX", 20))
         ### Counting history (BL-68) - End
 
+        ### Snapshot writer (BL-88) - Start
+        # Display-infra boot params (NOT /conf runtime-settings — not hot-reloaded).
+        #   The writer lives in display_thread.py and periodically writes a JPEG
+        #   snapshot of the raw counting-resolution frame to SNAPSHOT_PATH so the
+        #   companion GET /api/snapshot (BL-88, PR #19) can serve a live preview
+        #   to the Android app's visual mask-zone editor. Default ON so the feature
+        #   works out-of-the-box; toggle via env (pod restart).
+        self.SNAPSHOT_ENABLED = os.getenv("SNAPSHOT_ENABLED", "true").lower() == "true"
+        self.SNAPSHOT_INTERVAL_SECONDS = float(os.getenv("SNAPSHOT_INTERVAL_SECONDS", 5.0))
+        self.SNAPSHOT_PATH = os.getenv("SNAPSHOT_PATH", "/files/snapshot.jpg")
+        self.SNAPSHOT_JPEG_QUALITY = int(os.getenv("SNAPSHOT_JPEG_QUALITY", 85))
+        ### Snapshot writer (BL-88) - End
+
         ### Model class catalog (BL-78) - Start
         # Env-backed FALLBACKS only — used when classes.yaml is absent (legacy
         # deployed models). At runtime, app/model/classes.yaml (captured at

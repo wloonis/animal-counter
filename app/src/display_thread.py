@@ -181,6 +181,33 @@ class DisplayThread(threading.Thread):
             logger.warning(f"Failed to emit video history line: {e}")
         logger.info(f"------->Record Stop; Value Status: {shared_state.status}: Store:{output_path}")
 
+    def _write_snapshot(self, img):
+        """BL-88: write a raw-frame JPEG snapshot to SNAPSHOT_PATH (atomic).
+
+        Encodes `img` (the raw counting-resolution frame, before any overlay)
+        to JPEG at SNAPSHOT_JPEG_QUALITY, writes the bytes to a `.tmp` file,
+        then atomically `os.replace`s it onto SNAPSHOT_PATH. The companion's
+        `GET /api/snapshot` (BL-88, PR #19) serves the renamed file to the
+        Android mask-zone editor; the atomic rename guarantees the companion
+        never observes a half-written JPEG. Best-effort: any encode/write
+        failure is logged at WARNING and swallowed — never raised — so the
+        display loop and counting are unaffected.
+        """
+        try:
+            ok, buf = cv2.imencode(
+                '.jpg', img,
+                [cv2.IMWRITE_JPEG_QUALITY, settings.SNAPSHOT_JPEG_QUALITY]
+            )
+            if not ok:
+                logger.warning("Snapshot encode failed (cv2.imencode returned False)")
+                return
+            tmp_path = settings.SNAPSHOT_PATH + ".tmp"
+            with open(tmp_path, 'wb') as f:
+                f.write(buf.tobytes())
+            os.replace(tmp_path, settings.SNAPSHOT_PATH)
+        except Exception as e:
+            logger.warning(f"Snapshot write failed: {e}")
+
     def mouse_click(self, event, x, y, flags, param):
         if event == cv2.EVENT_LBUTTONUP:
             self.rendering.handle_click(x, y, shared_state)
@@ -208,6 +235,10 @@ class DisplayThread(threading.Thread):
         sum_t = 0.0
 
         last_capture_time = time.time()
+        # BL-88: snapshot writer — wall-clock timestamp of the last snapshot
+        # write. Initialized to 0.0 so the first frame triggers an immediate
+        # write (the interval gate `(now - last) >= interval` is true at t0).
+        last_snapshot_time = 0.0
 
         if logger.isEnabledFor(logging.DEBUG):
             logger.debug("DisplayThread started")
@@ -369,6 +400,20 @@ class DisplayThread(threading.Thread):
                 img, boxes_pp, output, use_time, origin_h, origin_w, frame_counter, r_scale, tx1, ty1, y_offset, input_h, input_w = self.results
             else:
                 img = self.results[0]
+
+            # BL-88: write a raw-frame JPEG snapshot (atomic tmp+rename) at
+            # most once per SNAPSHOT_INTERVAL_SECONDS, gated on a wall-clock
+            # timestamp. The snapshot is captured here (top of loop, right
+            # after `img` is pulled from the queue) so it is the RAW counting-
+            # resolution frame, BEFORE any tracking.draw_counter /
+            # rendering.display_counter / video_writer.write call mutates it
+            # in place. This is display infrastructure only — no
+            # counting/tracking/rendering logic is touched. Best-effort: a
+            # failure inside _write_snapshot is logged WARNING and swallowed,
+            # never raised (must not break the display loop).
+            if settings.SNAPSHOT_ENABLED and (time.time() - last_snapshot_time) >= settings.SNAPSHOT_INTERVAL_SECONDS:
+                self._write_snapshot(img)
+                last_snapshot_time = time.time()
 
             # Recording without tracking
             if not shared_state.draw_tracking and shared_state.status in [1,3] and shared_state.recording and self.video_writer is not None:
