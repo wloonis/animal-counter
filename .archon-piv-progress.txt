@@ -184,3 +184,7 @@ Task 3: resolve counting_line_orientation in state.py — 48b9760
 Task 4: HOT-RELOAD orientation + signed offset in main.py + pass to Counting/Rendering — d583a30
 Task 5: ADD counting_line_orientation + cross_pos/along_pos helpers + 200px-margin clamp in app/src/core/counting.py — 7ea3f5b
 Task 6: refactor crossing detection + side assignment to crossing axis — cce74a3
+Task 7: refactor guards to crossing axis + PLUS_DIR/MINUS_DIR — a28c1b4
+Task 8: refactor id-switch fusion to crossing axis + semantic bands — 1d665d0
+Task 9: EDIT app/src/ui/rendering.py — per-orientation counting line + 200px-margin clamp — d234d22
+Task 10: RECORD counting_line_orientation + offset_counting_line in session metadata (history.py session_start + session_end, additive) — TBD
