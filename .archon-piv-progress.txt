@@ -203,3 +203,10 @@ The horizontal orientation behavior itself cannot be validated with existing
 manifest videos (no horizontal-crossing test video) — note explicitly in the
 validation report; do not auto-correct any mismatch.
 => EMIT <promise>IMPL_DONE</promise> NOW. Do not attempt Task 12 here.
+Task 1: Add pending-state fields to SharedState — 6874155
+Task 2: ADD Counting.update_line setter — e9d31d7
+Task 3: ADD Rendering.update_line setter — 6f41d70
+Task 4: ADD RuntimeSettingsWatcher thread class — 05fc2a3
+Task 5: ADD idle checkpoint to DisplayThread.run() — bceccfa
+Task 6: Start/stop RuntimeSettingsWatcher in main.py — 18cf099
+Task 7: py_compile PASS (all 6 changed files); validate_on_jetson.sh DEFERRED to jetson-validate phase (Jetson unreachable here) — a7290ee

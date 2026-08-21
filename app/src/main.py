@@ -65,6 +65,7 @@ from state import (
     shared_state, settings, logger, _IOU_METRICS,
     load_runtime_settings, load_classes_yaml, publish_model_classes_json,
     resolve_counting_class_ids, resolve_counting_line_orientation,
+    RuntimeSettingsWatcher,
 )
 # Split thread classes.
 from infer_thread import InferThread
@@ -106,6 +107,16 @@ def stop():
             ht.join(timeout=2)
         except Exception as e:
             logger.warning(f"history: thread join failed: {e!r}")
+
+    # BL-86: best-effort join of the runtime-settings watcher (mirrors the
+    # HistoryThread join above). stop_event is already set at the top of
+    # stop(), so the watcher exits its poll loop within poll_interval.
+    sw = getattr(shared_state, "settings_watcher", None)
+    if sw is not None and sw.is_alive():
+        try:
+            sw.join(timeout=2)
+        except Exception as e:
+            logger.warning(f"settings-watcher: thread join failed: {e!r}")
 
     if shared_state.infer_thread and shared_state.infer_thread.is_alive():
         shared_state.infer_thread.join(timeout=5)
@@ -279,6 +290,16 @@ def start(input_source, video_path):
 
             shared_state.infer_thread.start()
             shared_state.display_thread.start()
+
+            # BL-86: start the runtime-settings watcher AFTER the worker
+            # threads so it only picks up *subsequent* /conf changes (boot
+            # read above is the one-shot). The watcher stores validated
+            # pending settings on shared_state; DisplayThread.run() applies
+            # them at the first idle window (single applier → no race).
+            shared_state.settings_watcher = RuntimeSettingsWatcher(
+                shared_state, shared_state.stop_event
+            )
+            shared_state.settings_watcher.start()
     except Exception as e:
         if logger.isEnabledFor(logging.ERROR):
             if logger.isEnabledFor(logging.ERROR):

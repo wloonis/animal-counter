@@ -1,60 +1,172 @@
-# Plan: BL-83 — Configurable counting line orientation (vertical | horizontal) with signed offset
+# Plan: BL-86 — In-process hot-reload of runtime settings (idle-gated, no pod restart)
 
 ## Summary
-Make the counting line orientation configurable (`"vertical"` default = current behavior, or `"horizontal"` new) and make `offset_counting_line` **signed** (negative now possible) while keeping the line **inside the image with a 200px margin on both edges** (vertical `x ∈ [200, W-200]`; horizontal `y ∈ [200, H-200]`). Because the offset is a percentage but the frame size is only known at runtime, the authoritative bound is enforced by **clamping the computed line position to `[200, dim-200]`** at use-time (counting + rendering). The crossing axis is abstracted in `app/src/core/counting.py` so crossing detection, hysteresis, and ALL anti-ID-switch guards plus reassoc/mirror bands work for both orientations. Fully retro-compatible: an absent `counting_line_orientation` ⇒ `"vertical"` = today's behavior, and existing `0..100` offset values stay valid.
+Add a lightweight mtime-polling watcher thread that validates `/conf/runtime-settings.json`
+changes and stores them thread-safe as "pending"; `DisplayThread.run()` applies them via
+setters / `shared_state` writes **only at an idle window** (`reload_pending AND not
+shared_state.recording`). Nothing ever applies mid-recording. This lets the companion
+(`PUT /api/settings` → writes `/conf/runtime-settings.json`) take effect without restarting
+the pod, replacing the current boot-only read in `start()`.
 
 ## In Scope
-- New config field `counting_line_orientation` (`"vertical"` | `"horizontal"`), hot-reloaded per-recording from `/conf/runtime-settings.json` (same semantics as `offset_counting_line` — takes effect on the NEXT recording, never mid-recording).
-- Make `offset_counting_line` **signed** (negative now possible). `main.py` keeps a loose sanity cap (`-300..300`, reject `bool`/non-int) to garbage-filter; the **authoritative** bound is the line staying inside the image with a **200px margin on both edges** along the crossing axis (vertical `x ∈ [200, W-200]`; horizontal `y ∈ [200, H-200]`), enforced by clamping the computed position at use-time in `counting.py` + `rendering.py` where frame dimensions are known.
-- Abstract the crossing axis in `counting.py` (helpers driven by orientation) so crossing detection, hysteresis, resurrection, reid-suppress (+1 & mirror −1), mirror guard, and id-switch fusion + reassoc/mirror distance bands are axis-agnostic. The +1/−1 logic is unchanged (crossing-axis position DECREASING past the line = +1).
-- Per-orientation line rendering in `rendering.py`.
-- Plumb orientation through `main.py` (hot-reload + constructor args), default+env in `settings.py`, read in `state.py`, record in `history.py`.
-- Document the new field + UP/DOWN direction values + signed offset range in `docs/IPC_CONTRACT.md`.
+- Watcher thread polling `mtime` of `/conf/runtime-settings.json` (~2 s): on change, re-read +
+  validate (reuse existing `load_runtime_settings` / `resolve_counting_line_orientation` /
+  `resolve_counting_class_ids`); if valid, store thread-safe on `shared_state.pending_settings` +
+  set `shared_state.reload_pending=True`. Never applies.
+- Idle checkpoint inside `DisplayThread.run()`: when `reload_pending AND not recording`, apply
+  ALL pending settings (toggles + line offset/orientation + counting_class_ids) → clear
+  `reload_pending`. Single applier thread → no setter race.
+- Apply all runtime settings uniformly gated to idle: `draw_tracking`/`box_tracking`/
+  `centroid_tracking` (write `shared_state`), `offset_counting_line` + `counting_line_orientation`
+  (setters on `Counting` + `Rendering`, incl. `PLUS_DIR`/`MINUS_DIR` re-derivation in `Counting`),
+  `counting_class_ids` (write `shared_state.counting_class_ids` + reset `shared_state.sub_counts`).
+- Reset semantics: `counting_class_ids` change at idle → reset `counter_to_right` + `sub_counts` to
+  0 (fresh-session, matches boot). Line-only (offset/orientation) or toggle-only change → NO reset.
+  BL-70 per-video delta snapshot (`record_start_count`) is separate and unaffected.
+- Boot unchanged: `start()` still reads `/conf` once at startup; the watcher is purely additive
+  (started after threads launch, joined in `stop()`).
 
 ## Out of Scope
-- Companion repo (`wloonis/animal-counter-companion`): exposure of `counting_line_orientation` via `PUT /api/settings` and tolerating `UP`/`DOWN` in its `counting-history.jsonl` reader is a SEPARATE follow-up issue. Do NOT touch the companion repo here. (`docs/IPC_CONTRACT.md` in THIS repo is updated; a follow-up syncs the sister repo.)
-- No Docker rebuild (Python-only change; rsync live mount `/app`).
-- No new horizontal-crossing test video (none exists in the validation manifest).
+- Any change to counting *decision* logic (crossing/guards/tracker params) — standard validation
+  (1 reference video), not `--full`.
+- Companion changes (it already writes `/conf` via `PUT /api/settings`).
+- Mid-recording application of any setting (hard non-negotiable constraint).
+- Optional "en attente/appliqué" status display (follow-up, not required).
 
 ## Architecture Decisions
-- **+1 = UP for a horizontal line** (down→up). Preserves the code invariant "+1 = crossing-axis position DECREASING" (right→left for vertical, down→up for horizontal). No sign-flip logic is introduced — the +1/−1 branch is orientation-agnostic. Rationale: minimal, provably-non-regressing change to the decision logic; documented in code comments + `docs/IPC_CONTRACT.md`.
-- **UP/DOWN direction labels for horizontal** (additive to the IPC contract). Internal guards (reid-suppress, mirror) use orientation-consistent direction strings: `UP` = +1 = the LEFT analog; `DOWN` = −1 = the RIGHT analog. Vertical keeps `LEFT`/`RIGHT` unchanged. Implemented via `PLUS_DIR`/`MINUS_DIR` constants derived from orientation.
-- **Semantic role for the reassoc/mirror distance bands**: `d_cross` = crossing-axis distance, `d_along` = along-line distance, so the SAME tuned values apply to BOTH orientations without re-tuning. The existing settings names (`reassoc_max_dist_x`, `reassoc_max_dist_y`, `mirror_max_dist_y`) are KEPT (no rename) to avoid companion/config churn, but internally mapped to crossing/along roles by orientation (vertical: cross=x, along=y; horizontal: cross=y, along=x). Documented as crossing/along in code comments. These are internal tuning knobs (settings.py/.env), NOT companion-exposed.
-- **Retro-compatibility**: `counting_line_orientation` absent/invalid ⇒ `"vertical"`; existing `offset_counting_line` values in `0..100` remain valid (they are a sub-range of the accepted signed ints and stay inside the 200px-margin clamp for typical frames).
-- **Global counter = sum of per-species sub-counters** (BL-78 invariant) unchanged.
+- **Watcher stores only; DisplayThread applies** — the watcher never touches `Counting`/
+  `Rendering` instances (owned by DisplayThread). Applying setters from the watcher would race a
+  mid-frame read in DisplayThread. One thread (DisplayThread) is the single applier.
+- **Uniform idle gating for ALL settings** — even purely-visual toggles (zero counting impact)
+  wait for idle, for consistency and to keep one code path.
+- **Setter approach (not per-frame shared_state re-read)** — applies atomically at the idle
+  boundary. `Counting.update_line(offset, orientation)` re-derives `PLUS_DIR`/`MINUS_DIR` because
+  those direction labels are set in `__init__` from orientation.
+- **`counting_class_ids` change resets counters to 0** (fresh-session semantics, matching boot).
+  Line-only / toggle-only changes preserve the running total — only a class-set change makes the
+  old total semantically incoherent.
+- **Boot path unchanged** — `start()` keeps its one-shot `/conf` read (L173-236); the watcher is
+  additive and only picks up *subsequent* changes after boot.
+
+## Reuse
+- `state.load_runtime_settings()` (`app/src/state.py`) — best-effort read of
+  `/conf/runtime-settings.json` → dict (never raises).
+- `state.resolve_counting_line_orientation(rt)` / `state.resolve_counting_class_ids(rt,
+  model_classes)` (`app/src/state.py`) — existing validators, already imported in `main.py` L66-67.
+- `SharedState` (`app/src/utils/shared_state.py`) — add the pending-state fields here.
+- `Counting.offset_counting_line` / `counting_line_orientation` / `PLUS_DIR` / `MINUS_DIR`
+  (`app/src/core/counting.py` L62-79) — read per-frame; a setter hot-swaps them.
+- `Rendering.offset_counting_line` / `counting_line_orientation` (`app/src/ui/rendering.py`
+  L66-71) — read per-frame; a setter hot-swaps them.
 
 ## Tasks
-- [x] Task 1: EDIT `app/src/settings.py` — Add `COUNTING_LINE_ORIENTATION = "vertical"` default with a `COUNTING_LINE_ORIENTATION` env override, following the existing `OFFSET_PERCENT_COUNTING_LINE` pattern. Normalize to lowercase; validate ∈ {"vertical","horizontal"}; fallback to "vertical" on any other value. Add a comment documenting the +1 convention (vertical +1=right→left=LEFT; horizontal +1=down→up=UP) and the semantic crossing/along mapping.
-- [x] Task 2: EDIT `app/.env.example` — Add `COUNTING_LINE_ORIENTATION=vertical` with a comment (vertical|horizontal; +1=UP for horizontal). Update the `OFFSET_PERCENT_COUNTING_LINE` comment to reflect the new signed range `-300..300` (percent of frame width for vertical / height for horizontal, along the perpendicular axis).
-- [x] Task 3: EDIT `app/src/state.py` — In `load_runtime_settings()` (alongside `offset_counting_line` + `counting_class_ids`), read `counting_line_orientation` from runtime-settings.json; validate it is a string ∈ {"vertical","horizontal"} (case-insensitive, normalize lowercase); store on `shared_state.counting_line_orientation`. Absent/invalid/bool → leave the settings default in place (do not overwrite). Mirror the existing per-key validation + WARNING-on-invalid style.
-- [x] Task 4: EDIT `app/src/main.py` — In the per-recording hot-reload block (the existing `offset_counting_line` block ~L187-195): (a) change the offset check to a loose signed sanity cap `-300 <= _off <= 300` (keeping the explicit `bool` rejection and the out-of-range WARNING) — NOTE this cap only garbage-filters; the AUTHORITATIVE bound (line inside image, 200px margin) is enforced by the clamp in Tasks 5 & 9 since frame dimensions are not known here; (b) resolve `counting_line_orientation` from runtime-settings (via the `state` helper / `shared_state`) and assign to `settings.COUNTING_LINE_ORIENTATION` per-recording (same "next recording" semantics); (c) pass `counting_line_orientation=settings.COUNTING_LINE_ORIENTATION` to the `Counting(...)` constructor (~L216) and `Rendering(...)` constructor (~L222).
-- [x] Task 5: EDIT `app/src/core/counting.py` — Add `counting_line_orientation` constructor param (default `"vertical"`, stored on `self`). Add axis/label helpers: `cross_pos(c)` returns the crossing-axis coordinate (cx for vertical, cy for horizontal); `along_pos(c)` returns the along-line coordinate (cy for vertical, cx for horizontal); `PLUS_DIR`/`MINUS_DIR` = ("LEFT"/"RIGHT") for vertical, ("UP"/"DOWN") for horizontal. Compute the raw line position per orientation: vertical `x = W/2 + W*off/100`; horizontal `y = H/2 + H*off/100`; then **CLAMP it to `[200, dim-200]`** along the crossing axis (dim = W for vertical, H for horizontal) so the line always stays inside the image with a 200px margin on both edges (log a WARNING when clamping actually changes the value). Replace `x_low`/`x_high` hysteresis with orientation-aware `line_low`/`line_high` on the (clamped) crossing axis. Helpers must be the ONLY place the axis choice lives.
-- [x] Task 6: EDIT `app/src/core/counting.py` — Refactor crossing detection + `area_in_list`/`area_out_list` side assignment to the crossing axis: a track is "in" (not-yet-counted, +1 side) when `cross_pos > line`, "out" (counted) when `cross_pos <= line`; the crossing fires `+1` when `cross_pos <= line_low` for an "in" track (position DECREASING past the line) and `−1` when `cross_pos >= line_high` for an "out" track (position INCREASING). Sign logic and BL-78 sub-counter mirror unchanged.
-- [x] Task 7: EDIT `app/src/core/counting.py` — Refactor the guards to the crossing axis + semantic bands and use `PLUS_DIR`/`MINUS_DIR` for event direction strings: (a) resurrection jump `_jump = abs(cross_pos - last_cross_pos)` and area reset by `cross_pos > line`; (b) reid-suppress (+1): `cross_pos <= line_low` for an "in" track, direction `PLUS_DIR`; (c) reid-suppress mirror (−1): `cross_pos >= line_high` for an "out" track, direction `MINUS_DIR`; (d) mirror guard suppress on the +1 branch. All `recent_crossings` direction comparisons use `PLUS_DIR`/`MINUS_DIR`.
-- [x] Task 8: EDIT `app/src/core/counting.py` — Refactor id-switch fusion to the crossing axis + semantic distance bands: `want_side` from `cross_pos <= line`; fuse when `abs(lost_cross_pos - line) <= reassoc_line_band` AND `d_cross = abs(cross_pos - lost_cross_pos) <= reassoc_max_dist_cross` AND `d_along = abs(along_pos - lost_along_pos) <= reassoc_max_dist_along`, where vertical maps `reassoc_max_dist_x→cross`, `reassoc_max_dist_y→along` and horizontal maps `reassoc_max_dist_y→cross`, `reassoc_max_dist_x→along` (mirror guard's `mirror_max_dist_y` likewise). +1/−1 fusion branch logic unchanged; event direction strings via `PLUS_DIR`/`MINUS_DIR`.
-- [x] Task 9: EDIT `app/src/ui/rendering.py` — Add `counting_line_orientation` constructor param (default `"vertical"`, stored on `self`). In the draw method: compute the line position per orientation (`x = W/2 + W*off/100` vertical; `y = H/2 + H*off/100` horizontal) and **CLAMP it to `[200, dim-200]`** along the crossing axis (dim = W vertical, H horizontal) — identical clamp to Task 5 so the drawn line matches the counting line exactly. Vertical keeps `cv2.line((x,0),(x,img_height),...)` + current text position; horizontal draws `cv2.line((0,y),(img_width,y),...)` and places the counter text so it does not overlap the horizontal line (e.g. anchored near the line on the along-axis, offset in X).
-- [x] Task 10: EDIT `app/src/core/history.py` — Record `counting_line_orientation` and `offset_counting_line` in the session metadata that `history.py` emits (additive fields on the session-start/session-end record, following the existing additive-field pattern like `counts`/`class_id`/`species` from BL-78). So each recording's orientation+offset is persisted with the history.
-- [x] Task 11: EDIT `docs/IPC_CONTRACT.md` — (a) Add `counting_line_orientation` to the `runtime-settings.json` schema example and a new table row (string, `"vertical"`|`"horizontal"`, default `"vertical"`, per-recording hot-reload, same "next recording" semantics as `offset_counting_line`). (b) Update the `offset_counting_line` row: it is now a **signed** int (loose sanity range `-300..300`, reject non-int/bool), and clarify that the **authoritative bound is the line staying inside the image with a 200px margin** (vertical `x \in [200, W-200]`; horizontal `y \in [200, H-200]`), enforced by clamping at use-time since frame size is runtime-only; existing `0..100` values stay valid. (c) In the `counting-history.jsonl` event schema, document the `direction` event field values `LEFT`/`RIGHT` (vertical) and `UP`/`DOWN` (horizontal), and extend the `count_delta` description from "+1 (right→left) / −1 (left→right)" to also state "+1 (down→up) / −1 (up→down)" for horizontal. (d) Note that `counting_line_orientation` + `offset_counting_line` are recorded in the session record (additive).
-- [x] Task 12: VALIDATE — On the Jetson, run `scripts/validate_on_jetson.sh --full` (AGENTS.md §7) because counting DECISION logic (`counting.py` crossing) is touched. A `--full` PASS proves NO REGRESSION on the vertical default (all manifest videos are vertical right→left). The horizontal behavior itself cannot be validated with existing videos (no horizontal test video in the manifest) — note this explicitly in the validation report; do not auto-correct any mismatch.
+
+- [x] **Task 1: Add pending-state fields to `SharedState`** — `app/src/utils/shared_state.py`
+  - Add to `SharedState.__init__`: `self.pending_settings = None` (dict or None),
+    `self.reload_pending = False`, and `self.reload_lock = threading.Lock()` (import `threading`).
+  - These hold the validated pending payload + the flag the DisplayThread polls + the lock that
+    serializes the watcher write vs the DisplayThread read-and-clear.
+  - No behavior change at boot (fields are None/False until the watcher first fires).
+
+- [x] **Task 2: Add `Counting.update_line(offset, orientation)` setter** — `app/src/core/counting.py`
+  - New method: validates `orientation` (lowercase, `"vertical"|"horizontal"`, else → `"vertical"`)
+    and clamps `offset` to `-300..300` (mirror the `main.py` sanity cap); sets `self.offset_counting_line`
+    and `self.counting_line_orientation`; re-derives `self.PLUS_DIR` / `self.MINUS_DIR` from the new
+    orientation (same logic as `__init__` L77-79) so direction labels don't go stale on a mid-life
+    orientation swap.
+  - Pure attribute write — no counting-decision logic changes. Per-frame reads in `cross_pos()` /
+    line-position computation pick up the new values on the next frame.
+
+- [x] **Task 3: Add `Rendering.update_line(offset, orientation)` setter** — `app/src/ui/rendering.py`
+  - New method: normalizes orientation (lowercase, `"horizontal"` else `"vertical"`, mirroring
+    `__init__` L70-71) and sets `self.offset_counting_line` + `self.counting_line_orientation`.
+  - No button/reload logic; pure attribute write.
+
+- [x] **Task 4: Add `RuntimeSettingsWatcher` thread class** — `app/src/state.py`
+  - New `threading.Thread` subclass: `__init__(self, shared_state, stop_event, poll_interval=2.0)`.
+    Polls `os.path.getmtime(RUNTIME_SETTINGS_PATH)` every `poll_interval` seconds; on mtime change,
+    calls `load_runtime_settings()` + `resolve_counting_line_orientation(rt)` +
+    `resolve_counting_class_ids(rt, {names, default_counting_class})` (same model catalog resolution
+    as `main.py` boot block), assembles a validated pending dict, then under
+    `shared_state.reload_lock` sets `shared_state.pending_settings = <dict>` and
+    `shared_state.reload_pending = True`. On any read/parse error, logs a WARNING and does NOT set
+    pending (fail-open: keep current settings). Exits when `stop_event.is_set()`.
+  - Add a module-level `settings_watcher = None` holder in `state.py` so `main.start()`/`stop()`
+    can reach the instance.
+
+- [x] **Task 5: Add idle checkpoint to `DisplayThread.run()`** — `app/src/display_thread.py`
+  - Near the top of the per-frame loop (after the arret/powoff sentinel check, before frame
+    processing), add: `if shared_state.reload_pending and not shared_state.recording:` → take the
+    pending payload under `shared_state.reload_lock` (read + clear `reload_pending` + grab
+    `pending_settings` and set it back to None), then apply it:
+    - toggles: `shared_state.draw_tracking` / `box_tracking` / `centroid_tracking` from pending
+      (only if present/bool, mirroring the boot block's guards).
+    - line: `self.counting.update_line(offset, orientation)` + `self.rendering.update_line(offset,
+      orientation)` (only if offset/orientation present in pending).
+    - class ids: if the pending `counting_class_ids` differs from the current
+      `shared_state.counting_class_ids`, set `shared_state.counting_class_ids = <new list>`,
+      `self.counting.counting_class_ids = list(<new>)`, reset `shared_state.sub_counts = {cid: 0
+      for cid in <new>}`, and reset `shared_state.counter_to_right = 0` (fresh-session). If only
+      line/toggles changed (class set unchanged), do NOT reset counters.
+  - Log at INFO: "runtime settings applied (idle)" with the changed keys; or "pending settings
+    held (recording in progress)" when recording blocks application.
+  - This is the SINGLE applier → no cross-thread setter race.
+
+- [x] **Task 6: Start/stop the watcher in `main.py`** — `app/src/main.py`
+  - In `start()`, after `shared_state.infer_thread.start()` / `shared_state.display_thread.start()`
+    (end of the thread-launch block), instantiate + start `RuntimeSettingsWatcher(shared_state,
+    shared_state.stop_event)` and store it on `shared_state.settings_watcher` (new SharedState
+    field added in Task 1 — note: add `self.settings_watcher = None` to `SharedState.__init__` as
+    part of Task 1).
+  - In `stop()`, before joining InferThread/DisplayThread, signal + join the watcher:
+    `sw = getattr(shared_state, "settings_watcher", None); if sw and sw.is_alive(): sw.join(timeout=2)`
+    (best-effort, like the HistoryThread join already in `stop()`).
+
+- [x] **Task 7: `py_compile` + standard validation** — `app/src/` and `scripts/validate_on_jetson.sh`
+  - `python3 -m py_compile` on every changed file (no syntax errors).
+  - Run `scripts/validate_on_jetson.sh` (standard mode, 1 reference video) → expect PASS with the
+    same count (no regression; boot path unchanged, vertical + offset 0 default on the reference).
 
 ## Documentation Impact
-Stale references the docs-sync phase must re-verify (grep README.md, AGENTS.md, docs/**/*.md, ansible/README.md):
-- `docs/05_counting_pipeline.md` — L54/L57 (line position formula, X-only), L65-87 ("crossed LEFT/RIGHT"), L149, L167, L207, L217, L238, L258, L271 (guard narratives all assume vertical X-axis crossing). Needs a section on horizontal orientation + generalization of LEFT/RIGHT → crossing-axis-decreasing/increasing. **Heaviest doc impact.**
-- `docs/04_configuration.md` — L67 (`OFFSET_PERCENT_COUNTING_LINE` table row, range 0–100, x≈384), L301, L342. Needs `COUNTING_LINE_ORIENTATION` row + updated offset range.
-- `docs/06_validation.md` — L136 ("crossed LEFT/RIGHT" in the captured `counting_events` log). Mention UP/DOWN for horizontal.
-- `docs/11_counting_history.md` — event-schema reference; cross-link the IPC_CONTRACT direction/count_delta additions.
-- `README.md` — L11/L20 ("+1 right→left, −1 left→right" intro) and L269 (`OFFSET_PERCENT_COUNTING_LINE=10` env line). Extend the intro to mention the horizontal orientation + UP/DOWN, and the signed offset range.
-- `app/.env.example` — covered by Task 2 (config template, versioned).
-- `docs/IPC_CONTRACT.md` — covered by Task 11 (authoritative contract; explicitly in-scope).
-- `AGENTS.md` / `ansible/README.md` — no direct references to `offset_counting_line`/orientation found, but re-grep for `OFFSET_PERCENT_COUNTING_LINE` / `counting line` during docs-sync.
+The current docs describe the old "hot-reload per recording / per pod boot" semantics. After
+this change the semantics become "applied at idle window, no pod restart". Stale references:
+- `docs/IPC_CONTRACT.md` L99-126 — "reads at the start of every recording … hot-reload, no restart"
+  and "Hot-reloaded per recording" and "Takes full effect only when a new InferThread/Counting is
+  created (a mid-session change needs a recording restart)". Update to: watcher thread polls for
+  changes, applied at the first idle window (not mid-recording), no pod restart. Note the
+  counter-reset-on-class-id-change rule.
+- `docs/04_configuration.md` L34 — "runtime settings (runtime-settings.json, hot-reloaded by the
+  companion …)". Clarify idle-gated application.
+- `docs/05_counting_pipeline.md` L54-57, L301, L342 — `OFFSET_PERCENT_COUNTING_LINE` line-position
+  description; the "next recording" wording may imply per-recording. Align with idle-gated reload.
+- `docs/11_counting_history.md` L110, L129 — `offset_counting_line` in session metadata; no
+  schema change but the application timing note may need an update.
+- `AGENTS.md` L558, L560 — "runtime-settings.json reader (hot-reload)" /
+  "counting_class_ids reader (hot-reload)". Update to reflect the watcher + idle checkpoint.
+(The downstream docs-sync phase re-verifies these; listed here so the plan is doc-aware.)
 
 ## Validation
-- `scripts/validate_on_jetson.sh --full` (AGENTS.md §7) — proves no regression on the vertical default (the only behavior exercisable by the manifest). All 4 priority defect videos must still pass; the net counts in `validation/expected_counts.json` must remain unchanged.
-- Manual/inspection-only for horizontal: no horizontal-crossing test video exists. Confirm by code review that the axis helpers map vertical↔horizontal correctly and that `vertical` reproduces the exact previous code paths (helpers reduce to cx/cy, LEFT/RIGHT). Optionally synthesize a tiny synthetic horizontal-crossing test offline if feasible, but it is NOT required by this issue.
+- `python3 -m py_compile app/src/utils/shared_state.py app/src/state.py app/src/core/counting.py
+  app/src/ui/rendering.py app/src/display_thread.py app/src/main.py` — no syntax errors.
+- `bash scripts/validate_on_jetson.sh` (standard mode, `validation/config.json` →
+  `validation-1-#9.mp4`, tolerance 0) → expect PASS, identical count (boot path unchanged, default
+  vertical + offset 0 on the reference → no behavioral change).
+- Manual (acceptance, on the Jetson): change `counting_line_orientation` + `offset_counting_line`
+  + `counting_class_ids` via companion `PUT /api/settings` → confirm taken into account without pod
+  restart at the first idle window; during a recording, confirm stored-but-not-applied; confirm
+  boot is unchanged.
 
 ## Risks
-- **Guard regression on vertical** — the axis abstraction touches every guard. Mitigation: helpers reduce exactly to today's cx/cy for `vertical`; `--full` PASS on the 4 priority defect videos proves no regression; keep `PLUS_DIR`/`MINUS_DIR` = `LEFT`/`RIGHT` for vertical.
-- **Horizontal behavior is untested** — no manifest video crosses a horizontal line. Mitigation: the sign logic is intentionally unchanged (position-decreasing = +1), so horizontal inherits the same invariant by construction; document the limitation in the validation report and IPC_CONTRACT.md.
-- **Band semantics mismatch** — mapping `reassoc_max_dist_x/y` to cross/along by orientation could swap tuned values. Mitigation: vertical maps cross=x, along=y = today's exact usage (no behavior change for vertical); horizontal is new and accepts the same tuned values by design decision (semantic role).
-- **`offset_counting_line` signed + image-bound clamp** — the rule changes from a fixed `0..100` to a signed value clamped so the line stays inside the image with a 200px margin on both edges. Since the offset is a percentage but frame size is only known at runtime, the clamp lives in `counting.py`/`rendering.py` (not `main.py`); for typical 640px frames only ~±18% stays unclamped and larger magnitudes clamp to the edge. Mitigation: the clamp is identical in counting and rendering (drawn line == counting line); existing `0..100` values are unaffected (sub-range, in-bounds); log a WARNING when clamping changes the value so misconfiguration is visible.
-- **IPC contract drift** — adding `UP`/`DOWN` direction values is additive, but the companion's `counting-history.jsonl` reader must tolerate them. Mitigation: documented in IPC_CONTRACT.md as additive; the companion update is the separate follow-up issue (explicitly out of scope here).
+- **Race on pending read/write** — the watcher writes `pending_settings` while DisplayThread reads
+  + clears it. Mitigation: `shared_state.reload_lock` serializes both sides (Task 1 + Task 4 +
+  Task 5).
+- **Stale `PLUS_DIR`/`MINUS_DIR` after orientation swap** — if the `Counting` setter forgets to
+  re-derive them, direction labels (and any log lines) report the old orientation. Mitigation:
+  Task 2 explicitly re-derives them, mirroring `__init__`.
+- **Spurious counter reset on a no-op class-id payload** — applying a pending payload whose
+  `counting_class_ids` equals the current set would wrongly zero the counter. Mitigation: Task 5
+  compares the pending set to the current set before resetting.
+- **Watcher thread leak on unclean exit** — if `stop()` doesn't join it. Mitigation: Task 6 adds a
+  best-effort join mirroring the existing HistoryThread join.
+- **Boot regression** — accidentally changing the one-shot `/conf` read in `start()`. Mitigation:
+  the watcher is purely additive; `start()`'s L173-236 block is untouched.

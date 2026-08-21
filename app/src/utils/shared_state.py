@@ -24,6 +24,7 @@ This module provides a shared state object to replace global variables.
 import os
 import time
 import datetime
+import threading
 from queue import Queue
 from threading import Event
 
@@ -105,3 +106,15 @@ class SharedState:
         # {cid: 0 for cid in counting_class_ids}. The global counter_to_right
         # is the sum of these (retro-compatible invariant).
         self.sub_counts = {}
+        # BL-86: in-process hot-reload of runtime settings (idle-gated, no pod
+        # restart). The RuntimeSettingsWatcher thread polls the mtime of
+        # /conf/runtime-settings.json and, on a change, stores the validated
+        # pending payload here + sets reload_pending. DisplayThread.run()
+        # applies it at the first idle window (reload_pending AND not
+        # recording) under reload_lock — the single applier, no setter race.
+        self.pending_settings = None  # dict or None
+        self.reload_pending = False
+        self.reload_lock = threading.Lock()
+        # BL-86: holder for the RuntimeSettingsWatcher instance, started after
+        # the threads launch in main.start() and best-effort joined in stop().
+        self.settings_watcher = None

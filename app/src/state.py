@@ -30,6 +30,7 @@ import json
 import logging
 import os
 import tempfile
+import threading
 
 from settings import Settings
 from utils.shared_state import SharedState
@@ -278,3 +279,122 @@ def resolve_counting_line_orientation(rt):
                         "'horizontal', got %r; keeping default", raw)
         return None
     return norm
+
+
+# BL-86: module-level holder for the RuntimeSettingsWatcher instance, so
+# main.start()/stop() can reach it. (main.start() also stores the instance on
+# shared_state.settings_watcher — the SharedState field added in Task 1 —
+# which is the authoritative handle used by stop(); this module-level holder is
+# a convenience mirror kept for symmetry with the plan.)
+settings_watcher = None
+
+
+class RuntimeSettingsWatcher(threading.Thread):
+    """BL-86: mtime-polling watcher for /conf/runtime-settings.json.
+
+    Polls the file mtime every `poll_interval` seconds. On a change, re-reads
+    + validates the file (reusing `load_runtime_settings` /
+    `resolve_counting_line_orientation` / `resolve_counting_class_ids` with the
+    same model catalog resolution as the main.py boot block — i.e.
+    `shared_state.class_names` / `shared_state.default_counting_class`) and,
+    if a non-empty validated payload results, stores it thread-safe on
+    `shared_state` under `shared_state.reload_lock` (sets `pending_settings`
+    + `reload_pending=True`). DisplayThread.run() is the SINGLE applier — this
+    thread never touches Counting/Rendering instances (owned by DisplayThread),
+    avoiding a mid-frame setter race.
+
+    Fail-open: on any read/parse/validate error, logs a WARNING and does NOT set
+    pending (keeps the current settings in effect). Exits cleanly when
+    `stop_event.is_set()` (best-effort joined in main.stop()).
+    """
+
+    def __init__(self, shared_state, stop_event, poll_interval=2.0):
+        super().__init__(daemon=True, name="RuntimeSettingsWatcher")
+        self.shared_state = shared_state
+        self.stop_event = stop_event
+        self.poll_interval = float(poll_interval)
+        # Seed the last-seen mtime so we only fire on *subsequent* changes
+        # after boot (the boot path's one-shot read in main.start() already
+        # applied the file's current contents).
+        try:
+            self._last_mtime = os.path.getmtime(RUNTIME_SETTINGS_PATH)
+        except OSError:
+            self._last_mtime = None
+
+    def _build_pending(self):
+        """Re-read + validate runtime-settings.json → pending dict (or None).
+
+        Mirrors the main.py boot block's per-key guards. Returns a dict of
+        validated keys to apply, or None when the file is empty/absent so the
+        caller does not mark a reload pending. Never raises (errors are caught
+        by the caller and logged as a WARNING, fail-open).
+        """
+        rt = load_runtime_settings()
+        if not isinstance(rt, dict) or not rt:
+            # Empty/absent file → nothing to apply; don't clobber current state.
+            return None
+        pending = {}
+        # Toggles: only accept a plain bool.
+        for key in ("draw_tracking", "box_tracking", "centroid_tracking"):
+            val = rt.get(key)
+            if isinstance(val, bool):
+                pending[key] = val
+        # offset_counting_line: signed int in [-300, 300] (reject bool, which
+        # is a subclass of int). This mirrors the main.py sanity cap; the
+        # authoritative 200px-margin clamp happens at use-time in counting.py
+        # + rendering.py where frame dimensions are known.
+        _off = rt.get("offset_counting_line")
+        if isinstance(_off, int) and not isinstance(_off, bool):
+            if -300 <= _off <= 300:
+                pending["offset_counting_line"] = _off
+            else:
+                logger.warning("runtime-settings watcher: offset_counting_line "
+                                "out of range (ignored): %r", _off)
+        # counting_line_orientation: "vertical" | "horizontal" (validated by
+        # resolve_counting_line_orientation, which logs invalid values and
+        # returns None → we simply don't add it to pending).
+        _orient = resolve_counting_line_orientation(rt)
+        if _orient is not None:
+            pending["counting_line_orientation"] = _orient
+        # counting_class_ids: same catalog resolution as the boot block
+        # (model default from classes.yaml → companion override, validated
+        # against the model class catalog). resolve_counting_class_ids never
+        # returns an empty list, so this is always a non-empty list of ints.
+        model_catalog = {
+            "names": self.shared_state.class_names,
+            "default_counting_class": self.shared_state.default_counting_class,
+        }
+        pending["counting_class_ids"] = list(
+            resolve_counting_class_ids(rt, model_catalog))
+        return pending
+
+    def run(self):
+        logger.info("RuntimeSettingsWatcher started (poll=%.1fs)",
+                    self.poll_interval)
+        while not self.stop_event.is_set():
+            try:
+                try:
+                    mtime = os.path.getmtime(RUNTIME_SETTINGS_PATH)
+                except OSError:
+                    mtime = None
+                if mtime is not None and mtime != self._last_mtime:
+                    self._last_mtime = mtime
+                    try:
+                        pending = self._build_pending()
+                    except Exception as exc:  # fail-open: keep current settings
+                        logger.warning("runtime-settings watcher: validate "
+                                        "error (%s): %s",
+                                        type(exc).__name__, exc)
+                        pending = None
+                    if pending:
+                        with self.shared_state.reload_lock:
+                            self.shared_state.pending_settings = pending
+                            self.shared_state.reload_pending = True
+                        logger.info("runtime-settings watcher: pending stored "
+                                    "(keys=%s)", sorted(pending.keys()))
+            except Exception as exc:  # never let the watcher die on a poll error
+                logger.warning("runtime-settings watcher: poll error (%s): %s",
+                                type(exc).__name__, exc)
+            # Responsive sleep: returns True as soon as stop_event is set.
+            self.stop_event.wait(self.poll_interval)
+        logger.info("RuntimeSettingsWatcher stopped")
