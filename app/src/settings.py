@@ -99,6 +99,14 @@ class Settings:
         self.DRAW_TRACKING = os.getenv("DRAW_TRACKING", "False").lower() == "true"
         self.CENTROID_TRACKING = os.getenv("CENTROID_TRACKING", "True").lower() == "true"
         self.BOX_TRACKING = os.getenv("BOX_TRACKING", "True").lower() == "true"
+        # BL-87 detection-level exclusion zones: normalized axis-aligned rects
+        # {x,y,w,h} in [0..1]. Detections whose centroid falls inside any rect
+        # are dropped in post_process before OC-SORT (no track -> no count).
+        # Default [] = no-op (byte-identical current behavior). Hot-reloaded at
+        # idle via the BL-86 watcher (no pod restart). Independent of the other
+        # draw_* toggles.
+        self.MASK_ZONES = []
+        self.DRAW_MASK_ZONES = os.getenv("DRAW_MASK_ZONES", "True").lower() == "true"
 
         ### Bounding-box render tuning (BL-58 visual readability) - Start
         # These control ONLY the on-screen drawing of boxes/labels/centroids.
