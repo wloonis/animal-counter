@@ -100,7 +100,7 @@ controls a semi-transparent overlay of the masked rects for visual feedback.
   `mask_zones` is None/empty → skip entirely (no-op). Docstring updated to
   describe the new param + drop semantics.
 
-- [ ] **Task 5: PASS `mask_zones` to `post_process`** `app/src/infer_thread.py` —
+- [x] **Task 5: PASS `mask_zones` to `post_process`** `app/src/infer_thread.py` —
   At the `self.yolo.post_process(...)` call (L111-115), add
   `mask_zones=shared_state.mask_zones` alongside the existing
   `counting_class_ids=shared_state.counting_class_ids`.
