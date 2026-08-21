@@ -94,7 +94,7 @@ the pod, replacing the current boot-only read in `start()`.
   - Add a module-level `settings_watcher = None` holder in `state.py` so `main.start()`/`stop()`
     can reach the instance.
 
-- [ ] **Task 5: Add idle checkpoint to `DisplayThread.run()`** — `app/src/display_thread.py`
+- [x] **Task 5: Add idle checkpoint to `DisplayThread.run()`** — `app/src/display_thread.py`
   - Near the top of the per-frame loop (after the arret/powoff sentinel check, before frame
     processing), add: `if shared_state.reload_pending and not shared_state.recording:` → take the
     pending payload under `shared_state.reload_lock` (read + clear `reload_pending` + grab
