@@ -122,7 +122,7 @@ the pod, replacing the current boot-only read in `start()`.
     `sw = getattr(shared_state, "settings_watcher", None); if sw and sw.is_alive(): sw.join(timeout=2)`
     (best-effort, like the HistoryThread join already in `stop()`).
 
-- [ ] **Task 7: `py_compile` + standard validation** — `app/src/` and `scripts/validate_on_jetson.sh`
+- [x] **Task 7: `py_compile` + standard validation** — `app/src/` and `scripts/validate_on_jetson.sh`
   - `python3 -m py_compile` on every changed file (no syntax errors).
   - Run `scripts/validate_on_jetson.sh` (standard mode, 1 reference video) → expect PASS with the
     same count (no regression; boot path unchanged, vertical + offset 0 default on the reference).
