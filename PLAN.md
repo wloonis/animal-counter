@@ -129,7 +129,7 @@ controls a semi-transparent overlay of the masked rects for visual feedback.
   `counter_to_right`/`sub_counts` (analogous to the line offset/orientation
   apply, not the counting_class_ids reset).
 
-- [ ] **Task 9: DRAW overlay** `app/src/ui/rendering.py` —
+- [x] **Task 9: DRAW overlay** `app/src/ui/rendering.py` —
   In `draw_ui` (L161+), after the existing overlay drawing and gated on
   `shared_state.draw_mask_zones and shared_state.mask_zones` (independent of
   `draw_tracking`): for each rect, scale to pixels (`x*w`, `y*h`, `rw*w`,
