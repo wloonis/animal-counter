@@ -216,3 +216,4 @@ Task 3: ADD shared_state fields (mask_zones + draw_mask_zones) — 46c7c38
 Task 4: ADD centroid-in-rect pre-filter — 9c2623b
 Task 5: PASS mask_zones to post_process — 10c7215
 Task 6: WIRE mask_zones + draw_mask_zones into watcher — 88661ec
+Task 7: RESOLVE mask_zones + draw_mask_zones at boot — be6b14a

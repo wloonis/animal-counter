@@ -113,7 +113,7 @@ controls a semi-transparent overlay of the masked rects for visual feedback.
   `pending["mask_zones"] = <validated list>`. This reuses the exact pattern
   already there for the other keys.
 
-- [ ] **Task 7: RESOLVE at boot** `app/src/main.py` —
+- [x] **Task 7: RESOLVE at boot** `app/src/main.py` —
   In the boot block (L180-239), mirror the existing toggle/offset resolution:
   (a) `if isinstance(rt.get("draw_mask_zones"), bool): shared_state.draw_mask_zones = rt["draw_mask_zones"]`;
   (b) `_mz = resolve_mask_zones(rt); if _mz is not None: shared_state.mask_zones = _mz`.
