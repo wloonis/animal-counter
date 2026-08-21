@@ -75,8 +75,10 @@ class Settings:
         # AUTHORITATIVE bound is the line staying inside the image with a 200px
         # margin on both edges along the crossing axis, enforced by clamping the
         # computed position at use-time in counting.py/rendering.py (frame size
-        # is only known at runtime). Existing 0..100 values stay valid.
-        self.OFFSET_PERCENT_COUNTING_LINE = int(os.getenv("OFFSET_PERCENT_COUNTING_LINE", 10))
+        # is only known at runtime). Default 0 = centered on a fresh deploy
+        # (vertical line x = W/2; horizontal line y = H/2). Existing 0..100
+        # values stay valid.
+        self.OFFSET_PERCENT_COUNTING_LINE = int(os.getenv("OFFSET_PERCENT_COUNTING_LINE", 0))
 
         # Counting line orientation (BL-83): "vertical" (default = today's
         # behavior, line is a vertical X position, pigs cross right->left) or
@@ -93,7 +95,6 @@ class Settings:
         if _orient not in ("vertical", "horizontal"):
             _orient = "vertical"
         self.COUNTING_LINE_ORIENTATION = _orient
-
         # Visualization Options
         self.DRAW_TRACKING = os.getenv("DRAW_TRACKING", "False").lower() == "true"
         self.CENTROID_TRACKING = os.getenv("CENTROID_TRACKING", "True").lower() == "true"
