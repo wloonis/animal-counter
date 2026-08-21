@@ -10,6 +10,18 @@ Counting logic is OC-SORT + custom anti-ID-switch guards. See `README.md` and
 behalf (surface CLARIFY questions, point them to plannotator, feed their
 answers back).
 
+> ### Process convention — always use Archon for implementation work
+>
+> Any non-trivial code change to this repo (counting logic, `app/`, k3s
+> templates, validation-touching docs) **must** go through the
+> `archon-jetson-dev` workflow launched **detached** (§3) and driven via the
+> relay protocol (§4) — **not** edited manually by a pi session. This ensures
+> every change is planned, reviewed in plannotator, implemented task-by-task
+> with `python3 -m py_compile`, and validated on the Jetson. Manual edits are
+> reserved for: (a) hot-fixes the user **explicitly** directs, and (b) branches
+> that touch **no** file under `app/` (infra/docs/ansible/k3s-only, which skip
+> validation per §7). If in doubt, launch an Archon run.
+
 ---
 
 ## 1. Archon — what it is and how it's configured here
