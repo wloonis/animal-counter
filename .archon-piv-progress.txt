@@ -178,3 +178,5 @@ Task 9: counting.py counting_class_ids set + sub-counters + crossed class_id/spe
 Task 10: history.py per-species counts in heartbeat + session_end — 07b5204
 Task 11: settings.py CLASS_NAMES + DEFAULT_COUNTING_CLASS env fallbacks — 74278bb
 Task 12: IPC_CONTRACT.md + AGENTS.md BL-78 docs (model-classes.json #5, counting_class_ids, additive event fields, sister-repo rows) — 99fffde
+Task 1: ADD COUNTING_LINE_ORIENTATION setting (app/src/settings.py) — a5f1afd
+Task 2: EDIT app/.env.example — 5e1f6fe
