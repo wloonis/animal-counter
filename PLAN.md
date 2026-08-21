@@ -83,7 +83,7 @@ controls a semi-transparent overlay of the masked rects for visual feedback.
   defaults and the `.env`→`settings.py` fallback chain documented in
   `docs/04_configuration.md`.
 
-- [ ] **Task 3: ADD `shared_state` fields** `app/src/utils/shared_state.py` —
+- [x] **Task 3: ADD `shared_state` fields** `app/src/utils/shared_state.py` —
   In `SharedState.__init__`, add `self.mask_zones = []` and
   `self.draw_mask_zones = True` near the existing `counting_class_ids` /
   `draw_tracking` fields (L97-130 region). These are read per-frame by
