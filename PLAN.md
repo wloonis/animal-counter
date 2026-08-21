@@ -120,7 +120,7 @@ controls a semi-transparent overlay of the masked rects for visual feedback.
   Placed alongside the `draw_tracking`/`box_tracking`/`centroid_tracking` and
   `counting_class_ids` boot reads.
 
-- [ ] **Task 8: APPLY at idle (no reset)** `app/src/display_thread.py` —
+- [x] **Task 8: APPLY at idle (no reset)** `app/src/display_thread.py` —
   In the idle apply block (L262-320): (a) add `"draw_mask_zones"` to the toggles
   loop (`for key in (...)` + `setattr(shared_state, key, pending[key])`); (b)
   after the `counting_class_ids` reset block, add a `mask_zones` apply:
