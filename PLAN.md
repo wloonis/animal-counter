@@ -105,7 +105,7 @@ controls a semi-transparent overlay of the masked rects for visual feedback.
   `mask_zones=shared_state.mask_zones` alongside the existing
   `counting_class_ids=shared_state.counting_class_ids`.
 
-- [ ] **Task 6: WIRE `mask_zones` + `draw_mask_zones` into the watcher** `app/src/state.py` —
+- [x] **Task 6: WIRE `mask_zones` + `draw_mask_zones` into the watcher** `app/src/state.py` —
   In `RuntimeSettingsWatcher._build_pending()`, after the existing per-key
   blocks: (a) add `draw_mask_zones` to the bool-toggle acceptance loop
   (`for key in ("draw_tracking","box_tracking","centroid_tracking",
