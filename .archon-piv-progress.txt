@@ -180,3 +180,4 @@ Task 11: settings.py CLASS_NAMES + DEFAULT_COUNTING_CLASS env fallbacks — 7427
 Task 12: IPC_CONTRACT.md + AGENTS.md BL-78 docs (model-classes.json #5, counting_class_ids, additive event fields, sister-repo rows) — 99fffde
 Task 1: ADD COUNTING_LINE_ORIENTATION setting (app/src/settings.py) — a5f1afd
 Task 2: EDIT app/.env.example — 5e1f6fe
+Task 3: resolve counting_line_orientation in state.py — 48b9760
