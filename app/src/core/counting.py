@@ -517,7 +517,14 @@ class Counting:
                                 del self.lost_tracks[track_id]
                             continue
 
-                    if self.detections[track_id][2] >= line_high and track_id in self.area_out_list:
+                    # BL-83: crossing detection on the abstract crossing axis.
+                    # +1 fires when an "in" track's cross_pos DECREASES past
+                    # line_low; -1 fires when an "out" track's cross_pos
+                    # INCREASES past line_high. For vertical cross_pos == cx
+                    # (reproduces the previous code path exactly); for
+                    # horizontal cross_pos == cy.
+                    _cross = self.cross_pos(element)
+                    if _cross >= line_high and track_id in self.area_out_list:
                         counter_to_right -= 1
                         # BL-78: mirror on the per-species sub-counter (global = sum).
                         cid = int(class_id)
@@ -535,7 +542,7 @@ class Counting:
                         if track_id not in self.area_in_list:
                             self.area_out_list.remove(track_id)
                             self.area_in_list.append(track_id)
-                    elif self.detections[track_id][2] <= line_low and track_id in self.area_in_list:
+                    elif _cross <= line_low and track_id in self.area_in_list:
                         if track_id in self.suppress_count:
                             # Mirror guard: this new ID on the right was deemed a
                             # re-ID of an already-counted pig. Suppress the +1.
@@ -665,7 +672,10 @@ class Counting:
                                 break
 
                     if not fused:
-                        if element[3] in counting_class_ids and track_id not in self.area_in_list and element[0] > line:
+                        # BL-83: initial side assignment on the crossing axis:
+                        # "in" (not-yet-counted, +1 side) when cross_pos > line,
+                        # "out" (counted) when cross_pos <= line.
+                        if element[3] in counting_class_ids and track_id not in self.area_in_list and self.cross_pos(element) > line:
                             self.area_in_list.append(track_id)
                             # --------------------------------------------------
                             # Mirror guard: new ID on the RIGHT + a track recently
@@ -714,7 +724,7 @@ class Counting:
                                             "fused_with": int(lost_id),
                                         })
                                     break
-                        elif element[3] in counting_class_ids and track_id not in self.area_out_list and element[0] <= line:
+                        elif element[3] in counting_class_ids and track_id not in self.area_out_list and self.cross_pos(element) <= line:
                             self.area_out_list.append(track_id)
 
             for element in current_status:
