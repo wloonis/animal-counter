@@ -25,6 +25,10 @@
     roboflow_format: "{{ lookup('env', 'TRAINING_ROBOFLOW_FORMAT') }}"
     roboflow_api_key: "{{ lookup('env', 'TRAINING_ROBOFLOW_API_KEY') }}"
     default_counting_class: "{{ lookup('env', 'TRAINING_DEFAULT_COUNTING_CLASS') | default('1', true) }}"
+    # Dataset source — 'roboflow' (default: download from Roboflow, current
+    # behavior) or 'local' (use an already-prepared dataset at TRAINING_PROJECT_DIR,
+    # prepared once by scripts/prepare_local_dataset.py — no Roboflow fetch).
+    dataset_source: "{{ lookup('env', 'TRAINING_DATASET_SOURCE') | default('roboflow', true) }}"
 
     files_to_move:
       - train
@@ -63,7 +67,7 @@
       loop: "{{ files_to_move }}"
       args:
         removes: "{{ project_dir }}/{{ item }}"
-      when: runs_dir.stat.exists
+      when: runs_dir.stat.exists and dataset_source == 'roboflow'
       ignore_errors: true
       delegate_to: localhost
       become: false
@@ -75,18 +79,21 @@
         method: GET
         return_content: true
       register: roboflow_metadata
+      when: dataset_source == 'roboflow'
       delegate_to: localhost
       become: false
 
     - name: Extract dataset download URL
       set_fact:
         roboflow_download_url: "{{ roboflow_metadata.json.export.link }}"
+      when: dataset_source == 'roboflow'
 
     - name: Download dataset zip
       get_url:
         url: "{{ roboflow_download_url }}"
         dest: "{{ project_dir }}/dataset.zip"
         mode: '0644'
+      when: dataset_source == 'roboflow'
       delegate_to: localhost
       become: false
 
@@ -95,6 +102,25 @@
         src: "{{ project_dir }}/dataset.zip"
         dest: "{{ project_dir }}"
         remote_src: true
+      when: dataset_source == 'roboflow'
+      delegate_to: localhost
+      become: false
+
+    - name: Verify prepared dataset exists (local source)
+      ansible.builtin.stat:
+        path: "{{ project_dir }}/data.yaml"
+      register: local_data_yaml
+      when: dataset_source == 'local'
+      delegate_to: localhost
+      become: false
+
+    - name: Fail if local dataset not prepared
+      ansible.builtin.fail:
+        msg: >-
+          TRAINING_DATASET_SOURCE=local but {{ project_dir }}/data.yaml not found.
+          Prepare the dataset first with scripts/prepare_local_dataset.py
+          (--out {{ project_dir }}).
+      when: dataset_source == 'local' and not local_data_yaml.stat.exists
       delegate_to: localhost
       become: false
 
