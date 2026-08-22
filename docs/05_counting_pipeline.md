@@ -49,6 +49,31 @@ DisplayThread (tracking + counting + rendering)
   Dropping the detection before the tracker means no track is ever created for a
   masked region → it can never cross the line → it can never be counted
   (no-track→no-count). Default `[]` = no-op (byte-identical behavior).
+
+  > **Design note — why the mask is post-inference, not a GPU parameter.**
+  > The TensorRT engine is a compiled YOLO network with a **single input
+  >  binding** (the preprocessed image tensor, fixed shape `input_w × input_h`);
+  > it has no "mask zones" input. This is not a missing feature but a
+  >  structural property of dense conv networks: a forward pass's compute is
+  >  **determined by the input shape, not by the pixel content**. The
+  >  convolutions sweep the entire spatial grid regardless of whether the
+  >  pixels are real or blacked-out, so **masking the input would not speed up
+  >  the GPU at all** (same FLOPs) — and it would add a per-frame fill cost plus
+  >  risk detection artifacts at the sharp mask/real boundary (YOLO can
+  >  hallucinate partial objects there; contextual features leak across the
+  >  edge). TensorRT has no API to "skip a spatial region" of a standard YOLO
+  >  backbone (that would be a sparse/masked-conv architecture, i.e. a
+  >  different network to retrain + recompile). Tiling (inferring only on
+  >  unmasked tiles) is also counter-productive on a single Jetson: multiple
+  >  small inferences under-utilize the GPU (kernel-launch overhead) and are
+  >  usually slower than one full-frame pass, while breaking the counting-line
+  >  geometry. The real efficiency lever is therefore necessarily
+  >  **post-inference (CPU)**, where the cost scales with the **number of
+  >  detections**: NMS (O(n²)) and especially OC-SORT tracking (the dominant
+  >  CPU cost). Dropping masked detections **after decode, before NMS and
+  >  before tracking** (vectorized numpy over detections, Python loop only over
+  >  the few zones) minimizes exactly those costs, and is a **no-op when
+  >  `mask_zones` is empty** (zero overhead in the default production case).
 - **Tracking**: `OCSORTTracker` (lib `trackers`), see §4.
 - **Counting**: `Counting.count()`, see §3 and §5.
 
