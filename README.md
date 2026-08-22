@@ -241,6 +241,52 @@ the manifest, and writes `validation-report.json`. See
 bash scripts/training_model.sh     # discover + ansible-playbook build_model.yml
 ```
 
+Training reads the dataset from `TRAINING_PROJECT_DIR` (set in `.env.local`).
+Two dataset sources (`TRAINING_DATASET_SOURCE`):
+
+- **`roboflow`** (default) — the playbook downloads + unzips the Roboflow
+  export (`TRAINING_ROBOFLOW_*`) into `TRAINING_PROJECT_DIR`.
+- **`local`** — **no Roboflow fetch**; you train from a dataset already
+  prepared at `TRAINING_PROJECT_DIR` by the one-shot script
+  `scripts/prepare_local_dataset.py`. This is how you train on a dataset
+  that did not come from Roboflow (e.g. a local sheep dataset).
+
+#### Train on a local dataset (one-shot prep)
+
+1. **Prepare** the dataset into the Ultralytics YOLO layout once (stdlib Python,
+  no venv needed). The script detects `images/+labels/` subsets, auto-splits
+  the train pool into train/val (deterministic), flattens test subsets, fills
+  empty labels for label-less images (background samples), and writes
+  `data.yaml`:
+  ```bash
+  python3 scripts/prepare_local_dataset.py \
+    --src  /path/to/local/dataset \
+    --out  dataset/sheep_template \
+    --names sheep            # comma-sep class names (→ nc + names in data.yaml)
+  ```
+  Input labels must already be YOLO format (`class cx cy w h` normalized) —
+  the same as the Roboflow `yolo26` export. (`--format coco|voc` reserved for
+  future converters.)
+
+2. **Configure** `.env.local`:
+  ```ini
+  TRAINING_DATASET_SOURCE=local
+  TRAINING_PROJECT_DIR=/mnt/c/Dev/ai/animal-counter/dataset/sheep_template
+  TRAINING_DEFAULT_COUNTING_CLASS=0   # class id to count (0 = sheep here)
+  TRAINING_MODEL=yolo26s.pt
+  TRAINING_EPOCHS=300
+  TRAINING_IMGSZ=640
+  TRAINING_DEVICE=0
+  ```
+
+3. **Train** as usual — the playbook skips the Roboflow fetch and trains from
+  the prepared `data.yaml`:
+  ```bash
+  bash scripts/training_model.sh
+  ```
+  Re-running training reuses the same prepared dataset (the prep is one-shot;
+  only re-run it if the source dataset changes — pass `--force` to overwrite).
+
 ---
 
 ## Requirements
