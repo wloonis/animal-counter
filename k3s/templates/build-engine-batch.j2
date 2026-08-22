@@ -17,6 +17,12 @@ spec:
         image: "{{ app_name }}:{{ app_version }}"
         args: ["build-engine"]
         imagePullPolicy: Never
+        # Model artifacts are named after the dataset dir (basename of
+        # TRAINING_PROJECT_DIR). The entrypoint's build-engine mode reads this
+        # to pick the right .onnx -> .engine pair.
+        env:
+        - name: MODEL_NAME
+          value: "{{ model_name }}"
         volumeMounts:
         - name: dev-app
           mountPath: /app

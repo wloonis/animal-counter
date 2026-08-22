@@ -37,6 +37,12 @@
       - data.yaml
       - dataset.zip
 
+    # Model artifacts (.pt/.onnx/.engine) are named after the dataset dir, so
+    # each dataset ships its own model files (mike.pt, sheep_template.pt, ...).
+    # The countingapp reads `model_name` from classes.yaml to load the right
+    # engine; the build-engine Job gets it via the MODEL_NAME env var.
+    model_name: "{{ project_dir | basename }}"
+
   tasks:
 
     - name: Check project directory exists
@@ -163,7 +169,8 @@
         dest: "{{ local_app_path }}/model/classes.yaml"
         mode: '0644'
         content: |
-          model_version: {{ roboflow_version }}
+          model_version: {{ roboflow_version | default(model_name, true) }}
+          model_name: {{ model_name }}
           nc: {{ dataset_nc }}
           names:
           {% for class_name in dataset_names %}
@@ -201,7 +208,7 @@
     - name: Copy trained model to app directory
       ansible.builtin.copy:
         src: "{{ project_dir }}/runs/detect/train/weights/best.pt"
-        dest: "{{ local_app_path }}/model/my_model.pt"
+        dest: "{{ local_app_path }}/model/{{ model_name }}.pt"
       delegate_to: localhost
       become: false
 
@@ -209,7 +216,7 @@
       ansible.builtin.shell: |
         source /mnt/c/Dev/venv/ultralytics/bin/activate
         yolo export \
-          model="{{ local_app_path }}/model/my_model.pt" \
+          model="{{ local_app_path }}/model/{{ model_name }}.pt" \
           opset=13 \
           simplify=True \
           format=onnx \
@@ -224,7 +231,7 @@
       command: >
         rsync -avz --no-owner --no-group
         -e "sshpass -e ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
-        "{{ local_app_path }}/model/my_model.onnx"
+        "{{ local_app_path }}/model/{{ model_name }}.onnx"
         {{ ansible_user }}@{{ ansible_host }}:{{ app_path }}/model/
       environment:
         SSHPASS: "{{ ansible_become_password }}"
@@ -251,7 +258,7 @@
 
     - name: Check if engine exists
       ansible.builtin.stat:
-        path: "{{ app_path }}/model/my_model.engine"
+        path: "{{ app_path }}/model/{{ model_name }}.engine"
       register: engine_file
       become: true
 
@@ -264,24 +271,21 @@
 
     - name: Backup engine with timestamp (shell)
       ansible.builtin.shell: >
-        mv {{ app_path }}/model/my_model.engine
-        {{ app_path }}/model/old/my_model.engine.$(date +%Y%m%d_%H%M)
+        mv {{ app_path }}/model/{{ model_name }}.engine
+        {{ app_path }}/model/old/{{ model_name }}.engine.$(date +%Y%m%d_%H%M)
       args:
         executable: /bin/bash
       when: engine_file.stat.exists
       become: true
 
-    - name: Check if k3s file exists
-      stat:
-        path: "{{ app_path }}/../k3s/build-engine-batch.yaml"
-      register: build_engine_file
-
     - name: Render build-engine template
       template:
         src: "../../../k3s/templates/build-engine-batch.j2"
         dest: "{{ app_path }}/../k3s/build-engine-batch.yaml"
+        mode: '0644'
       become: yes
-      when: not build_engine_file.stat.exists
+      # Always (re)render so MODEL_NAME (and any future env) stays in sync with
+      # the current dataset — the template is the source of truth for this Job.
 
     - name: Delete previous build-engine job if exists
       ansible.builtin.command: >
@@ -302,7 +306,7 @@
 
     - name: Wait for engine file
       ansible.builtin.wait_for:
-        path: "{{ app_path }}/model/my_model.engine"
+        path: "{{ app_path }}/model/{{ model_name }}.engine"
         timeout: 300
       become: true
 

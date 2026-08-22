@@ -152,6 +152,7 @@ def load_classes_yaml():
             return None
         return {
             "model_version": data.get("model_version"),
+            "model_name": data.get("model_name"),
             "nc": nc,
             "names": list(names),
             "default_counting_class": default,

@@ -21,9 +21,16 @@ EOF
 
     sleep 5
 
+    # Model artifacts are named after the dataset dir (e.g. sheep_template,
+    # mike). MODEL_NAME is injected by the build-engine k3s Job (rendered from
+    # build_model.yml = basename of TRAINING_PROJECT_DIR). Fallback `my_model`
+    # for legacy deploys built before this naming convention.
+    MODEL_FILE="${MODEL_NAME:-my_model}"
+    echo "Building engine for model: ${MODEL_FILE}"
+
     /usr/src/tensorrt/bin/trtexec \
-      --onnx="/app/model/my_model.onnx" \
-      --saveEngine="/app/model/my_model.engine"
+      --onnx="/app/model/${MODEL_FILE}.onnx" \
+      --saveEngine="/app/model/${MODEL_FILE}.engine"
 
     echo "Engine build complete"
     ;;
