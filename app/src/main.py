@@ -167,7 +167,11 @@ def start(input_source, video_path):
             )
 
         if shared_state.infer_thread is None or (shared_state.infer_thread and not shared_state.infer_thread.is_alive()):
-            engine_file_path = "./model/my_model.engine"
+            # Model artifacts are named after the dataset dir (e.g.
+            # sheep_template.engine, mike.engine) — see classes.yaml `model_name`
+            # written by build_model.yml. Fallback `my_model` for legacy deploys.
+            model_name = (model_classes or {}).get("model_name") or "my_model"
+            engine_file_path = f"./model/{model_name}.engine"
 
             shared_state.stop_event.clear()
 
