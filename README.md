@@ -281,6 +281,29 @@ COUNTING_LOST_BUFFER_FRAMES=60
 Full parameter table and per-parameter rationale:
 [`docs/04_configuration.md`](docs/04_configuration.md).
 
+### Runtime features (hot-reloaded via `/conf`)
+
+Beyond the boot-time `.env`, a second hostPath `/conf` holds
+`runtime-settings.json` — **hot-reloaded in-process** at the next idle window
+(BL-86), so you can tune the counter **without restarting the pod**. The
+Android companion app (sister repo) writes these settings remotely:
+
+- **Configurable counting classes (BL-78)** — count a configurable subset of
+  the model's classes (multi-species); `global = sum of per-species counters`.
+- **Configurable counting line (BL-83)** — orientation `vertical` |
+  `horizontal` + a signed offset (percent of the frame), centered by default.
+- **Mask zones (BL-87)** — normalized exclusion rects; detections whose
+  centroid falls inside a zone are dropped before tracking (no track → no
+  count). The Android editor draws / moves / resizes / names them visually.
+- **Snapshot (BL-88)** — the countingapp writes a raw-frame JPEG
+  (`/files/snapshot.jpg`) ~every 5s so the companion/app can show a live
+  preview + let you draw mask zones on it.
+- **Overlay toggles** — `draw_tracking`, `draw_mask_zones` (independent).
+
+Contract for the `/conf` + `/files` files shared with the companion:
+[`docs/IPC_CONTRACT.md`](docs/IPC_CONTRACT.md) (kept byte-identical in both
+repos).
+
 ---
 
 ## Tests
