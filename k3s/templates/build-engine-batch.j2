@@ -15,7 +15,13 @@ spec:
       containers:
       - name: "build-engine"
         image: "{{ app_name }}:{{ app_version }}"
-        args: ["build-engine"]
+        # Use the hostPath /app/entrypoint.sh (always current, rsync'd from the
+        # repo) instead of the baked /entrypoint.sh — so entrypoint.sh changes
+        # (e.g. the $MODEL_NAME build-engine logic) take effect WITHOUT an image
+        # rebuild for the build-engine path. The serve path doesn't use
+        # $MODEL_NAME (just `python3 src/main.py` via hostPath /app/src), so the
+        # stale baked entrypoint is fine for serving.
+        command: ["/app/entrypoint.sh", "build-engine"]
         imagePullPolicy: Never
         # Model artifacts are named after the dataset dir (basename of
         # TRAINING_PROJECT_DIR). The entrypoint's build-engine mode reads this
