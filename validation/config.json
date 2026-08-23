@@ -1,6 +1,12 @@
 {
-  "reference_video": "validation-1-#9.mp4",
+  "_comment": "Model-aware validation (BL-89 follow-up). The active model_name is read at validation time from the Jetson's app/model/classes.yaml (the model the validate Job actually runs with — the code rsync excludes model/). The reference video + expected count MUST match the active model: a pig reference video is meaningless for a sheep model (false mismatch). Lookup: (1) models[<active>].reference_video (standard) / .manifest (full); (2) if the active model has NO entry (or the file is missing) → validation_skipped (NA — not a mismatch, not an error): provide a reference video for that model + drop it in validation/videos/. Legacy: when 'models' is absent, the top-level reference_video is used (pre-BL-89 behavior). The pig model is 'my_model' (legacy fallback when classes.yaml has no model_name). expected_count is resolved per-video from the manifest, the #<N> filename, or the legacy template-validation-<N>.mp4 convention.",
   "tolerance": 0,
   "max_iterations": 5,
-  "mode": "standard"
+  "mode": "standard",
+  "models": {
+    "my_model": {
+      "reference_video": "validation-1-#9.mp4",
+      "manifest": "validation/expected_counts.json"
+    }
+  }
 }
