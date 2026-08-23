@@ -338,6 +338,11 @@ Android companion app (sister repo) writes these settings remotely:
   the model's classes (multi-species); `global = sum of per-species counters`.
 - **Configurable counting line (BL-83)** — orientation `vertical` |
   `horizontal` + a signed offset (percent of the frame), centered by default.
+- **Configurable counting direction (BL-92)** — the +1 direction is
+  configurable: `auto` (default, warm-up auto-detect of the dominant crossing
+  direction per run) or `manual` (`up`/`down`/`left`/`right`, validated vs the
+  line orientation). Default `auto` = the BL-83 behavior. A +1 change resets the
+  counter.
 - **Mask zones (BL-87)** — normalized exclusion rects; detections whose
   centroid falls inside a zone are dropped before tracking (no track → no
   count). The Android editor draws / moves / resizes / names them visually.

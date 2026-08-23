@@ -91,6 +91,8 @@ atomically (tmp + `os.replace`) so the companion's `GET /api/snapshot`
 | `CENTROID_TRACKING` / `BOX_TRACKING` | True / True | What to draw when `DRAW_TRACKING=True` |
 | `MASK_ZONES` | `[]` | **(BL-87)** normalized axis-aligned exclusion rects `{x,y,w,h}` in `[0..1]`; detections whose centroid falls inside any rect are dropped before tracking (no track → no count). Default `[]` = no-op |
 | `DRAW_MASK_ZONES` | `True` | **(BL-87)** draw a semi-transparent overlay of the `mask_zones` rects (independent of `DRAW_TRACKING`) |
+| `COUNTING_DIRECTION_MODE` | `auto` | **(BL-92)** `auto` (default) auto-detects the dominant crossing direction per run via a warm-up (N=3 crossings or T=10s, then lock), or `manual` for an operator-set +1. Boot default for the runtime-settings key `counting_direction_mode` |
+| `COUNTING_DIRECTION` | `null` | **(BL-92, manual only)** the +1 direction, one of `up`/`down`/`left`/`right`, validated vs the active `COUNTING_LINE_ORIENTATION` (horizontal → `up`/`down`, vertical → `left`/`right`); `null` = auto/default. Boot default for the runtime-settings key `counting_direction` |
 
 ### Learning mode (optional)
 
@@ -137,7 +139,8 @@ atomically (tmp + `os.replace`) so the companion's `GET /api/snapshot`
 - **Live runtime-settings change** (BL-86, no pod restart): the fields in
   `/conf/runtime-settings.json` — `draw_tracking`, `box_tracking`,
   `centroid_tracking`, `offset_counting_line`, `counting_line_orientation`,
-  `counting_class_ids`, `mask_zones`, `draw_mask_zones` — are **hot-reloaded in-process**. Write them from the
+  `counting_class_ids`, `mask_zones`, `draw_mask_zones`,
+  `counting_direction_mode`, `counting_direction` — are **hot-reloaded in-process**. Write them from the
   companion via `PUT /api/settings` (or edit `/conf/runtime-settings.json`
   directly). A lightweight `RuntimeSettingsWatcher` thread in the countingapp
   polls the file mtime (~2 s); on a valid change it stores the new values as
@@ -149,7 +152,11 @@ atomically (tmp + `os.replace`) so the companion's `GET /api/snapshot`
     per-species sub-counters to 0 (fresh-session semantics); a line-only
     (`offset_counting_line` / `counting_line_orientation`), toggle-only, or
     `mask_zones` change does **not** reset (a mask change alters *where* we
-    count, not *what* we count — analogous to the line offset).
+    count, not *what* we count — analogous to the line offset). A
+    `counting_direction` change (BL-92) resets likewise — a +1 flip
+    invalidates already-counted crossings; a mode-only
+    (`counting_direction_mode` `auto`↔`manual`) change with no effective +1
+    change does **not** reset.
   - This does **not** cover `app/.env` (build/boot params) — those still need
     a pod restart (see next).
 - **Boot/build parameter change** (no rebuild): edit `app/.env` on the Jetson
