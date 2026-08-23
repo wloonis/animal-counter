@@ -155,6 +155,11 @@ def start(input_source, video_path):
         # catalog to the read-only /conf/model-classes.json (IPC file #5,
         # app→companion) so the companion can label sub-counts.
         model_classes = load_classes_yaml()
+        # Active model name (BL-89): used both to load <model_name>.engine AND
+        # to resolve the per-model runtime-settings section + publish to the
+        # companion via model-classes.json. Fallback `my_model` for legacy
+        # deploys whose classes.yaml predates the model_name field.
+        model_name = (model_classes or {}).get("model_name") or "my_model"
         if model_classes is not None:
             shared_state.class_names = list(model_classes.get("names") or [])
             shared_state.default_counting_class = model_classes.get(
@@ -164,13 +169,10 @@ def start(input_source, video_path):
                 shared_state.class_names,
                 shared_state.default_counting_class,
                 shared_state.model_version,
+                model_name,
             )
 
         if shared_state.infer_thread is None or (shared_state.infer_thread and not shared_state.infer_thread.is_alive()):
-            # Model artifacts are named after the dataset dir (e.g.
-            # sheep_template.engine, mike.engine) — see classes.yaml `model_name`
-            # written by build_model.yml. Fallback `my_model` for legacy deploys.
-            model_name = (model_classes or {}).get("model_name") or "my_model"
             engine_file_path = f"./model/{model_name}.engine"
 
             shared_state.stop_event.clear()

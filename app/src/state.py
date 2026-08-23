@@ -76,6 +76,78 @@ _IOU_METRICS = {"iou": IoU, "giou": GIoU, "diou": DIoU, "ciou": CIoU, "biou": BI
 # from data files in /files (hostPath /data/orin/files, e.g.
 # counting-history.jsonl, BL-68). Both hostPaths are mounted RW in the pod.
 RUNTIME_SETTINGS_PATH = "/conf/runtime-settings.json"
+
+# Per-model (scene/camera/model-specific) vs global (user pref / algorithmic)
+# runtime-settings keys. Per-model keys live under runtime-settings.json
+# `models.<model_name>`; global keys at the top level. load_runtime_settings()
+# returns a FLAT dict (global + the active model's per-model keys merged) so the
+# downstream resolve_* / main.py / watcher read flat keys unchanged (BL-89).
+_PER_MODEL_SETTINGS_KEYS = (
+    "counting_class_ids",
+    "counting_line_orientation",
+    "offset_counting_line",
+    "mask_zones",
+)
+_GLOBAL_SETTINGS_KEYS = (
+    "draw_tracking",
+    "box_tracking",
+    "centroid_tracking",
+    "draw_mask_zones",
+)
+
+
+def load_runtime_settings():
+    """Best-effort read of /conf/runtime-settings.json, resolved per-model.
+
+    Returns a flat dict: the global settings (draw_tracking, box_tracking,
+    centroid_tracking, draw_mask_zones) from the top level, merged with the
+    active model's per-model settings (counting_class_ids,
+    counting_line_orientation, offset_counting_line, mask_zones) from the
+    ``models.<model_name>`` section. The active model_name is read best-effort
+    from classes.yaml (load_classes_yaml). This keeps the downstream
+    resolve_* / main.py / RuntimeSettingsWatcher reading flat keys unchanged.
+
+    Backward compat: when the file has no ``models`` key (legacy flat layout),
+    the per-model keys are read from the top level (pre-BL-89 behavior). When
+    ``models`` exists but the active model has no entry, the per-model keys
+    are absent (resolve_* apply defaults). Global keys are always returned.
+
+    Any read/parse error is logged at WARNING and yields ``{}``. Never raises.
+    """
+    try:
+        with open(RUNTIME_SETTINGS_PATH, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+        if not isinstance(data, dict):
+            logger.warning("runtime-settings.json is not a JSON object: %r", data)
+            return {}
+    except FileNotFoundError:
+        return {}
+    except (OSError, ValueError) as exc:
+        logger.warning("runtime-settings.json unreadable (%s): %s",
+                        type(exc).__name__, exc)
+        return {}
+
+    # Global keys always come from the top level.
+    flat = {k: data[k] for k in _GLOBAL_SETTINGS_KEYS if k in data}
+
+    models = data.get("models")
+    if isinstance(models, dict) and models:
+        # New per-model layout (BL-89): read the active model's section.
+        model_name = None
+        mc = load_classes_yaml()
+        if mc is not None:
+            model_name = mc.get("model_name")
+        if model_name and isinstance(models.get(model_name), dict):
+            per_model = models[model_name]
+            flat.update({k: per_model[k]
+                         for k in _PER_MODEL_SETTINGS_KEYS
+                         if k in per_model})
+        # else: active model has no per-model section → per-model keys absent
+        # (resolve_* apply defaults). Global keys still returned.
+    else:
+        # Legacy flat layout: per-model keys read from the top level.
+        flat.update({k: data[k] for k in _PER_MODEL_SETTINGS_KEYS if k in data})
+    return flat
 # BL-78: model class catalog. classes.yaml is the source of truth, written at
 # build time by ansible/playbooks/model/build_model.yml (Task 2) into the
 # model dir (pod-side /app/model/classes.yaml). model-classes.json is a
@@ -83,29 +155,6 @@ RUNTIME_SETTINGS_PATH = "/conf/runtime-settings.json"
 # app->companion) so the companion knows which classes the model can count.
 CLASSES_YAML_PATH = "/app/model/classes.yaml"
 MODEL_CLASSES_PATH = "/conf/model-classes.json"
-
-
-def load_runtime_settings():
-    """Best-effort read of the shared runtime-settings.json file.
-
-    Returns a dict (possibly empty) deserialized from RUNTIME_SETTINGS_PATH.
-    Any read/parse error is logged at WARNING level and yields `{}` — the
-    caller is expected to fall back on os.getenv / existing defaults for the
-    missing keys. Never raises.
-    """
-    try:
-        with open(RUNTIME_SETTINGS_PATH, "r", encoding="utf-8") as fh:
-            data = json.load(fh)
-        if isinstance(data, dict):
-            return data
-        logger.warning("runtime-settings.json is not a JSON object: %r", data)
-        return {}
-    except FileNotFoundError:
-        return {}
-    except (OSError, ValueError) as exc:
-        logger.warning("runtime-settings.json unreadable (%s): %s",
-                        type(exc).__name__, exc)
-        return {}
 
 
 def load_classes_yaml():
@@ -166,17 +215,21 @@ def load_classes_yaml():
 
 
 def publish_model_classes_json(class_names, default_counting_class,
-                                model_version):
+                                model_version, model_name=None):
     """Atomically write the read-only /conf/model-classes.json mirror (BL-78).
 
-    Schema: ``{model_version, nc, names, default_counting_class}``. The file
-    is written to a temp path then ``os.replace``-d into place so the companion
-    never observes a half-written file. Best-effort: any failure is logged at
-    WARNING level and the app continues counting (the companion simply won't
-    see the catalog until the next successful write). Never raises.
+    Schema: ``{model_version, model_name, nc, names, default_counting_class}``.
+    ``model_name`` (BL-89) identifies the active model so the companion can
+    select the matching per-model runtime-settings section (mask_zones /
+    counting line / counting_class_ids). The file is written to a temp path
+    then ``os.replace``-d into place so the companion never observes a
+    half-written file. Best-effort: any failure is logged at WARNING level
+    and the app continues counting (the companion simply won't see the
+    catalog until the next successful write). Never raises.
     """
     payload = {
         "model_version": model_version,
+        "model_name": model_name,
         "nc": len(class_names),
         "names": list(class_names),
         "default_counting_class": int(default_counting_class),
