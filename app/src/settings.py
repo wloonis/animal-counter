@@ -95,6 +95,33 @@ class Settings:
         if _orient not in ("vertical", "horizontal"):
             _orient = "vertical"
         self.COUNTING_LINE_ORIENTATION = _orient
+
+        # BL-92 configurable +1 counting direction. Two GLOBAL keys (not
+        # per-model): the +1 direction is tied to camera/video placement, not
+        # the model.
+        #   counting_direction_mode: "auto" (default) auto-detect the dominant
+        #     raw-physical crossing direction per run via a warm-up (N=3
+        #     crossings or T=10s) then lock; "manual" = operator-set +1.
+        #   counting_direction: manual-only +1 direction, one of up|down|left|
+        #     right. Validated at use-time vs the active
+        #     COUNTING_LINE_ORIENTATION (horizontal -> up/down, vertical ->
+        #     left/right); reject+WARN on mismatch -> fall back to None.
+        # Both are hot-reloaded at idle (BL-86); a counting_direction change
+        # resets the counter (like counting_class_ids). Default auto with a
+        # None direction = byte-identical BL-83 behavior (vertical -> +1=LEFT,
+        # horizontal -> +1=UP).
+        _mode = os.getenv("COUNTING_DIRECTION_MODE", "auto").strip().lower()
+        if _mode not in ("auto", "manual"):
+            _mode = "auto"
+        self.COUNTING_DIRECTION_MODE = _mode
+        _dir = os.getenv("COUNTING_DIRECTION", None)
+        if _dir is not None and _dir.strip():
+            _dir = _dir.strip().lower()
+            if _dir not in ("up", "down", "left", "right"):
+                _dir = None
+        else:
+            _dir = None
+        self.COUNTING_DIRECTION = _dir
         # Visualization Options
         self.DRAW_TRACKING = os.getenv("DRAW_TRACKING", "False").lower() == "true"
         self.CENTROID_TRACKING = os.getenv("CENTROID_TRACKING", "True").lower() == "true"

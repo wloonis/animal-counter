@@ -93,6 +93,10 @@ _GLOBAL_SETTINGS_KEYS = (
     "box_tracking",
     "centroid_tracking",
     "draw_mask_zones",
+    # BL-92: configurable +1 counting direction (GLOBAL, not per-model —
+    # the +1 direction is tied to camera/video placement, not the model).
+    "counting_direction_mode",
+    "counting_direction",
 )
 
 
@@ -331,6 +335,82 @@ def resolve_counting_line_orientation(rt):
     if norm not in ("vertical", "horizontal"):
         logger.warning("counting_line_orientation must be 'vertical' or "
                         "'horizontal', got %r; keeping default", raw)
+        return None
+    return norm
+
+
+def resolve_counting_direction_mode(rt):
+    """Resolve the effective counting_direction_mode (BL-92).
+
+    ``rt`` is the runtime-settings dict (from ``load_runtime_settings()``).
+    Returns the validated lowercase mode (``"auto"`` or ``"manual"``) when
+    ``rt['counting_direction_mode']`` is a string whose value (case-
+    insensitive) is one of those two; returns ``None`` when the key is
+    absent, not a string, is a bool, or holds any other value — in all
+    those ``None`` cases the caller leaves the settings default in place
+    (does NOT overwrite ``shared_state``/``settings``). Invalid values are
+    logged at WARNING level. Never raises.
+    """
+    raw = rt.get("counting_direction_mode") if isinstance(rt, dict) else None
+    if raw is None:
+        return None
+    if isinstance(raw, bool):
+        logger.warning("counting_direction_mode must be a string, got bool "
+                    "%r; keeping default", raw)
+        return None
+    if not isinstance(raw, str):
+        logger.warning("counting_direction_mode must be a string, got %r; "
+                    "keeping default", raw)
+        return None
+    norm = raw.strip().lower()
+    if norm not in ("auto", "manual"):
+        logger.warning("counting_direction_mode must be 'auto' or 'manual', "
+                    "got %r; keeping default", raw)
+        return None
+    return norm
+
+
+def resolve_counting_direction(rt, orientation):
+    """Resolve the effective manual counting_direction (BL-92).
+
+    ``rt`` is the runtime-settings dict (from ``load_runtime_settings()``).
+    ``orientation`` is the effective ``counting_line_orientation`` (one of
+    ``"vertical"``/``"horizontal"``) the direction must be consistent with.
+    Returns one of ``"up"|"down"|"left"|"right"`` when
+    ``rt['counting_direction']`` is a string (case-insensitive) in the allowed
+    set AND consistent with the orientation (horizontal -> {up, down},
+    vertical -> {left, right}); returns ``None`` when the key is absent, not
+    a string, is a bool, holds any other value, OR mismatches the
+    orientation (reject + WARN -> fall back to auto/default). Invalid values
+    are logged at WARNING level. Never raises.
+    """
+    raw = rt.get("counting_direction") if isinstance(rt, dict) else None
+    if raw is None:
+        return None
+    if isinstance(raw, bool):
+        logger.warning("counting_direction must be a string, got bool %r; "
+                    "keeping default", raw)
+        return None
+    if not isinstance(raw, str):
+        logger.warning("counting_direction must be a string, got %r; "
+                    "keeping default", raw)
+        return None
+    norm = raw.strip().lower()
+    if norm not in ("up", "down", "left", "right"):
+        logger.warning("counting_direction must be one of "
+                    "'up'|'down'|'left'|'right', got %r; keeping default",
+                    raw)
+        return None
+    if orientation not in ("vertical", "horizontal"):
+        logger.warning("counting_direction %r cannot be validated without a "
+                    "valid counting_line_orientation (%r); keeping default",
+                    raw, orientation)
+        return None
+    allowed = {"left", "right"} if orientation == "vertical" else {"up", "down"}
+    if norm not in allowed:
+        logger.warning("counting_direction %r is inconsistent with "
+                    "orientation %r (expected one of %s); keeping default",
+                    raw, orientation, sorted(allowed))
         return None
     return norm
 

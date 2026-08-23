@@ -140,6 +140,8 @@ Schema:
   "box_tracking": true,
   "centroid_tracking": true,
   "draw_mask_zones": true,
+  "counting_direction_mode": "auto",
+  "counting_direction": null,
   "models": {
     "sheep_template": {
       "counting_class_ids": [0],
@@ -184,6 +186,8 @@ per-model keys are absent (defaults apply).
 | `counting_class_ids` | array[int] | subset of `model-classes.json` `names` ids | `[default_counting_class]` | **(BL-78)** which class IDs the countingapp counts; hot-reloaded per recording (validated against `model-classes.json`; invalid IDs dropped with a WARNING; fallback `[default_counting_class]` when absent/empty/all-invalid) |
 | `mask_zones` | array[object] | each `{x,y,w,h, name?}` in `[0..1]`, `w>0`, `h>0`, `x+w<=1`, `y+h<=1` | `[]` | **(BL-87)** normalized axis-aligned exclusion rects; detections whose centroid falls inside any rect are dropped before tracking (no track → no count). Strict reject-all on any invalid rect (field ignored, prior kept, WARNING). Hot-reloaded at idle. Generic (all species). **`name` (optional string, additive)** is an app-local label for the rect (Android UI): the companion stores + returns it (generic merge, unknown-key tolerant), the countingapp ignores it (reads only `x/y/w/h`) |
 | `draw_mask_zones` | bool | — | `true` | **(BL-87)** draw a semi-transparent overlay of the `mask_zones` rects (independent of `draw_tracking`). Hot-reloaded |
+| `counting_direction_mode` | string | `"auto"` \| `"manual"` | `"auto"` | **(BL-92)** auto-detect the dominant crossing direction per run via a warm-up of N=3 crossings or T=10s then lock, vs manual operator-set +1. Hot-reloaded at idle (BL-86 gating). *Additive — companion byte-identical sync later* |
+| `counting_direction` | string | `up` \| `down` \| `left` \| `right` \| `null` | `null` | **(BL-92, manual only)** the +1 direction. Validated vs the active `counting_line_orientation` (horizontal → `up`/`down`, vertical → `left`/`right`, reject+WARN on mismatch → fall back to auto/default). A change resets the counter like `counting_class_ids`. *Additive — companion byte-identical sync later* |
 
 Keys not present are ignored (defaults from `app/src/settings.py` apply). A
 missing/empty/invalid file → countingapp keeps current settings.
