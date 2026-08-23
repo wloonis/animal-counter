@@ -357,6 +357,19 @@ CLI above (what the relay agent uses) and plannotator for plan review.
 - **`app/entrypoint.sh` must be git mode `100755`** (executable). A `100644`
   checkout causes `ContainerCannotRun: permission denied`. Fix with
   `git update-index --chmod=+x app/entrypoint.sh`.
+- **The build-engine k3s Job runs the hostPath `/app/entrypoint.sh`, not the
+  baked one** (`k3s/templates/build-engine-batch.j2` sets `command:
+  ["/app/entrypoint.sh", "build-engine"]`). This is deliberate: `entrypoint.sh`
+  is `COPY`-baked into the `countingapp:local` image, but the hostPath `/app`
+  mount does **not** override `/entrypoint.sh` — so the build-engine path uses
+  the rsync'd (always-current) `/app/entrypoint.sh` to read `$MODEL_NAME` and
+  compile `<dataset>.onnx` → `<dataset>.engine` **without an image rebuild**.
+  The `serve` path still uses the baked `/entrypoint.sh` (its `serve` case is
+  just `exec python3 src/main.py`, stable, and hostPath `/app/src` carries the
+  new code), so a rebuild is only needed for `requirements.txt`/build-time deps,
+  **NOT** for `entrypoint.sh` `build-engine` changes. (History: the sheep
+  training playbook first failed at "Wait for <name>.engine" because the baked
+  entrypoint was stale — the `command` override fixed it.)
 - **`build_countingapp.yml` rsync must `--exclude='model/old/'`** — the
   `app/model/old/` dir holds root-owned files from prior deploys; without the
   exclude, the `--delete` rsync fails with rc=23 (permission denied).
