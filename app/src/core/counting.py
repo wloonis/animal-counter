@@ -21,6 +21,7 @@ Counting module for the pig counting application.
 This module handles the counting logic based on object crossing a vertical line.
 """
 
+import time
 import numpy as np
 import logging
 from collections import deque
@@ -47,7 +48,9 @@ class Counting:
                  mirror_new_band=120, mirror_max_dist_y=60,
                  resurrection_threshold=5, resurrection_min_jump=150,
                  guard_max_age=15, reid_window=15, reid_min_age=3,
-                 counting_line_orientation="vertical"):
+                 counting_line_orientation="vertical",
+                 counting_direction_mode="auto",
+                 counting_direction=None):
         """Initialize the counting object."""
         self.detections = {}
         self.trails = shared_state.trails if shared_state else {}
@@ -74,9 +77,45 @@ class Counting:
         if _orient not in ("vertical", "horizontal"):
             _orient = "vertical"
         self.counting_line_orientation = _orient
-        # Direction labels for the +1 / -1 crossing events, per orientation.
-        self.PLUS_DIR = "UP" if _orient == "horizontal" else "LEFT"
-        self.MINUS_DIR = "DOWN" if _orient == "horizontal" else "RIGHT"
+        # BL-92: configurable +1 direction. Validate the manual
+        # counting_direction against the resolved orientation (reject+WARN ->
+        # None, mirroring resolve_counting_direction in state.py). The mode is
+        # "auto" (warm-up auto-detect of the dominant crossing direction) or
+        # "manual" (operator-set +1, no warm-up).
+        _mode = counting_direction_mode
+        if isinstance(_mode, str):
+            _mode = _mode.strip().lower()
+        if _mode not in ("auto", "manual"):
+            _mode = "auto"
+        self.counting_direction_mode = _mode
+        _dir = counting_direction
+        if isinstance(_dir, str):
+            _dir = _dir.strip().lower()
+        _allowed_dir = {"left", "right"} if _orient == "vertical" else {"up", "down"}
+        if _dir is not None and _dir not in _allowed_dir:
+            logger.warning(
+                "counting_direction %r inconsistent with orientation %r "
+                "(expected one of %s); ignoring -> auto/default +1",
+                counting_direction, _orient, sorted(_allowed_dir),
+            )
+            _dir = None
+        self.counting_direction = _dir
+        # Effective +1 direction (PLUS_DIR) and its opposite (MINUS_DIR), plus
+        # _plus_decreasing (True when +1 is the decreasing-cross direction,
+        # i.e. LEFT for vertical / UP for horizontal -- the BL-83 default).
+        self._apply_plus_dir(_dir)
+        # Warm-up auto-detect state (BL-92). In manual mode with a valid
+        # direction, +1 is locked from the start (no warm-up). In auto mode,
+        # +1 starts as the BL-83 default (provisional) and locks to the
+        # dominant raw-physical crossing direction after N=3 crossings or
+        # T=10s. Reset per recording (here) and on update_line hot-reload.
+        self._dir_locked = (_mode == "manual" and _dir is not None)
+        self._dir_crossing_tally = {}   # raw-direction -> count
+        self._raw_side = {}             # {track_id: "high"|"low"} physical side
+        self._run_start_time = time.time()
+        self._run_start_frame = 0
+        self.WARMUP_N_CROSSINGS = 3
+        self.WARMUP_T_SECONDS = 10
         # ID-switch recovery guard state
         self.lost_tracks = {}            # {track_id: {"cx","cy","side","frame"}}
         self.frame_counter = 0
@@ -211,8 +250,123 @@ class Counting:
             return data["cx"]
         return data["cy"]
 
-    def update_line(self, offset, orientation):
-        """Hot-swap the counting line offset and orientation at runtime (BL-86).
+    # ------------------------------------------------------------------
+    # BL-92: configurable +1 direction & abstract sides.
+    #
+    # The +1 counting direction is tied to camera/video placement, not the
+    # model. `counting_direction_mode` is "auto" (warm-up auto-detect of the
+    # dominant raw-physical crossing direction, then one lock) or "manual"
+    # (operator-set +1, no warm-up). The effective +1 is PLUS_DIR; MINUS_DIR
+    # is its physical reverse on the crossing axis.
+    #
+    # `_plus_decreasing` is True when +1 is the DECREASING-cross direction
+    # (LEFT for vertical / UP for horizontal -- the BL-83 default), False when
+    # +1 is the INCREASING-cross direction (RIGHT for vertical / DOWN for
+    # horizontal -- the flipped case). All guard side-membership tests are
+    # expressed via the abstract `start`/`counted` sides derived from +1:
+    #   decreasing +1 -> start = area_in_list (high cross_pos), counted = area_out_list (low)
+    #   increasing +1 -> start = area_out_list (low),              counted = area_in_list (high)
+    # `area_in_list`/`area_out_list` keep their names (no rename); only the
+    # *semantic role* each represents is now +1-derived.
+    # ------------------------------------------------------------------
+
+    def _dec_dir_label(self):
+        """The DECREASING-cross physical direction label for the orientation
+        ('left' for vertical, 'up' for horizontal) = the BL-83 default +1."""
+        return "left" if self.counting_line_orientation == "vertical" else "up"
+
+    def _inc_dir_label(self):
+        """The INCREASING-cross physical direction label for the orientation
+        ('right' for vertical, 'down' for horizontal) = the flipped +1."""
+        return "right" if self.counting_line_orientation == "vertical" else "down"
+
+    def _apply_plus_dir(self, counting_direction):
+        """Set self.PLUS_DIR / self.MINUS_DIR / self._plus_decreasing
+        from the current orientation and an optional manual counting_direction
+        (lowercase 'up'|'down'|'left'|'right' or None for the BL-83 default
+        provisional +1). Does NOT touch the area lists (no re-sign, no swap)
+        -- only the direction labels and the decreasing flag update.
+        """
+        dec_dir = self._dec_dir_label()
+        inc_dir = self._inc_dir_label()
+        plus = counting_direction if counting_direction is not None else dec_dir
+        self._plus_decreasing = (plus == dec_dir)
+        minus = inc_dir if self._plus_decreasing else dec_dir
+        self.PLUS_DIR = plus.upper()
+        self.MINUS_DIR = minus.upper()
+
+    @property
+    def _start_list(self):
+        """The area list representing the START side (where uncounted tracks
+        begin; +1 counts FROM here) for the current effective +1 (BL-92)."""
+        return self.area_in_list if self._plus_decreasing else self.area_out_list
+
+    @property
+    def _counted_list(self):
+        """The area list representing the COUNTED side (where +1-counted tracks
+        end; +1 counts TO here) for the current effective +1 (BL-92)."""
+        return self.area_out_list if self._plus_decreasing else self.area_in_list
+
+    def _on_start_side(self, cross, line):
+        """True if cross is on the physical START side for the current +1."""
+        if self._plus_decreasing:
+            return cross > line
+        return cross <= line
+
+    def _on_counted_side(self, cross, line):
+        """True if cross is on the physical COUNTED side for the current +1."""
+        if self._plus_decreasing:
+            return cross <= line
+        return cross > line
+
+    def _crossed_plus(self, cross, line_low, line_high):
+        """True if cross crossed into the counted side past hysteresis
+        (a +1 / PLUS_DIR physical crossing)."""
+        if self._plus_decreasing:
+            return cross <= line_low
+        return cross >= line_high
+
+    def _crossed_minus(self, cross, line_low, line_high):
+        """True if cross crossed into the start side past hysteresis
+        (a -1 / MINUS_DIR physical crossing)."""
+        if self._plus_decreasing:
+            return cross >= line_high
+        return cross <= line_low
+
+    def _check_warmup_lock(self):
+        """Lock the +1 direction to the dominant raw-physical crossing
+        direction at the end of the warm-up (BL-92, Q1=b/Q2=a).
+
+        Fires once, when the total raw crossings >= WARMUP_N_CROSSINGS or the
+        run elapsed >= WARMUP_T_SECONDS, only in auto mode and only if not
+        already locked. The dominant direction is the highest raw tally; a tie
+        keeps the provisional default. Only PLUS_DIR/MINUS_DIR labels update
+        -- past counts are NOT re-signed and the area lists are NOT swapped
+        (swapping would corrupt guard state tied to sides).
+        """
+        if self._dir_locked or self.counting_direction_mode != "auto":
+            return
+        total = sum(self._dir_crossing_tally.values())
+        elapsed = time.time() - self._run_start_time
+        if total < self.WARMUP_N_CROSSINGS and elapsed < self.WARMUP_T_SECONDS:
+            return
+        dec_dir = self._dec_dir_label()
+        inc_dir = self._inc_dir_label()
+        n_dec = self._dir_crossing_tally.get(dec_dir, 0)
+        n_inc = self._dir_crossing_tally.get(inc_dir, 0)
+        # Dominant = highest tally; tie -> keep provisional (dec_dir default).
+        plus = inc_dir if n_inc > n_dec else dec_dir
+        self._dir_locked = True
+        self._apply_plus_dir(plus)
+        logger.info(
+            "[COUNT] warm-up direction lock: +1=%s (raw tally %s=%d, %s=%d) "
+            "after %d crossings / %.1fs elapsed",
+            self.PLUS_DIR, dec_dir, n_dec, inc_dir, n_inc, total, elapsed,
+        )
+
+    def update_line(self, offset, orientation, direction_mode=None, direction=None):
+        """Hot-swap the counting line offset and orientation at runtime (BL-86),
+        and the configurable +1 direction (BL-92).
 
         Called by the DisplayThread idle checkpoint (the single applier thread)
         to apply a pending runtime-settings change without restarting the pod.
@@ -226,9 +380,16 @@ class Counting:
         - ``offset``: clamped to ``[-300, 300]`` mirroring the ``main.py``
           boot-time sanity cap (the AUTHORITATIVE bound is the 200px-margin
           clamp at use-time in ``count()``).
+        - ``direction_mode`` / ``direction`` (BL-92): re-derive the effective
+          +1 direction. Either may be ``None`` to keep the current value (a
+          line-only change must not clobber the direction settings).
+          ``direction`` is re-validated against the (possibly new) orientation;
+          an inconsistent value is rejected with a WARN and dropped (->
+          auto/default +1). The warm-up state is reset (this is an idle =
+          new-run apply); the COUNTER / area-list reset on a +1 change is the
+          caller's job (DisplayThread), not here.
         - ``PLUS_DIR`` / ``MINUS_DIR`` are re-derived from the new orientation
-          so direction labels don't go stale on a mid-life orientation swap
-          (same logic as ``__init__``).
+          and +1 direction so labels don't go stale on a mid-life swap.
         """
         _orient = orientation
         if isinstance(_orient, str):
@@ -246,9 +407,50 @@ class Counting:
         elif _off > 300:
             _off = 300
         self.offset_counting_line = _off
-        # Re-derive direction labels from the (possibly new) orientation.
-        self.PLUS_DIR = "UP" if _orient == "horizontal" else "LEFT"
-        self.MINUS_DIR = "DOWN" if _orient == "horizontal" else "RIGHT"
+        # BL-92: re-derive the configurable +1 direction. Fall back to the
+        # current values for whichever param is absent (a line-only change
+        # must not clobber the direction settings).
+        _mode = direction_mode
+        if _mode is not None:
+            if isinstance(_mode, str):
+                _mode = _mode.strip().lower()
+            if _mode not in ("auto", "manual"):
+                _mode = self.counting_direction_mode
+        else:
+            _mode = self.counting_direction_mode
+        _dir = direction
+        if _dir is not None and isinstance(_dir, str):
+            _dir = _dir.strip().lower()
+        _allowed_dir = {"left", "right"} if _orient == "vertical" else {"up", "down"}
+        if _dir is not None and _dir not in _allowed_dir:
+            logger.warning(
+                "counting_direction %r inconsistent with orientation %r "
+                "in update_line (expected one of %s); dropping -> auto/default +1",
+                direction, _orient, sorted(_allowed_dir),
+            )
+            _dir = None
+        elif _dir is None:
+            # Fall back to the current direction, but re-validate it against
+            # the (possibly new) orientation.
+            _dir = self.counting_direction
+            if _dir is not None and _dir not in _allowed_dir:
+                logger.warning(
+                    "current counting_direction %r inconsistent with new "
+                    "orientation %r; dropping -> auto/default +1",
+                    _dir, _orient,
+                )
+                _dir = None
+        self.counting_direction_mode = _mode
+        self.counting_direction = _dir
+        self._apply_plus_dir(_dir)
+        # Reset warm-up state: this is an idle (new-run) apply. Manual mode
+        # with a valid direction locks +1 immediately (no warm-up); auto mode
+        # re-runs the warm-up with the provisional BL-83 default +1.
+        self._dir_locked = (_mode == "manual" and _dir is not None)
+        self._dir_crossing_tally = {}
+        self._raw_side = {}
+        self._run_start_time = time.time()
+        self._run_start_frame = self.frame_counter
         # BL-83: semantic distance-band mapping follows the orientation so the
         # SAME tuned reassoc/mirror values keep their crossing/along roles.
         if _orient == "horizontal":
@@ -397,10 +599,10 @@ class Counting:
             if last is None:
                 continue
             cx, cy = last[2], last[3]
-            if tid in self.area_in_list:
-                side = "in"     # was on the right side (>
-            elif tid in self.area_out_list:
-                side = "out"    # was on the left side (<=
+            if tid in self._start_list:
+                side = "start"     # was on the start side (uncounted, +1 origin)
+            elif tid in self._counted_list:
+                side = "counted"   # was on the counted side (+1 destination)
             else:
                 continue
             self.lost_tracks[tid] = {
@@ -465,6 +667,31 @@ class Counting:
                         del self.lost_tracks[track_id]
 
                     # ----------------------------------------------------------
+                    # BL-92: raw-physical crossing tally for the warm-up
+                    # auto-detect (Q2=a). Independent of the guards and of the
+                    # provisional +1: counts the physical side each tracked
+                    # centroid moves toward when it crosses the line past
+                    # hysteresis. Used ONLY to lock the dominant +1 direction
+                    # during the warm-up; never affects counter_to_right. The
+                    # side labels are physical (high/low cross_pos), so they do
+                    # not depend on +1.
+                    # ----------------------------------------------------------
+                    _prev_cross = self.cross_pos([last_x, last_y])
+                    _cross_now = self.cross_pos(element)
+                    _prev_raw = self._raw_side.get(track_id)
+                    if _cross_now <= line_low:
+                        _cur_raw = "low"
+                    elif _cross_now >= line_high:
+                        _cur_raw = "high"
+                    else:
+                        _cur_raw = _prev_raw  # inside the hysteresis band: keep prior side
+                    if _prev_raw is not None and _cur_raw is not None and _prev_raw != _cur_raw:
+                        _raw_dir = self._dec_dir_label() if _cur_raw == "low" else self._inc_dir_label()
+                        self._dir_crossing_tally[_raw_dir] = self._dir_crossing_tally.get(_raw_dir, 0) + 1
+                        self._check_warmup_lock()
+                    self._raw_side[track_id] = _cur_raw
+
+                    # ----------------------------------------------------------
                     # Resurrection guard (Pattern B): an already-known ID that was
                     # absent for a long time and reappears far from its last
                     # position is a re-ID / erroneous re-association (OC-SORT
@@ -487,15 +714,17 @@ class Counting:
                             f"pos=({element[0]:.0f},{element[1]:.0f}) "
                             f"count={counter_to_right}"
                         )
-                        if track_id in self.area_in_list:
-                            self.area_in_list.remove(track_id)
-                        if track_id in self.area_out_list:
-                            self.area_out_list.remove(track_id)
-                        # BL-83: area reset by crossing-axis position vs line.
-                        if self.cross_pos(element) > line:
-                            self.area_in_list.append(track_id)
+                        if track_id in self._start_list:
+                            self._start_list.remove(track_id)
+                        if track_id in self._counted_list:
+                            self._counted_list.remove(track_id)
+                        # BL-92: area reset by crossing-axis position vs line,
+                        # mapped to the abstract start/counted sides for the
+                        # current effective +1 direction.
+                        if self._on_start_side(self.cross_pos(element), line):
+                            self._start_list.append(track_id)
                         else:
-                            self.area_out_list.append(track_id)
+                            self._counted_list.append(track_id)
                         if track_id in self.lost_tracks:
                             del self.lost_tracks[track_id]
                         self.guard_interventions["resurrection"] += 1
@@ -507,19 +736,20 @@ class Counting:
                         continue
 
                     # ----------------------------------------------------------
-                    # REID-SUPPRESS: a known ID that was in area_in (right, not yet
-                    # counted) reappears on the LEFT (<=x_low) after an absence
-                    # (age >= reid_min_age). If another ID that APPEARED during
-                    # this ID's absence has recently crossed LEFT, that other ID is
-                    # almost certainly the re-ID of the same pig (already counted)
-                    # - suppress this ID's +1 to avoid the double-count (the #35
-                    # case: ID=10 lost, ID=15 appeared+crossed, ID=10 reappears on
-                    # left and would cross again). A legitimate occluded crossing
-                    # has NO other ID appearing during the absence, so it is
-                    # left to fire normally.
+                    # REID-SUPPRESS: a known ID that was on the START side (not
+                    # yet counted) reappears on the COUNTED side (past the line,
+                    # past hysteresis) after an absence (age >= reid_min_age). If
+                    # another ID that APPEARED during this ID's absence has
+                    # recently crossed PLUS_DIR, that other ID is almost
+                    # certainly the re-ID of the same pig (already counted) -
+                    # suppress this ID's +1 to avoid the double-count (the #35
+                    # case: ID=10 lost, ID=15 appeared+crossed, ID=10 reappears
+                    # on the counted side and would cross again). A legitimate
+                    # occluded crossing has NO other ID appearing during the
+                    # absence, so it is left to fire normally.
                     # ----------------------------------------------------------
-                    if (track_id in self.area_in_list
-                            and self.cross_pos(element) <= line_low
+                    if (track_id in self._start_list
+                            and self._crossed_plus(self.cross_pos(element), line_low, line_high)
                             and _age >= self.reid_min_age
                             and class_id in counting_class_ids):
                         _supp_tid = None
@@ -541,9 +771,9 @@ class Counting:
                         if _supp_tid is not None:
                             logger.warning(
                                 f"[COUNT] REID-SUPPRESS: ID={track_id} reappeared on "
-                                f"left (age={_age}, jump={_jump:.0f}px); ID={_supp_tid} "
-                                f"crossed LEFT during its absence -> suppress (+0) "
-                                f"count={counter_to_right}"
+                                f"counted side (age={_age}, jump={_jump:.0f}px); "
+                                f"ID={_supp_tid} crossed {self.PLUS_DIR} during its "
+                                f"absence -> suppress (+0) count={counter_to_right}"
                             )
                             self.guard_interventions["reid_rebind"] += 1
                             self._emit_event("reid_suppress", {
@@ -551,26 +781,26 @@ class Counting:
                                 "suppressed_by": int(_supp_tid), "age": int(_age),
                                 "jump": float(_jump), "count": int(counter_to_right),
                             })
-                            self.area_in_list.remove(track_id)
-                            if track_id not in self.area_out_list:
-                                self.area_out_list.append(track_id)
+                            self._start_list.remove(track_id)
+                            if track_id not in self._counted_list:
+                                self._counted_list.append(track_id)
                             if track_id in self.lost_tracks:
                                 del self.lost_tracks[track_id]
                             continue
 
                     # ----------------------------------------------------------
-                    # REID-SUPPRESS (mirror, -1): a known ID that was in
-                    # area_out (left, already counted +1) reappears on the RIGHT
-                    # (>=x_high) after an absence (age >= reid_min_age). If
-                    # another ID that APPEARED during this ID's absence has
-                    # recently crossed RIGHT, that other ID is almost certainly
-                    # the re-ID of the same pig coming back (already
-                    # "de-counted" by the other ID's -1) - suppress this ID's
-                    # -1 to avoid the double -1. Mirror of the +1 REID-SUPPRESS
-                    # above, for the left->right return direction.
+                    # REID-SUPPRESS (mirror, -1): a known ID that was on the
+                    # COUNTED side (already counted +1) reappears on the START
+                    # side (past the line, past hysteresis) after an absence
+                    # (age >= reid_min_age). If another ID that APPEARED during
+                    # this ID's absence has recently crossed MINUS_DIR, that
+                    # other ID is almost certainly the re-ID of the same pig
+                    # coming back (already "de-counted" by the other ID's -1) -
+                    # suppress this ID's -1 to avoid the double -1. Mirror of the
+                    # +1 REID-SUPPRESS above, for the return direction.
                     # ----------------------------------------------------------
-                    if (track_id in self.area_out_list
-                            and self.cross_pos(element) >= line_high
+                    if (track_id in self._counted_list
+                            and self._crossed_minus(self.cross_pos(element), line_low, line_high)
                             and _age >= self.reid_min_age
                             and class_id in counting_class_ids):
                         _supp_tid = None
@@ -589,10 +819,10 @@ class Counting:
                                 break
                         if _supp_tid is not None:
                             logger.warning(
-                                f"[COUNT] REID-SUPPRESS (RIGHT): ID={track_id} "
-                                f"reappeared on right (age={_age}, "
+                                f"[COUNT] REID-SUPPRESS ({self.MINUS_DIR}): ID={track_id} "
+                                f"reappeared on start side (age={_age}, "
                                 f"jump={_jump:.0f}px); ID={_supp_tid} crossed "
-                                f"RIGHT during its absence -> suppress (+0) "
+                                f"{self.MINUS_DIR} during its absence -> suppress (+0) "
                                 f"count={counter_to_right}"
                             )
                             self.guard_interventions["reid_rebind"] += 1
@@ -601,21 +831,23 @@ class Counting:
                                 "suppressed_by": int(_supp_tid), "age": int(_age),
                                 "jump": float(_jump), "count": int(counter_to_right),
                             })
-                            self.area_out_list.remove(track_id)
-                            if track_id not in self.area_in_list:
-                                self.area_in_list.append(track_id)
+                            self._counted_list.remove(track_id)
+                            if track_id not in self._start_list:
+                                self._start_list.append(track_id)
                             if track_id in self.lost_tracks:
                                 del self.lost_tracks[track_id]
                             continue
 
-                    # BL-83: crossing detection on the abstract crossing axis.
-                    # +1 fires when an "in" track's cross_pos DECREASES past
-                    # line_low; -1 fires when an "out" track's cross_pos
-                    # INCREASES past line_high. For vertical cross_pos == cx
-                    # (reproduces the previous code path exactly); for
-                    # horizontal cross_pos == cy.
+                    # BL-92: crossing detection on the abstract crossing axis,
+                    # gated by the abstract start/counted sides for the current
+                    # effective +1 direction. +1 (PLUS_DIR) fires when a start
+                    # track crosses into the counted side past hysteresis; -1
+                    # (MINUS_DIR) fires when a counted track returns into the
+                    # start side. For the BL-83 default (+1 decreasing = LEFT/UP)
+                    # start=area_in/counted=area_out, reproducing the previous
+                    # code path exactly; for a flipped +1 the roles swap.
                     _cross = self.cross_pos(element)
-                    if _cross >= line_high and track_id in self.area_out_list:
+                    if self._crossed_minus(_cross, line_low, line_high) and track_id in self._counted_list:
                         counter_to_right -= 1
                         # BL-78: mirror on the per-species sub-counter (global = sum).
                         cid = int(class_id)
@@ -630,17 +862,18 @@ class Counting:
                             "count": int(counter_to_right),
                         })
                         self.recent_crossings.append({"frame": self.frame_counter, "tid": track_id, "direction": self.MINUS_DIR})
-                        if track_id not in self.area_in_list:
-                            self.area_out_list.remove(track_id)
-                            self.area_in_list.append(track_id)
-                    elif _cross <= line_low and track_id in self.area_in_list:
+                        if track_id not in self._start_list:
+                            self._counted_list.remove(track_id)
+                            self._start_list.append(track_id)
+                    elif self._crossed_plus(_cross, line_low, line_high) and track_id in self._start_list:
                         if track_id in self.suppress_count:
-                            # Mirror guard: this new ID on the right was deemed a
-                            # re-ID of an already-counted pig. Suppress the +1.
+                            # Mirror guard: this new ID on the start side was
+                            # deemed a re-ID of an already-counted pig. Suppress
+                            # the +1.
                             self.suppress_count.discard(track_id)
                             logger.warning(
                                 f"[COUNT] MIRROR suppress: ID={track_id} crossing "
-                                f"LEFT suppressed (already counted) "
+                                f"{self.PLUS_DIR} suppressed (already counted) "
                                 f"count={counter_to_right}"
                             )
                             self.guard_interventions["mirror_guard"] += 1
@@ -663,9 +896,9 @@ class Counting:
                                 "count": int(counter_to_right),
                             })
                             self.recent_crossings.append({"frame": self.frame_counter, "tid": track_id, "direction": self.PLUS_DIR})
-                        if track_id not in self.area_out_list:
-                            self.area_in_list.remove(track_id)
-                            self.area_out_list.append(track_id)
+                        if track_id not in self._counted_list:
+                            self._start_list.remove(track_id)
+                            self._counted_list.append(track_id)
                 else:
                     last_x, last_y = None, None
                     self.detections[track_id] = [last_x, last_y, element[0], element[1], element[3]]
@@ -678,8 +911,8 @@ class Counting:
                     # occlusion at the line. If a track was recently lost on the
                     # OTHER side, close to the line and spatially near, fuse them
                     # and trigger the crossing the switch would have swallowed:
-                    #   - new ID on the +1 side (cross<=line) + lost "in"  -> crossed PLUS_DIR (+1)
-                    #   - new ID on the -1 side (cross> line) + lost "out" -> crossed MINUS_DIR (-1)
+                    #   - new ID on the counted side + lost "start"   -> crossed PLUS_DIR (+1)
+                    #   - new ID on the start side   + lost "counted" -> crossed MINUS_DIR (-1)
                     # (the -1 branch handles a pig that already crossed (+1), came
                     # back and got an ID-switch at the line on its return: without
                     # it, the -1 of the return would be lost.)
@@ -689,7 +922,16 @@ class Counting:
                     fused = False
                     if element[3] in counting_class_ids:
                         _new_cross = self.cross_pos(element)
-                        want_side = "in" if _new_cross <= line else "out"
+                        # BL-92: the new ID appeared on one abstract side; we fuse
+                        # it with a lost track from the OPPOSITE side. A new ID
+                        # on the counted side crossed PLUS_DIR (+1); on the start
+                        # side it crossed MINUS_DIR (-1).
+                        if self._on_counted_side(_new_cross, line):
+                            want_side = "start"
+                            _is_plus = True
+                        else:
+                            want_side = "counted"
+                            _is_plus = False
                         for lost_id, data in list(self.lost_tracks.items()):
                             # Guard eligibility age: use GUARD_MAX_AGE (short), not
                             # the global LOST_BUFFER_FRAMES. A stale lost track
@@ -712,17 +954,15 @@ class Counting:
                             d_along = abs(self.along_pos(element) - self.lost_along_pos(data))
                             if d_cross <= self.reassoc_max_dist_cross and d_along <= self.reassoc_max_dist_along:
                                 cid = int(element[3])
-                                if _new_cross <= line:
-                                    # crossed PLUS_DIR (+1): crossing-axis
-                                    # position DECREASED past the line (right->left
-                                    # for vertical, down->up for horizontal).
+                                if _is_plus:
+                                    # crossed PLUS_DIR (+1): start -> counted.
                                     counter_to_right += 1
                                     self.sub_counts[cid] = self.sub_counts.get(cid, 0) + 1
                                     if self.shared_state is not None and getattr(self.shared_state, "sub_counts", None) is not None:
                                         self.shared_state.sub_counts[cid] = self.shared_state.sub_counts.get(cid, 0) + 1
                                     direction = self.PLUS_DIR
-                                    target_list = self.area_out_list
-                                    other_list = self.area_in_list
+                                    target_list = self._counted_list
+                                    other_list = self._start_list
                                     logger.warning(
                                         f"[COUNT] ID-SWITCH recovery ({self.PLUS_DIR}): new "
                                         f"ID={track_id} fused with lost ID={lost_id} "
@@ -736,16 +976,14 @@ class Counting:
                                         "count": int(counter_to_right),
                                     })
                                 else:
-                                    # crossed MINUS_DIR (-1): crossing-axis
-                                    # position INCREASED past the line (left->right
-                                    # for vertical, up->down for horizontal).
+                                    # crossed MINUS_DIR (-1): counted -> start.
                                     counter_to_right -= 1
                                     self.sub_counts[cid] = self.sub_counts.get(cid, 0) - 1
                                     if self.shared_state is not None and getattr(self.shared_state, "sub_counts", None) is not None:
                                         self.shared_state.sub_counts[cid] = self.shared_state.sub_counts.get(cid, 0) - 1
                                     direction = self.MINUS_DIR
-                                    target_list = self.area_in_list
-                                    other_list = self.area_out_list
+                                    target_list = self._start_list
+                                    other_list = self._counted_list
                                     logger.warning(
                                         f"[COUNT] ID-SWITCH recovery ({self.MINUS_DIR}): new "
                                         f"ID={track_id} fused with lost ID={lost_id} "
@@ -777,18 +1015,19 @@ class Counting:
                                 break
 
                     if not fused:
-                        # BL-83: initial side assignment on the crossing axis:
-                        # "in" (not-yet-counted, +1 side) when cross_pos > line,
-                        # "out" (counted) when cross_pos <= line.
-                        if element[3] in counting_class_ids and track_id not in self.area_in_list and self.cross_pos(element) > line:
-                            self.area_in_list.append(track_id)
+                        # BL-92: initial side assignment on the abstract
+                        # start/counted sides for the current +1 direction:
+                        # start (not-yet-counted, +1 origin) when the centroid is
+                        # on the start physical side, counted otherwise.
+                        if element[3] in counting_class_ids and track_id not in self._start_list and self._on_start_side(self.cross_pos(element), line):
+                            self._start_list.append(track_id)
                             # --------------------------------------------------
-                            # Mirror guard: new ID on the +1 side (cross>line) +
-                            # a track recently lost on the -1 side ("out") near the
-                            # line. This is the mirror of the ID-switch bug: a pig
-                            # crossed (+1), was lost on the -1 side, and got a new ID
-                            # on the +1 side that will cross again (+1 = over-count).
-                            # Modes:
+                            # Mirror guard: new ID on the START side + a track
+                            # recently lost on the COUNTED side near the line.
+                            # This is the mirror of the ID-switch bug: a pig crossed
+                            # (+1), was lost on the counted side, and got a new ID
+                            # on the start side that will cross again (+1 = over-
+                            # count). Modes:
                             #   off     -> disabled
                             #   log     -> detect & log only (default, safe)
                             #   enforce -> suppress the upcoming crossed PLUS_DIR
@@ -798,7 +1037,7 @@ class Counting:
                                 for lost_id, data in list(self.lost_tracks.items()):
                                     if self.frame_counter - 1 - data["frame"] > self.mirror_max_age:
                                         continue
-                                    if data["side"] != "out":
+                                    if data["side"] != "counted":
                                         continue
                                     # BL-83: crossing-axis proximity of the lost
                                     # track to the line (vertical: cx; horizontal: cy).
@@ -819,7 +1058,7 @@ class Counting:
                                         self.suppress_count.add(track_id)
                                         logger.warning(
                                             f"[COUNT] MIRROR guard: new ID={track_id} "
-                                            f"on +1 side ({self.PLUS_DIR}) fused with lost "
+                                            f"on start side ({self.PLUS_DIR}) fused with lost "
                                             f"ID={lost_id} (suppress future +1)"
                                         )
                                         self.guard_interventions["mirror_guard"] += 1
@@ -831,16 +1070,16 @@ class Counting:
                                     else:  # log mode: observe only, do not change state
                                         logger.info(
                                             f"[COUNT] MIRROR candidate: new ID={track_id} "
-                                            f"on +1 side ({self.PLUS_DIR}), lost ID={lost_id} "
-                                            f"on -1 side ({self.MINUS_DIR}) (would suppress)"
+                                            f"on start side ({self.PLUS_DIR}), lost ID={lost_id} "
+                                            f"on counted side ({self.MINUS_DIR}) (would suppress)"
                                         )
                                         self._emit_event("mirror_candidate", {
                                             "track_id": int(track_id),
                                             "fused_with": int(lost_id),
                                         })
                                     break
-                        elif element[3] in counting_class_ids and track_id not in self.area_out_list and self.cross_pos(element) <= line:
-                            self.area_out_list.append(track_id)
+                        elif element[3] in counting_class_ids and track_id not in self._counted_list and self._on_counted_side(self.cross_pos(element), line):
+                            self._counted_list.append(track_id)
 
             for element in current_status:
                 track_id = element[2]
@@ -877,5 +1116,6 @@ class Counting:
                 self.first_seen.pop(tid, None)
                 self.last_seen.pop(tid, None)
                 self.trails.pop(tid, None)
+                self._raw_side.pop(tid, None)
 
         return counter_to_right
