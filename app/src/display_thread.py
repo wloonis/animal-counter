@@ -312,25 +312,85 @@ class DisplayThread(threading.Thread):
                         if isinstance(pending.get(key), bool):
                             setattr(shared_state, key, pending[key])
                             changed.append(key)
-                    # Line offset + orientation: hot-swap on both the
+                    # Line offset + orientation + configurable +1 direction
+                    # (BL-86 idle hot-reload / BL-92): hot-swap on both the
                     # Counting and Rendering instances. Counting.update_line
-                    # re-derives PLUS_DIR/MINUS_DIR from the new orientation so
-                    # direction labels don't go stale on a mid-life swap.
+                    # re-derives PLUS_DIR/MINUS_DIR from the (possibly new)
+                    # orientation and +1 direction so labels don't go stale on
+                    # a mid-life swap. Fall back to the current values for
+                    # whichever key is absent in the pending payload (a
+                    # toggle-only or line-only change must not clobber the
+                    # others).
                     _off = pending.get("offset_counting_line")
                     _orient = pending.get("counting_line_orientation")
-                    if _off is not None or _orient is not None:
-                        # Fall back to the current values for whichever key is
-                        # absent in the pending payload (a toggle-only or
-                        # line-only change should not clobber the other).
+                    _dir_mode = pending.get("counting_direction_mode")
+                    _dir = pending.get("counting_direction")
+                    if (_off is not None or _orient is not None
+                            or _dir_mode is not None or _dir is not None):
                         cur_off = self.counting.offset_counting_line
                         cur_orient = self.counting.counting_line_orientation
                         new_off = _off if isinstance(_off, int) and \
                             not isinstance(_off, bool) else cur_off
                         new_orient = _orient if isinstance(_orient, str) \
                             else cur_orient
-                        self.counting.update_line(new_off, new_orient)
+                        # BL-92: validate counting_direction_mode / direction
+                        # against the (possibly new) orientation. Reject+WARN
+                        # -> keep the current value (do not crash).
+                        new_mode = self.counting.counting_direction_mode
+                        if isinstance(_dir_mode, str):
+                            _m = _dir_mode.strip().lower()
+                            if _m in ("auto", "manual"):
+                                new_mode = _m
+                            else:
+                                logger.warning(
+                                    "runtime settings: "
+                                    "counting_direction_mode %r invalid "
+                                    "(expected auto|manual); keeping %r",
+                                    _dir_mode, new_mode)
+                        new_dir = self.counting.counting_direction
+                        if isinstance(_dir, str):
+                            _d = _dir.strip().lower()
+                            _allowed = ({"left", "right"} if new_orient
+                                        == "vertical" else {"up", "down"})
+                            if _d in _allowed:
+                                new_dir = _d
+                            else:
+                                logger.warning(
+                                    "runtime settings: counting_direction "
+                                    "%r inconsistent with orientation %r "
+                                    "(expected one of %s); keeping %r",
+                                    _dir, new_orient, sorted(_allowed),
+                                    new_dir)
+                        # BL-92: a +1 DIRECTION change (effective PLUS_DIR)
+                        # resets the counters (fresh-session semantics, like
+                        # counting_class_ids): a flip invalidates already-
+                        # counted crossings. A mode-only change (auto<->manual)
+                        # with no effective +1 change does NOT reset. Compare
+                        # the resolved PLUS_DIR before vs after update_line.
+                        old_plus = self.counting.PLUS_DIR
+                        self.counting.update_line(
+                            new_off, new_orient,
+                            direction_mode=new_mode, direction=new_dir)
                         self.rendering.update_line(new_off, new_orient)
-                        changed.append("counting_line")
+                        new_plus = self.counting.PLUS_DIR
+                        if new_plus != old_plus:
+                            # Zero the global counter and per-class sub-counts
+                            # (rebuild from the active counting_class_ids set,
+                            # mirroring the counting_class_ids reset below).
+                            shared_state.counter_to_right = 0
+                            shared_state.sub_counts = {
+                                cid: 0
+                                for cid in shared_state.counting_class_ids}
+                            # Reset the Counting instance's area state: a +1
+                            # flip leaves tracks on the wrong abstract side,
+                            # so clear the side lists. update_line already
+                            # reset the warm-up accumulators (_dir_locked /
+                            # _dir_crossing_tally / _raw_side / run-start).
+                            self.counting.area_in_list = []
+                            self.counting.area_out_list = []
+                            changed.append("counting_line(dir-reset)")
+                        else:
+                            changed.append("counting_line")
                     # counting_class_ids: a class-set CHANGE resets the
                     # counters to 0 (fresh-session semantics, matches boot).
                     # A line-only / toggle-only change does NOT reset. Compare
