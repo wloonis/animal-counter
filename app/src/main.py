@@ -65,6 +65,7 @@ from state import (
     shared_state, settings, logger, _IOU_METRICS,
     load_runtime_settings, load_classes_yaml, publish_model_classes_json,
     resolve_counting_class_ids, resolve_counting_line_orientation,
+    resolve_counting_direction, resolve_counting_direction_mode,
     resolve_mask_zones,
     RuntimeSettingsWatcher,
 )
@@ -194,6 +195,12 @@ def start(input_source, video_path):
             # the current os.getenv-backed values for any missing/invalid key. Only the
             # 4 render-affecting keys are touched; TRACKER_*/COUNTING_*/PIG_* are never
             # overridden here.
+            # BL-92: defaults for the configurable +1 direction; overwritten
+            # inside the `isinstance(rt, dict)` block when the runtime
+            # settings carry valid values. Kept defined here so the
+            # Counting(...) constructor below works even when rt is absent.
+            _dir_mode = None
+            _dir = None
             rt = load_runtime_settings()
             if isinstance(rt, dict):
                 if isinstance(rt.get("draw_tracking"), bool):
@@ -232,6 +239,20 @@ def start(input_source, video_path):
                 if _orient is not None:
                     settings.COUNTING_LINE_ORIENTATION = _orient
 
+                # BL-92: resolve the configurable +1 counting direction.
+                # `counting_direction_mode` ("auto" default | "manual") and
+                # `counting_direction` (manual only; one of up|down|left|right,
+                # validated against the effective orientation above). Per-
+                # recording resolution (same "next recording" semantics as
+                # offset_counting_line / counting_line_orientation). Absent/
+                # invalid -> None -> the Counting constructor keeps its own
+                # defaults (auto / None). No reset change here: boot always
+                # starts fresh.
+                _dir_mode = resolve_counting_direction_mode(rt)
+                _dir = resolve_counting_direction(rt, settings.COUNTING_LINE_ORIENTATION)
+                logger.info("counting direction resolved: mode=%r direction=%r",
+                            _dir_mode, _dir)
+
                 # BL-78: resolve the effective counting_class_ids set (3 levels:
                 # model default from classes.yaml → companion override in
                 # runtime-settings.json → validated against the model class
@@ -263,7 +284,7 @@ def start(input_source, video_path):
                 if _mz is not None:
                     shared_state.mask_zones = _mz
             tracking = Tracking(draw_box=shared_state.draw_tracking, shared_state=shared_state)
-            counting = Counting(shared_state=shared_state, pig_confidence_threshold=settings.PIG_CONFIDENCE_THRESHOLD, offset_counting_line=settings.OFFSET_PERCENT_COUNTING_LINE, counting_line_orientation=settings.COUNTING_LINE_ORIENTATION, lost_buffer_frames=settings.COUNTING_LOST_BUFFER_FRAMES, reassoc_line_band=settings.COUNTING_REASSOC_LINE_BAND, reassoc_max_dist_x=settings.COUNTING_REASSOC_MAX_DIST_X, reassoc_max_dist_y=settings.COUNTING_REASSOC_MAX_DIST_Y, hysteresis_px=settings.COUNTING_HYSTERESIS_PX, mirror_guard=settings.COUNTING_MIRROR_GUARD, mirror_max_age=settings.COUNTING_MIRROR_MAX_AGE, mirror_line_band=settings.COUNTING_MIRROR_LINE_BAND, mirror_new_band=settings.COUNTING_MIRROR_NEW_BAND, mirror_max_dist_y=settings.COUNTING_MIRROR_MAX_DIST_Y, resurrection_threshold=settings.COUNTING_RESURRECTION_THRESHOLD, resurrection_min_jump=settings.COUNTING_RESURRECTION_MIN_JUMP, guard_max_age=settings.COUNTING_GUARD_MAX_AGE, reid_window=settings.COUNTING_REID_WINDOW, reid_min_age=settings.COUNTING_REID_MIN_AGE)
+            counting = Counting(shared_state=shared_state, pig_confidence_threshold=settings.PIG_CONFIDENCE_THRESHOLD, offset_counting_line=settings.OFFSET_PERCENT_COUNTING_LINE, counting_line_orientation=settings.COUNTING_LINE_ORIENTATION, counting_direction_mode=(_dir_mode if _dir_mode is not None else "auto"), counting_direction=_dir, lost_buffer_frames=settings.COUNTING_LOST_BUFFER_FRAMES, reassoc_line_band=settings.COUNTING_REASSOC_LINE_BAND, reassoc_max_dist_x=settings.COUNTING_REASSOC_MAX_DIST_X, reassoc_max_dist_y=settings.COUNTING_REASSOC_MAX_DIST_Y, hysteresis_px=settings.COUNTING_HYSTERESIS_PX, mirror_guard=settings.COUNTING_MIRROR_GUARD, mirror_max_age=settings.COUNTING_MIRROR_MAX_AGE, mirror_line_band=settings.COUNTING_MIRROR_LINE_BAND, mirror_new_band=settings.COUNTING_MIRROR_NEW_BAND, mirror_max_dist_y=settings.COUNTING_MIRROR_MAX_DIST_Y, resurrection_threshold=settings.COUNTING_RESURRECTION_THRESHOLD, resurrection_min_jump=settings.COUNTING_RESURRECTION_MIN_JUMP, guard_max_age=settings.COUNTING_GUARD_MAX_AGE, reid_window=settings.COUNTING_REID_WINDOW, reid_min_age=settings.COUNTING_REID_MIN_AGE)
             # BL-78: plumb the resolved counting set to the counting pipeline.
             # Forward-compatible: settable attribute (constructor gains the
             # param in Task 9). DisplayThread/InferThread already import
