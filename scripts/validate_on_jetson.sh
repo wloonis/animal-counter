@@ -114,16 +114,65 @@ resume_countingapp() {
 # paused in camera mode after a validation.
 trap resume_countingapp EXIT
 
+# ─── 1b. Discover the active model_name (BL-89 follow-up) ───────────────────
+# The validate Job runs with the Jetson's CURRENT model (the code rsync
+# excludes model/), so the reference video + expected count MUST match that
+# model — a pig reference is meaningless for a sheep model (false mismatch).
+# Read model_name from the Jetson's app/model/classes.yaml (source of truth);
+# fall back to the local worktree's classes.yaml; fall back to 'my_model'
+# (legacy pig, pre-model-naming).
+ACTIVE_MODEL=""
+ACTIVE_MODEL=$($SSH_CMD "grep -E '^model_name:' $APP_PATH/model/classes.yaml 2>/dev/null | head -1 | awk '{print \$2}'" 2>/dev/null | tr -d '[:space:]')
+if [ -z "$ACTIVE_MODEL" ] && [ -f "app/model/classes.yaml" ]; then
+  ACTIVE_MODEL=$(grep -E '^model_name:' app/model/classes.yaml 2>/dev/null | head -1 | awk '{print $2}' | tr -d '[:space:]')
+fi
+if [ -z "$ACTIVE_MODEL" ]; then
+  ACTIVE_MODEL="my_model"
+fi
+echo "🏷️  Active model: $ACTIVE_MODEL"
+
+# Emit a validation_skipped report (NA — not a mismatch, not an error) when no
+# reference video/manifest is configured for the active model, then exit 0.
+# The Archon workflow treats validation_skipped as VALIDATED (N/A for model).
+emit_validation_skipped() {
+  local SKIP_MODE="$1"; local SKIP_MSG="$2"; local SKIP_VIDEO="${3:-}"
+  local VIDEO_FIELD=""
+  [ -n "$SKIP_VIDEO" ] && VIDEO_FIELD=", \"video_file\": \"$SKIP_VIDEO\""
+  echo "{\"validation_status\": \"validation_skipped\", \"model_name\": \"$ACTIVE_MODEL\", \"mode\": \"$SKIP_MODE\"$VIDEO_FIELD, \"message\": \"$SKIP_MSG\"}"
+  jq -n --arg m "$ACTIVE_MODEL" --arg mode "$SKIP_MODE" --arg msg "$SKIP_MSG" --argjson skipped 1 \
+    '{validation_status:"validation_skipped", model_name:$m, mode:$mode, message:$msg, total_videos:0, pass_count:0, mismatch_count:0, error_count:0, skipped:$skipped, timestamp:(now|todate), results:[]}' \
+    > "$REPORT_FILE"
+  echo ""
+  echo "=== Validation Report ==="
+  cat "$REPORT_FILE"
+  echo ""
+  echo "========================="
+  echo "Overall: validation_skipped (N/A for model '$ACTIVE_MODEL')"
+  exit 0
+}
+
 # ─── 2. Build video list ─────────────────────────────────────────────────────
 if [ "$MODE" = "full" ]; then
   # Full mode: validate ONLY the videos declared in the manifest
   # (validation/expected_counts.json). Videos present in validation/videos/
   # but NOT in the manifest are ignored — the manifest is the single source of
   # truth for which videos to validate and their expected counts.
-  EXPECTED_MANIFEST="validation/expected_counts.json"
+  # Per-model manifest (BL-89): the manifest MUST match the active model —
+  # the default pig manifest is wrong for a sheep model. Look up
+  # models[<active>].manifest; fall back to the global expected_counts.json
+  # ONLY for a legacy config with no 'models' key (pre-BL-89).
+  EXPECTED_MANIFEST=$(jq -r --arg m "$ACTIVE_MODEL" '.models[$m].manifest // empty' "$CONFIG_FILE")
+  if [ -z "$EXPECTED_MANIFEST" ]; then
+    if jq -e '.models' "$CONFIG_FILE" >/dev/null 2>&1; then
+      # 'models' exists but the active model has no manifest → N/A (skip)
+      emit_validation_skipped "full" "No manifest configured for model '$ACTIVE_MODEL' in validation/config.json (models.$ACTIVE_MODEL.manifest). Add a per-model manifest + its videos, or use a model that has one."
+      exit 0
+    fi
+    EXPECTED_MANIFEST="validation/expected_counts.json"
+  fi
   if [ ! -f "$EXPECTED_MANIFEST" ]; then
-    echo '{"validation_status": "execution_error", "error_type": "manifest_missing"}'
-    echo "ERROR: Full mode requires validation/expected_counts.json (manifest of videos to validate)."
+    echo "{\"validation_status\": \"execution_error\", \"error_type\": \"manifest_missing\", \"manifest\": \"$EXPECTED_MANIFEST\"}"
+    echo "ERROR: Full mode manifest not found: $EXPECTED_MANIFEST"
     exit 1
   fi
   VIDEO_LIST=""
@@ -143,14 +192,27 @@ if [ "$MODE" = "full" ]; then
     exit 1
   fi
 else
-  # Standard mode: single reference video from config
-  VIDEO_FILE=$(jq -r '.reference_video' "$CONFIG_FILE")
+  # Standard mode: per-model reference video (BL-89). The reference video
+  # MUST match the active model — a pig reference is meaningless for a sheep
+  # model (false mismatch). Look up models[<active>].reference_video; fall
+  # back to the top-level reference_video ONLY for a legacy config with no
+  # 'models' key (pre-BL-89). An active model with no entry (or a missing
+  # video file) → validation_skipped (NA — provide a reference for it).
+  VIDEO_FILE=$(jq -r --arg m "$ACTIVE_MODEL" '.models[$m].reference_video // empty' "$CONFIG_FILE")
+  if [ -z "$VIDEO_FILE" ] || [ "$VIDEO_FILE" = "null" ]; then
+    if jq -e '.models' "$CONFIG_FILE" >/dev/null 2>&1; then
+      emit_validation_skipped "standard" "No reference_video configured for model '$ACTIVE_MODEL' in validation/config.json. Add a 'models.$ACTIVE_MODEL.reference_video' entry + drop the video in validation/videos/, or deploy a model that has a reference video."
+      exit 0
+    fi
+    # Legacy: no 'models' key → top-level reference_video (pre-BL-89)
+    VIDEO_FILE=$(jq -r '.reference_video' "$CONFIG_FILE")
+  fi
   VIDEO_PATH="validation/videos/$VIDEO_FILE"
   if [ ! -f "$VIDEO_PATH" ]; then
-    echo "{\"validation_status\": \"execution_error\", \"error_type\": \"video_not_found\", \"video_file\": \"$VIDEO_FILE\", \"message\": \"Reference video not found at $VIDEO_PATH. Place it before running validation.\"}"
-    echo "ERROR: Reference video not found at $VIDEO_PATH"
-    exit 1
+    emit_validation_skipped "standard" "Reference video for model '$ACTIVE_MODEL' not found at $VIDEO_PATH. Place it in validation/videos/ before running validation." "$VIDEO_FILE"
+    exit 0
   fi
+  echo "📹 Reference video: $VIDEO_FILE (model: $ACTIVE_MODEL)"
   VIDEO_LIST="$VIDEO_PATH"
 fi
 

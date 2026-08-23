@@ -62,7 +62,7 @@ the expected value derived from the filename).
 | 2 | `plannotator-plan` | single pi session | Pi writes `PLAN.md`, calls `plannotator_submit_plan`. | **Yes** (HTTP review, NOT a pause) |
 | 3 | `verify-plan` | bash | Sanity-checks `PLAN.md` has task checkboxes. | No |
 | 4 | `implement` | loop (fresh context) | Pi implements one task at a time, `python3 -m py_compile`, commits. Emits `IMPL_DONE`. | No |
-| 5 | `jetson-validate` | interactive loop | Pi runs `scripts/validate_on_jetson.sh`, parses `validation-report.json`. `pass` → `VALIDATED`; `count_mismatch` → HITL pause; `execution_error` → auto-retry. | **Yes** (only on mismatch) |
+| 5 | `jetson-validate` | interactive loop | Pi runs `scripts/validate_on_jetson.sh`, parses `validation-report.json`. `pass` → `VALIDATED`; `validation_skipped` → `VALIDATED` (N/A for the active model); `count_mismatch` → HITL pause; `execution_error` → auto-retry. | **Yes** (only on mismatch) |
 | 6 | `docs-sync` | single pi session | Fresh session syncs `README.md`, `AGENTS.md`, `docs/**`, `ansible/README.md` to the changed surface (paths/symbols/env vars/hostPaths/contracts). Writes `DOCS.md` beacon; flags shared/contract docs needing sister-repo resync. | No |
 | 7 | `finalize` + `verify-pr-base` | pi + bash | Push branch, create draft PR, verify PR base. | No |
 
@@ -310,6 +310,23 @@ CLI above (what the relay agent uses) and plannotator for plan review.
   (`git diff --name-only main...HEAD -- app/` empty →
   signals VALIDATED without running the script). Don't force a validation run
   on such branches.
+- **Model-aware validation (BL-89 follow-up): the reference video + expected
+  count MUST match the ACTIVE MODEL.** `validation/config.json` now has a
+  `models` map: `models.<model_name>.{reference_video, manifest}`. The
+  validate script discovers the active `model_name` from the Jetson's
+  `app/model/classes.yaml` (the model the validate Job actually runs with —
+  the code rsync excludes `model/`), then looks up that model's reference
+  video (standard) / manifest (full). A pig reference video is meaningless for
+  a sheep model → would false-mismatch. When the active model has NO entry in
+  `models` (or its reference video file is missing — e.g. `sheep_template`
+  before sheep validation videos exist), the script emits
+  `validation_status: "validation_skipped"` (NA — NOT a mismatch, NOT an
+  error) and exits 0; the workflow's `jetson-validate` node treats it as
+  VALIDATED (N/A for the model). To validate a new model: add a
+  `models.<model_name>.reference_video` entry to config.json + drop the video
+  in `validation/videos/` (expected count from the `#<N>` filename convention
+  or a per-model manifest). Legacy: when `models` is absent, the top-level
+  `reference_video` is used (pre-BL-89 behavior).
 - **`validation/config.json` `mode` field MUST stay `"standard"` by default.**
   `scripts/validate_on_jetson.sh` reads `mode` from config.json as its default;
   do not leave it on `"full"` (a counting-code branch may flip it to `full`

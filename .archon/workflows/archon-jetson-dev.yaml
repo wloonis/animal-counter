@@ -41,8 +41,10 @@ description: |
   4. IMPLEMENT: Pi reads approved PLAN.md, executes task-by-task with
      python3 -m py_compile validation + commits.
   5. JETSON-VALIDATE: Pi runs scripts/validate_on_jetson.sh, parses the JSON
-     report, and handles three outcomes:
+     report, and handles four outcomes:
      - pass → signal VALIDATED → proceed to docs-sync
+     - validation_skipped → N/A for the active model (no reference video
+       configured for the deployed model, e.g. sheep) → signal VALIDATED
      - count_mismatch → HITL PAUSE (user guides the fix — no auto-correction)
      - execution_error → auto-diagnose + fix + retry (limited by max_iterations
        from validation/config.json; escalate to HITL if exceeded)
@@ -481,10 +483,13 @@ nodes:
   # ═══════════════════════════════════════════════════════════════
   # PHASE 4: JETSON-VALIDATE — Run validation on Jetson + feedback loop
   #
-  # Three outcomes from validation-report.json:
-  #   - pass           → signal VALIDATED → finalize
-  #   - count_mismatch → HITL PAUSE (no auto-fix — anti metric-gaming)
-  #   - execution_error → auto-diagnose + fix + retry (limited by max_iterations)
+  # Four outcomes from validation-report.json:
+  #   - pass               → signal VALIDATED → finalize
+  #   - validation_skipped → N/A for the active model (no reference video
+  #                         configured for the deployed model, e.g. sheep) →
+  #                         signal VALIDATED (not a mismatch, not an error)
+  #   - count_mismatch     → HITL PAUSE (no auto-fix — anti metric-gaming)
+  #   - execution_error    → auto-diagnose + fix + retry (limited by max_iterations)
   # ═══════════════════════════════════════════════════════════════
 
   - id: jetson-validate
@@ -614,7 +619,7 @@ nodes:
         The report has this structure:
         ```json
         {
-          "validation_status": "pass" | "count_mismatch" | "execution_error",
+          "validation_status": "pass" | "count_mismatch" | "execution_error" | "validation_skipped",
           "mode": "standard" | "full",
           "total_videos": N,
           "pass_count": N,
@@ -645,6 +650,26 @@ nodes:
         1. Print a summary of the results.
         2. Signal: `<promise>VALIDATED</promise>`
         3. Done — the workflow proceeds to finalize.
+
+        ### "validation_skipped" → N/A FOR THE ACTIVE MODEL (VALIDATED)
+
+        The deployed model has NO reference video/manifest configured in
+        `validation/config.json` (no `models.<model_name>` entry, or the entry's
+        reference video file is missing). This is expected when a new model is
+        deployed before its validation videos exist (e.g. sheep_template).
+        This is NOT a mismatch and NOT an execution error — the validation is
+        simply N/A for this model. Do NOT retry, do NOT escalate, do NOT try
+        to fabricate a reference video.
+
+        1. Print the `model_name` + the skip message from the report.
+        2. Write the relay beacon:
+        ```
+        STATE: PASS
+        SKIPPED: true
+        REASON: no reference video configured for model '<model_name>' — validation N/A for this model (provide one in validation/config.json + validation/videos/)
+        ```
+        3. Signal: `<promise>VALIDATED</promise>`
+        4. Done — the workflow proceeds to finalize.
 
         ### "count_mismatch" → HITL PAUSE (BUSINESS FAILURE)
 
@@ -721,7 +746,8 @@ nodes:
         ## Signal rules
 
         - ONLY emit `<promise>VALIDATED</promise>` when validation_status is
-          "pass".
+          "pass" OR "validation_skipped" (N/A for the active model — no
+          reference video configured for the deployed model; not a failure).
         - On count_mismatch: NEVER auto-fix, NEVER emit the signal. Wait for
           human input.
         - On execution_error: fix and retry, or escalate to HITL. Never emit
