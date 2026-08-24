@@ -51,7 +51,10 @@ class InferThread(threading.Thread):
         engine_file_path,
         video_path,
         stop_event,
-        input_type="CAMERA"
+        input_type="CAMERA",
+        input_width=None,
+        input_height=None,
+        input_url=None
     ):
         super().__init__()
 
@@ -64,6 +67,9 @@ class InferThread(threading.Thread):
 
         self.video_path = video_path
         self.input_type = input_type
+        self.input_width = input_width
+        self.input_height = input_height
+        self.input_url = input_url
         self.frame_counter = 0
         self.timer = TimerFps()
         self.stop_event = stop_event
@@ -73,7 +79,13 @@ class InferThread(threading.Thread):
 
         self.yolo = Inference(self.engine_file_path)
 
-        frame_source = FrameSource(self.video_path, self.input_type)
+        frame_source = FrameSource(
+            self.video_path,
+            self.input_type,
+            input_width=self.input_width,
+            input_height=self.input_height,
+            input_url=self.input_url,
+        )
         settings = Settings()
 
         try:
@@ -86,6 +98,14 @@ class InferThread(threading.Thread):
                     logger.debug(f"Captured: {self.frame_counter}...")
 
                 if not ret:
+                    if self.input_type == "STREAM":
+                        shared_state.status = 0
+                        logger.info(
+                            f"------->No Frame (STREAM idle — reconnecting); "
+                            f"Value Status: {shared_state.status}"
+                        )
+                        time.sleep(1)
+                        continue
                     shared_state.status = 0
                     logger.info(f"------->No Frame; Value Status: {shared_state.status}")
                     break
