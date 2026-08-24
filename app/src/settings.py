@@ -63,6 +63,15 @@ class Settings:
         self.OUTPUT_WIDTH = int(os.getenv("OUTPUT_WIDTH", 640))
         self.OUTPUT_HEIGHT = int(os.getenv("OUTPUT_HEIGHT", 480))
 
+        # Input (capture) Resolution — BL-93 legacy env fallbacks. Used by
+        #   state.resolve_input_config() ONLY when the active model's section in
+        #   runtime-settings.json has no input_width/input_height (pre-BL-93
+        #   deploys, byte-identical legacy behavior). Decoupled from OUTPUT_* (the
+        #   writer stays at OUTPUT_* 640x480 with the PR #129 resize); the
+        #   per-model resolver overrides these at startup when present.
+        self.INPUT_WIDTH = int(os.getenv("INPUT_WIDTH", 640))
+        self.INPUT_HEIGHT = int(os.getenv("INPUT_HEIGHT", 480))
+
         # Output Resolution
         self.OUTPUT_SCREEN_WIDTH = int(os.getenv("OUTPUT_SCREEN_WIDTH", 1024))
         self.OUTPUT_SCREEN_HEIGHT = int(os.getenv("OUTPUT_SCREEN_HEIGHT", 600))
