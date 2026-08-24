@@ -477,6 +477,8 @@ class DisplayThread(threading.Thread):
 
             # Recording without tracking
             if not shared_state.draw_tracking and shared_state.status in [1,3] and shared_state.recording and self.video_writer is not None:
+                if img.shape[1] != settings.OUTPUT_WIDTH or img.shape[0] != settings.OUTPUT_HEIGHT:
+                    img = cv2.resize(img, (settings.OUTPUT_WIDTH, settings.OUTPUT_HEIGHT))
                 self.video_writer.write(img)
 
             # =========================
@@ -643,6 +645,8 @@ class DisplayThread(threading.Thread):
 
                 # Write video
                 if shared_state.draw_tracking and shared_state.status in [1,3] and shared_state.recording and self.video_writer is not None:
+                    if img.shape[1] != settings.OUTPUT_WIDTH or img.shape[0] != settings.OUTPUT_HEIGHT:
+                        img = cv2.resize(img, (settings.OUTPUT_WIDTH, settings.OUTPUT_HEIGHT))
                     self.video_writer.write(img)
 
             else:
