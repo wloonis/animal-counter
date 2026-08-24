@@ -72,7 +72,7 @@ class DisplayThread(threading.Thread):
         filename (str): Output video filename.
     """
 
-    def __init__(self, frame_queue: Queue, sort_tracker, tracking: Tracking, counting: Counting, rendering: Rendering, stop_event, input_type="CAMERA"):
+    def __init__(self, frame_queue: Queue, sort_tracker, tracking: Tracking, counting: Counting, rendering: Rendering, stop_event, input_type="CAMERA", output_fps=None):
         """
         Initialize the display thread.
 
@@ -84,6 +84,8 @@ class DisplayThread(threading.Thread):
             counting (Counting): Counting module.
             rendering (Rendering): Rendering module.
             input_type (str): Type of input (CAMERA or FILE).
+            output_fps (int|None): Per-model recording fps (BL-93). When None,
+                falls back to settings.FPS_OUTPUT (env=30) for retrocompat.
         """
         super().__init__()
         self.frame_queue = frame_queue
@@ -92,6 +94,10 @@ class DisplayThread(threading.Thread):
         self.counting = counting
         self.rendering = rendering
         self.input_type = input_type
+        # BL-93: per-model output_fps fixes the writer@30fps vs 15fps inference
+        # time-compression bug. Falls back to FPS_OUTPUT (env=30) for legacy
+        # deploys without a per-model output_fps section.
+        self.output_fps = output_fps if output_fps else settings.FPS_OUTPUT
         self.frame_counter = 0
         self.timer = TimerFps()
         self.video_writer = None
@@ -601,7 +607,7 @@ class DisplayThread(threading.Thread):
                     self.video_writer = cv2.VideoWriter(
                         self.filename,
                         cv2.VideoWriter_fourcc(*'mp4v'),
-                        30,
+                        self.output_fps,
                         (settings.OUTPUT_WIDTH, settings.OUTPUT_HEIGHT)
                     )
 
