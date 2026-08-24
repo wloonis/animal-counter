@@ -52,7 +52,10 @@ from argparse import ArgumentParser
 
 import cv2
 
-from state import shared_state, logger, settings
+from state import (
+    shared_state, logger, settings,
+    load_classes_yaml, load_runtime_settings, resolve_input_config,
+)
 from validate import write_result_json
 
 
@@ -100,6 +103,8 @@ def main():
 
         args = parser.parse_args()
         if args.input:
+            # CLI override (validation/test): -m/-f takes precedence over
+            # everything. Use the CLI values as-is; skip per-model resolution.
             input_source = args.input
             if input_source == "FILE":
                 if args.file:
@@ -107,6 +112,36 @@ def main():
                     shared_state.status = 1
                 else:
                     raise Exception('Please, fill file video path')
+        else:
+            # Serve mode (no -m): resolve the top-level input_source/video
+            # from the per-model runtime-settings.json section (BL-93). The
+            # full input config (input_width/height/output_fps) is read inside
+            # start() — cli.py only resolves the top-level source/path since
+            # that's where -m/-f live. Fail-open: any error falls back to the
+            # env baseline (settings.INPUT_SOURCE / settings.VIDEO_PATH),
+            # which is the pre-BL-93 behavior.
+            try:
+                model_classes = load_classes_yaml()
+                model_name = ((model_classes or {}).get("model_name")
+                              or "my_model")
+                rt = load_runtime_settings()
+                input_cfg = resolve_input_config(rt, settings)
+                input_source = input_cfg["input_source"]
+                if input_source == "CAMERA":
+                    video = input_cfg["input_device"] or video
+                elif input_source == "STREAM":
+                    video = input_cfg["input_url"] or video
+                # FILE: keep the env-baseline video path as-is (per-model
+                # FILE uses the runtime-settings path only when explicitly
+                # set via -f in validation/test; serve mode is CAMERA/STREAM).
+                logger.info(
+                    "BL-93 cli per-model input resolved: model=%r source=%r "
+                    "video=%r", model_name, input_source, video)
+            except Exception as e:
+                logger.warning(
+                    "BL-93 cli per-model input resolution failed (%r); "
+                    "using env baseline source=%r video=%r",
+                    e, input_source, video)
         if args.drawtracking:
             shared_state.draw_tracking = args.drawtracking.lower() == "true"
             shared_state.centroid_tracking = True
