@@ -67,6 +67,7 @@ from state import (
     resolve_counting_class_ids, resolve_counting_line_orientation,
     resolve_counting_direction, resolve_counting_direction_mode,
     resolve_mask_zones,
+    resolve_input_config, resolve_output_fps,
     RuntimeSettingsWatcher,
 )
 # Split thread classes.
@@ -295,15 +296,63 @@ def start(input_source, video_path):
             max_queue_size = 3
             shared_state.frame_queue = Queue(maxsize=max_queue_size)
 
+            # BL-93: per-model input config + output_fps (startup-only read —
+            # NOT hot-reloaded; a camera↔drone switch = pod restart).
+            # resolve_input_config returns {input_source, input_url,
+            # input_device, input_width, input_height} with per-model values
+            # when present/valid, else env fallbacks. resolve_output_fps
+            # returns the per-model writer fps (fallback settings.FPS_OUTPUT=30).
+            # These are read once here; the hot-reload watcher deliberately
+            # ignores the input keys (startup-only by design).
+            input_cfg = resolve_input_config(rt, settings)
+            output_fps = resolve_output_fps(rt, settings)
+
+            # Effective top-level input_source/video_path. A CLI override
+            # (-m/-f, validation/test) is detected as a deviation from the env
+            # baseline (settings.INPUT_SOURCE / settings.VIDEO_PATH) — keep those
+            # as-is. Otherwise (serve mode, env baseline unchanged) apply the
+            # per-model resolved values: CAMERA → input_device, STREAM →
+            # input_url, FILE → video_path as passed. This makes start()
+            # self-contained pre-Task-7 (cli.py still passes the env baseline in
+            # serve mode); after Task-7 cli.py resolves the top-level itself and
+            # this branch becomes a no-op (keeps the already-resolved values).
+            if input_source != settings.INPUT_SOURCE or \
+                    video_path != settings.VIDEO_PATH:
+                # CLI override (validation/test): keep the caller's values.
+                eff_input_source = input_source
+                eff_video_path = video_path
+            else:
+                eff_input_source = input_cfg["input_source"]
+                if eff_input_source == "CAMERA":
+                    eff_video_path = input_cfg["input_device"] or video_path
+                elif eff_input_source == "STREAM":
+                    eff_video_path = input_cfg["input_url"] or video_path
+                else:
+                    # FILE: keep video_path as passed (per-model FILE uses
+                    # the runtime-settings path only when explicitly set;
+                    # validation passes the file path via -f).
+                    eff_video_path = video_path
+
+            logger.info(
+                "BL-93 input config resolved: model=%r source=%r video_path=%r "
+                "input_width=%r input_height=%r output_fps=%r",
+                model_name, eff_input_source, eff_video_path,
+                input_cfg["input_width"], input_cfg["input_height"],
+                output_fps,
+            )
+
             shared_state.infer_thread = InferThread(
                 frame_queue=shared_state.frame_queue,
                 max_queue_size=max_queue_size,
                 engine_file_path=engine_file_path,
-                video_path=video_path,
+                video_path=eff_video_path,
                 stop_event=shared_state.stop_event,
-                input_type=input_source
+                input_type=eff_input_source,
+                input_width=input_cfg["input_width"],
+                input_height=input_cfg["input_height"],
+                input_url=input_cfg["input_url"],
             )
-            shared_state.display_thread = DisplayThread(frame_queue=shared_state.frame_queue, sort_tracker=byte_tracker, tracking=tracking, counting=counting, rendering=rendering, stop_event=shared_state.stop_event, input_type=input_source)
+            shared_state.display_thread = DisplayThread(frame_queue=shared_state.frame_queue, sort_tracker=byte_tracker, tracking=tracking, counting=counting, rendering=rendering, stop_event=shared_state.stop_event, input_type=eff_input_source, output_fps=output_fps)
 
             # BL-68: wire the history recorder (serve mode only — when
             # RESULT_JSON_PATH is unset, consistent with the existing
