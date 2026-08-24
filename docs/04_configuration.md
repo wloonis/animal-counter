@@ -54,7 +54,7 @@ existing `runtime-settings.json` and `.arret_requested` from `/files` to
 |-----|---------|---------|
 | `INPUT_SOURCE` | `CAMERA` | `CAMERA` (live `/dev/video0`) or `FILE` (a video file) |
 | `VIDEO_PATH` | `/dev/video0` | Device (CAMERA) or file path (FILE) |
-| `OUTPUT_WIDTH` / `OUTPUT_HEIGHT` | 640 / 480 | Inference/processing frame size |
+| `OUTPUT_WIDTH` / `OUTPUT_HEIGHT` | 640 / 480 | Recording (writer) frame size |
 | `OUTPUT_SCREEN_WIDTH` / `OUTPUT_SCREEN_HEIGHT` | 1024 / 600 | Display window size |
 | `FPS_OUTPUT` | 30 | Camera/video frame rate — do not change |
 | `OUTPUT_VIDEO_PATH` | `/files` | Where annotated output videos are written |
