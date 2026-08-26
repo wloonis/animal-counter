@@ -87,6 +87,19 @@ _PER_MODEL_SETTINGS_KEYS = (
     "counting_line_orientation",
     "offset_counting_line",
     "mask_zones",
+    # BL-93: per-model input configuration (startup-only — NOT hot-reloaded).
+    # These keys are read at startup by resolve_input_config() / start()
+    # and by resolve_output_fps(); they are deliberately NOT consumed by
+    # RuntimeSettingsWatcher._build_pending() (a camera↔drone switch = pod
+    # restart, not a live toggle). Keeping them in this tuple makes
+    # load_runtime_settings() include them in the flat dict so the startup
+    # resolvers can read them as flat keys.
+    "input_source",
+    "input_url",
+    "input_device",
+    "input_width",
+    "input_height",
+    "output_fps",
 )
 _GLOBAL_SETTINGS_KEYS = (
     "draw_tracking",
@@ -493,6 +506,138 @@ def resolve_mask_zones(rt):
             return None
         validated.append({"x": x, "y": y, "w": w, "h": h})
     return validated
+
+
+def resolve_input_config(rt, settings):
+    """Resolve the effective per-model input configuration (BL-93).
+
+    ``rt`` is the runtime-settings dict (from ``load_runtime_settings()``);
+    ``settings`` is the ``Settings`` instance (env-fallback source).
+
+    Validates the per-model input keys (``input_source`` / ``input_url`` /
+    ``input_device`` / ``input_width`` / ``input_height``) present in ``rt``
+    and returns a dict ``{input_source, input_url, input_device,
+    input_width, input_height}`` with each field filled from the per-model
+    value when valid, else from the env fallback (``settings.INPUT_SOURCE`` /
+    ``settings.VIDEO_PATH`` / ``settings.INPUT_WIDTH`` / ``settings.INPUT_HEIGHT``).
+
+    Validation rules (fail-open → env fallback, never raise):
+      - ``input_source`` ∈ {"CAMERA", "STREAM", "FILE"} (case-insensitive);
+        invalid → env ``settings.INPUT_SOURCE`` (uppercased).
+      - ``input_width`` / ``input_height``: positive ints, reject bool;
+        invalid → env ``settings.INPUT_WIDTH`` / ``settings.INPUT_HEIGHT``.
+      - ``input_url``: non-empty string, required when STREAM; absent/invalid
+        when STREAM → env ``settings.VIDEO_PATH`` (the drone RTSP URL).
+      - ``input_device``: string, required when CAMERA; absent/invalid when
+        CAMERA → env ``settings.VIDEO_PATH`` (the V4L2 device).
+    Invalid values are logged at WARNING level. Returns a fully-populated
+    dict (no None values); never raises.
+    """
+    # Env fallbacks (getattr for forward-safety during staged migration —
+    # settings.INPUT_WIDTH/INPUT_HEIGHT are added by Task 2).
+    env_source = getattr(settings, "INPUT_SOURCE", "CAMERA")
+    env_video_path = getattr(settings, "VIDEO_PATH", "/dev/video0")
+    env_input_width = getattr(settings, "INPUT_WIDTH", 640)
+    env_input_height = getattr(settings, "INPUT_HEIGHT", 480)
+
+    # input_source
+    raw_source = rt.get("input_source") if isinstance(rt, dict) else None
+    if raw_source is None:
+        input_source = env_source
+    elif isinstance(raw_source, bool) or not isinstance(raw_source, str):
+        logger.warning("input_source must be a string, got %r; falling back "
+                        "to env INPUT_SOURCE", raw_source)
+        input_source = env_source
+    else:
+        norm = raw_source.strip().upper()
+        if norm not in ("CAMERA", "STREAM", "FILE"):
+            logger.warning("input_source must be CAMERA|STREAM|FILE, got %r; "
+                            "falling back to env INPUT_SOURCE", raw_source)
+            input_source = env_source
+        else:
+            input_source = norm
+
+    # input_width / input_height (positive int, reject bool)
+    def _resolve_dim(key, env_val, label):
+        raw = rt.get(key) if isinstance(rt, dict) else None
+        if raw is None:
+            return env_val
+        if isinstance(raw, bool) or not isinstance(raw, int):
+            logger.warning("%s must be a positive int, got %r; falling back "
+                            "to env", label, raw)
+            return env_val
+        if raw <= 0:
+            logger.warning("%s must be > 0, got %r; falling back to env",
+                           label, raw)
+            return env_val
+        return raw
+
+    input_width = _resolve_dim("input_width", env_input_width, "input_width")
+    input_height = _resolve_dim("input_height", env_input_height,
+                                "input_height")
+
+    # input_url (non-empty string; required for STREAM)
+    raw_url = rt.get("input_url") if isinstance(rt, dict) else None
+    if raw_url is None or (isinstance(raw_url, str) and not raw_url.strip()):
+        input_url = None
+        if input_source == "STREAM":
+            # STREAM requires a URL — fall back to env VIDEO_PATH.
+            logger.warning("input_url required for STREAM but absent/empty; "
+                            "falling back to env VIDEO_PATH")
+            input_url = env_video_path
+    elif isinstance(raw_url, bool) or not isinstance(raw_url, str):
+        logger.warning("input_url must be a string, got %r; ignoring", raw_url)
+        input_url = env_video_path if input_source == "STREAM" else None
+    else:
+        input_url = raw_url.strip()
+
+    # input_device (string; required for CAMERA)
+    raw_dev = rt.get("input_device") if isinstance(rt, dict) else None
+    if raw_dev is None or (isinstance(raw_dev, str) and not raw_dev.strip()):
+        input_device = None
+        if input_source == "CAMERA":
+            logger.warning("input_device required for CAMERA but absent/empty; "
+                            "falling back to env VIDEO_PATH")
+            input_device = env_video_path
+    elif isinstance(raw_dev, bool) or not isinstance(raw_dev, str):
+        logger.warning("input_device must be a string, got %r; ignoring",
+                       raw_dev)
+        input_device = env_video_path if input_source == "CAMERA" else None
+    else:
+        input_device = raw_dev.strip()
+
+    return {
+        "input_source": input_source,
+        "input_url": input_url,
+        "input_device": input_device,
+        "input_width": input_width,
+        "input_height": input_height,
+    }
+
+
+def resolve_output_fps(rt, settings):
+    """Resolve the effective per-model output (writer) FPS (BL-93).
+
+    ``rt`` is the runtime-settings dict (from ``load_runtime_settings()``);
+    ``settings`` is the ``Settings`` instance (env-fallback source).
+
+    Returns ``models.<active>.output_fps`` (positive int, reject bool) when
+    present and valid, else ``settings.FPS_OUTPUT`` (env=30). Invalid values
+    are logged at WARNING level; never raises.
+    """
+    env_fps = getattr(settings, "FPS_OUTPUT", 30)
+    raw = rt.get("output_fps") if isinstance(rt, dict) else None
+    if raw is None:
+        return env_fps
+    if isinstance(raw, bool) or not isinstance(raw, int):
+        logger.warning("output_fps must be a positive int, got %r; falling "
+                        "back to env FPS_OUTPUT", raw)
+        return env_fps
+    if raw <= 0:
+        logger.warning("output_fps must be > 0, got %r; falling back to env "
+                        "FPS_OUTPUT", raw)
+        return env_fps
+    return raw
 
 
 # BL-86: module-level holder for the RuntimeSettingsWatcher instance, so

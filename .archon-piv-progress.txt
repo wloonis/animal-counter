@@ -1,0 +1,9 @@
+Task 1: per-model input config + output_fps resolvers in state.py — 84646bb
+Task 2: INPUT_WIDTH/INPUT_HEIGHT env fallbacks in settings.py — c48dc71
+Task 3: FrameSource STREAM type + input_* capture res + grab-discard + RTSP reconnect — 11200dc
+Task 4: InferThread input config plumbing + STREAM idle (no break) — c98cbb0
+Task 5: DisplayThread writer uses per-model output_fps (fallback FPS_OUTPUT=30) — 7ff7226
+Task 6: read per-model input config + output_fps at startup, plumb to threads — b6cf3d1
+Task 7: input-source precedence in cli.py (CLI > per-model > env) — 1a3454b
+Task 8: document per-model input keys + output_fps in IPC_CONTRACT.md — d8da492
+Task 9: unit tests for resolvers + FrameSource + watcher guard — 89f2605
