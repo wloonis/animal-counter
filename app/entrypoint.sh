@@ -26,10 +26,35 @@ EOF
     # build_model.yml = basename of TRAINING_PROJECT_DIR). Fallback `my_model`
     # for legacy deploys built before this naming convention.
     MODEL_FILE="${MODEL_NAME:-my_model}"
+    export MODEL_FILE
     echo "Building engine for model: ${MODEL_FILE}"
+
+    # Per-model build precision. Read /app/build-config.json keyed by
+    # MODEL_FILE. Default fp32 (legacy/backward compat — pigs stay FP32 at
+    # 30 FPS; imgsz=1280 models use fp16 for ~15 FPS on Orin Nano). The build
+    # config is rsync'd to the Jetson by build_model.yml alongside the ONNX.
+    PRECISION=$(python3 - <<'PYEOF'
+import json, os
+cfg = {}
+try:
+    with open("/app/build-config.json") as f:
+        cfg = json.load(f)
+except (FileNotFoundError, json.JSONDecodeError, OSError):
+    pass
+m = cfg.get(os.environ.get("MODEL_FILE", ""), {})
+print(str(m.get("precision", "fp32")).lower())
+PYEOF
+    )
+    echo "Build precision for ${MODEL_FILE}: ${PRECISION}"
+
+    EXTRA_FLAGS=""
+    if [ "$PRECISION" = "fp16" ]; then
+      EXTRA_FLAGS="--fp16"
+    fi
 
     /usr/src/tensorrt/bin/trtexec \
       --onnx="/app/model/${MODEL_FILE}.onnx" \
+      $EXTRA_FLAGS \
       --saveEngine="/app/model/${MODEL_FILE}.engine"
 
     echo "Engine build complete"

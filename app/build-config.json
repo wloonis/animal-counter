@@ -1,0 +1,5 @@
+{
+  "_doc": "Per-model TensorRT build config. The build-engine entrypoint (app/entrypoint.sh) looks up MODEL_NAME here to decide trtexec precision. Default for an unlisted model (or if this file is missing) is fp32 — keeps legacy pig (my_model, imgsz=640) at FP32/30 FPS. imgsz=1280 models use fp16 (~15 FPS on Jetson Orin Nano). imgsz is informational (the engine matches the ONNX input size); precision is the only field the entrypoint acts on.",
+  "my_model": { "precision": "fp32", "imgsz": 640 },
+  "sheep_template": { "precision": "fp16", "imgsz": 1280 }
+}
