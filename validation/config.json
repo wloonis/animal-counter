@@ -7,6 +7,9 @@
     "my_model": {
       "reference_video": "validation-1-#9.mp4",
       "manifest": "validation/expected_counts.json"
+    },
+    "sheep_template": {
+      "reference_video": "validation-sheep-1-#47.mp4"
     }
   }
 }

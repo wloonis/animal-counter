@@ -251,6 +251,18 @@
       become: false
       tags: build
 
+    - name: Copy per-model build-config.json to Jetson
+      command: >
+        rsync -avz --no-owner --no-group
+        -e "sshpass -e ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
+        "{{ local_app_path }}/build-config.json"
+        {{ ansible_user }}@{{ ansible_host }}:{{ app_path }}/build-config.json
+      environment:
+        SSHPASS: "{{ ansible_become_password }}"
+      delegate_to: localhost
+      become: false
+      tags: build
+
     - name: Disable counting app (delete k3s deployment)
       ansible.builtin.command: >
         kubectl delete -f {{ app_path }}/../k3s/countingapp-dep.yaml --ignore-not-found
