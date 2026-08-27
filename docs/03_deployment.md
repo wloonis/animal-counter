@@ -46,7 +46,7 @@ So `JETSON_IP` / `JETSON_USER` / `JETSON_PASSWORD` (from `.env.local`, set by
 | `system/prepare_system.yml`, `network_ssh.yml`, `hotspot_setup.yml`, `install_lxde.yml`, `configure_splash_screen.yml`, `diagnose_splash_screen.yml` | System setup (see [`02_setup.md`](02_setup.md)) |
 
 `deploy_countingapp.yml` renders each `*.j2` into `$K3S_APP_PATH/*.yaml` and
-applies them with `k3s kubectl apply -f`. Defaults (filebrowser creds, paths,
+applies them with `k3s kubectl apply -f`. Defaults (paths,
 ports) come from `ansible/group_vars/all.yml`.
 
 ## Model build — Roboflow dataset → YOLO → ONNX → TensorRT engine
@@ -85,7 +85,6 @@ on Roboflow** — the repo does not ship a model. `ansible/playbooks/model/build
 | `countingapp-ns.j2` | Namespace | `countingapp-dev` |
 | `countingapp-dep.j2` | **DaemonSet** | The app pod (`countingapp:local`, `serve`), hostPaths for `/dev/video0`, `/app` (code), `/files` (videos/history/data), `/conf` (runtime-settings + `.arret_requested` config/contrôle — BL-79), `/tmp/.X11-unix` (X11), `/var/run/docker.sock` |
 | `countingapp-svc.j2` | Service (ClusterIP) | `:31501` (declared containerPort named `web`; the operator UI is the on-screen X11/cv2 window, **not** HTTP — the app does not serve HTTP) — no externalIP |
-| `filebrowser-dep.j2` / `filebrowser-svc.j2` / `filebrowser-cmap.j2` / `filebrowser-sct.j2` | Deployment + Service + ConfigMap + Secret | Web file manager for recorded videos (image `ghcr.io/gtsteffaniak/filebrowser:stable`) |
 | `cronvideo-dep.j2` | Deployment | Rolling ffmpeg compression (`tocompress-*` → `count*`, keep 50, delete `.mp4` > 2 GiB) |
 | `countingapp-validate.j2` | Job | One-shot validation run (used by `validate_on_jetson.sh`) |
 | `countingapp-test.j2` | Job | One-shot test run |
@@ -111,7 +110,7 @@ spec:
         resources:
           requests: { cpu: "500m", memory: "2Gi", nvidia.com/gpu: 1 }
           limits:   { cpu: "2",    memory: "4Gi", nvidia.com/gpu: 1 }
-        volumeMounts: [dev-video0, dev-app(/app), filebrowser(/files), conf(/conf), dev-x11, docker-sock]
+        volumeMounts: [dev-video0, dev-app(/app), files(/files), conf(/conf), dev-x11, docker-sock]
 ```
 
 ### Pausing the live app for validation
@@ -157,7 +156,6 @@ this single-device edge deployment.
 - No `livenessProbe` on the `countingapp` pod.
 - `privileged` security context + `docker.sock` mount (used by the validation
   Job's image rebuild; could be narrowed).
-- filebrowser ships the default `admin/admin` credentials.
 - `ffmpeg:latest` (compression cron image) is not pinned to a digest.
 
 > The recording is now **finalized and renamed on every exit path** (end of

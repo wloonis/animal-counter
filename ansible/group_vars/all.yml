@@ -45,18 +45,6 @@ app_config:
   log_max_size: "{{ lookup('env', 'LOG_MAX_SIZE') | default('100M') }}"
   jetson_ip: "{{ lookup('env', 'JETSON_IP') | default(omit) }}"
 
-# FileBrowser Configuration
-filebrowser_config:
-  port: "{{ lookup('env', 'FILEBROWSER_PORT') | default('80') }}"
-  base_url: "{{ lookup('env', 'FILEBROWSER_BASE_URL') | default('/') }}"
-  cache_dir: "{{ lookup('env', 'FILEBROWSER_CACHE_DIR') | default('/data/tmp') }}"
-  database: "{{ lookup('env', 'FILEBROWSER_DATABASE') | default('/data/database.db') }}"
-  srv_path: "{{ lookup('env', 'FILEBROWSER_SRV_PATH') | default('/srv') }}"
-  admin_username: "{{ lookup('env', 'FILEBROWSER_ADMIN_USERNAME') | default('admin') }}"
-  admin_password: "{{ lookup('env', 'FILEBROWSER_ADMIN_PASSWORD') | default('admin') }}"
-  image: "{{ lookup('env', 'FILEBROWSER_IMAGE') | default('ghcr.io/gtsteffaniak/filebrowser:stable') }}"
-  config_path: "{{ lookup('env', 'FILEBROWSER_CONFIG_PATH') | default('/data/orin/git/animal-counting/config/filebrowser/') }}"
-
 # Build Configuration
 build_config:
   image_name: "{{ lookup('env', 'IMAGE_NAME') | default('countingapp') }}"

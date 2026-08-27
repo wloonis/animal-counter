@@ -87,7 +87,7 @@ animal-counter/
 │   └── install_splash_screen_standalone.sh
 ├── ansible/                 # Ansible automation (deploy + system + model)
 │   ├── inventory/jetsons.yml        # Single host, env-driven (JETSON_IP/USER/PASSWORD)
-│   ├── group_vars/all.yml           # Defaults (filebrowser creds, paths…)
+│   ├── group_vars/all.yml           # Defaults (paths…)
 │   └── playbooks/
 │       ├── app/   deploy_app.yml · deploy_countingapp.yml · build_countingapp.yml
 │       ├── model/ build_model.yml
@@ -96,7 +96,6 @@ animal-counter/
 │   ├── countingapp-dep.j2          # DaemonSet (the app, pausable for validation)
 │   ├── countingapp-svc.j2 · countingapp-ns.j2
 │   ├── countingapp-validate.j2 · countingapp-test.j2 · build-engine-batch.j2
-│   ├── filebrowser-dep.j2 · filebrowser-svc.j2 · filebrowser-cmap.j2 · filebrowser-sct.j2
 │   └── cronvideo-dep.j2            # Rolling video compression + cleanup
 ├── validation/              # Reference videos + expected-count manifest
 │   ├── config.json                  # reference_video, tolerance, max_iterations, mode
@@ -178,7 +177,7 @@ with). Complete these **before** launching any command:
    values). Start from the versioned example and fill in the real values:
    ```bash
    cp .env.local.example .env.local   # then edit: JETSON_USER, JETSON_PASSWORD,
-                                       # WIFI_NETWORK, FILEBROWSER_ADMIN_PASSWORD,
+                                       # WIFI_NETWORK,
                                        # GITHUB_TOKEN, and TRAINING_ROBOFLOW_*
    ```
    `.env.local` is consumed by `scripts/*.sh` (sourced) and by
