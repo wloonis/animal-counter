@@ -60,6 +60,39 @@ existing `runtime-settings.json` and `.arret_requested` from `/files` to
 | `OUTPUT_VIDEO_PATH` | `/files` | Where annotated output videos are written |
 | `LOG_LEVEL` | `INFO` | `DEBUG`/`INFO`/`WARNING`/`ERROR` |
 
+> **BL-93 — per-model input override (startup-only).** The `INPUT_SOURCE`,
+> `VIDEO_PATH`, `INPUT_WIDTH`, `INPUT_HEIGHT`, `FPS_OUTPUT` env defaults above
+> are the **fallback**. At startup, the active model's section in
+> `/conf/runtime-settings.json` may override them per-model with:
+> `input_source` (`CAMERA`/`STREAM`/`FILE`), `input_url` (RTSP URL, required for
+> `STREAM` — e.g. sheep drone 720p), `input_device` (V4L2 path, required for
+> `CAMERA`), `input_width`/`input_height` (capture resolution, decoupled from
+> the recording `OUTPUT_WIDTH/HEIGHT`), `output_fps` (writer frame rate,
+> replaces the hardcoded 30 — fixes the 30fps-writer vs 15fps-FP16@1280
+> time-compression bug). These are read **once at startup** (not hot-reloaded);
+> switching the physical sensor (camera ↔ drone) is a restart, not a hot-swap.
+> Invalid/absent values log a WARNING and fall back to the env defaults above.
+> Precedence: CLI `-m`/`-f` (validation/test) > per-model `input_source` > env
+> `INPUT_SOURCE`. See `docs/IPC_CONTRACT.md`.
+
+### Build precision (per-model)
+
+`app/build-config.json` selects the TensorRT engine **build precision + imgsz**
+per model (read by `app/entrypoint.sh` `build-engine` path, keyed by
+> `MODEL_NAME`):
+
+| Model | `precision` | `imgsz` | Why |
+|-------|------------|--------|-----|
+| `my_model` (pig, legacy) | `fp32` | 640 | 30 FPS on Orin Nano — pigs at 640 need no quantization |
+| `sheep_template` / `sheep_goat_template` | `fp16` | 1280 | ~13–15 FPS at 1280 (FP32 would be too slow); recall needs the 1280 resolution |
+
+Default `fp32` (backward compat — unknown models build FP32). The engine
+> artifact is named after the dataset dir: `model_name = basename(TRAINING_PROJECT_DIR)`
+> (e.g. `sheep_goat_template.engine`), fallback `my_model` for legacy deploys.
+> The build-engine k3s Job runs the hostPath `/app/entrypoint.sh` (always current
+> via rsync — no image rebuild needed for `entrypoint.sh` changes); see
+> `docs/03_deployment.md`.
+
 ### Snapshot writer (BL-88)
 
 These are **boot params** (read once at startup from `app/.env` via
