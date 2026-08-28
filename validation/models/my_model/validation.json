@@ -1,0 +1,6 @@
+{
+  "_comment": "Pig model (my_model) standard validation. reference_video resolved against validation/videos/. expected_count is explicit (NOT derived from the #<N> filename). tolerance optional (falls back to global config.json tolerance).",
+  "reference_video": "validation-1-#9.mp4",
+  "expected_count": 9,
+  "tolerance": 0
+}

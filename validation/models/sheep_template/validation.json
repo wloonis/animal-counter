@@ -1,0 +1,6 @@
+{
+  "_comment": "Sheep-only model (sheep_template) standard validation. Same reference video as sheep_goat_template (the sheep validation video, 47 sheep).",
+  "reference_video": "validation-sheep-1-#47.mp4",
+  "expected_count": 47,
+  "tolerance": 0
+}

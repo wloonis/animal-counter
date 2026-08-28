@@ -1,0 +1,6 @@
+{
+  "_comment": "Sheep+goat+dog 3-class model (sheep_goat_template) standard validation. counting_class_ids=[0,1] (sheep+goat, dog excluded). 47 total sheep+goat in the reference video.",
+  "reference_video": "validation-sheep-1-#47.mp4",
+  "expected_count": 47,
+  "tolerance": 0
+}
