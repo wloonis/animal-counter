@@ -110,6 +110,16 @@ class SharedState:
         self.default_counting_class = 1
         self.model_version = None
         self.counting_class_ids = [1]
+        # BL-96 part (b): once-per-process startup cross-check of
+        # classes.yaml nc/names vs the deployed <model_name>.onnx names
+        # (state.read_onnx_class_names). ``classes_drift_checked`` guards
+        # the check so it runs only on the first start() of the process (the
+        # deployed engine is fixed per process lifetime). The computed
+        # 3-state ``classes_drift`` (False/True/None) is cached here so later
+        # recordings republish /conf/model-classes.json with the same value
+        # without re-reading the .onnx. See main.py::start().
+        self.classes_drift_checked = False
+        self.classes_drift = None
         # Per-species sub-counters {class_id: count}; reset per recording to
         # {cid: 0 for cid in counting_class_ids}. The global counter_to_right
         # is the sum of these (retro-compatible invariant).

@@ -64,6 +64,7 @@ from core.history import HistoryWriter, HistoryThread
 from state import (
     shared_state, settings, logger, _IOU_METRICS,
     load_runtime_settings, load_classes_yaml, publish_model_classes_json,
+    read_onnx_class_names,
     resolve_counting_class_ids, resolve_counting_line_orientation,
     resolve_counting_direction, resolve_counting_direction_mode,
     resolve_mask_zones,
@@ -162,16 +163,63 @@ def start(input_source, video_path):
         # companion via model-classes.json. Fallback `my_model` for legacy
         # deploys whose classes.yaml predates the model_name field.
         model_name = (model_classes or {}).get("model_name") or "my_model"
+        # BL-96 part (b): once-per-process startup cross-check of the
+        # classes.yaml nc/names against the class names embedded in the
+        # deployed <model_name>.onnx metadata (state.read_onnx_class_names,
+        # pure-stdlib grep — no onnx lib). The deployed .engine/.onnx is fixed
+        # for a process lifetime, so the check runs only on the first start()
+        # and the resulting 3-state classes_drift (False/True/None) is cached
+        # on shared_state for later recordings to republish without re-reading
+        # the .onnx. Fail-open: any error leaves classes_drift at null (could
+        # not verify) and start() proceeds. Only runs when the catalog is
+        # present — when classes.yaml is absent (legacy deploy) counting stays
+        # byte-identical and classes_drift stays at its __init__ default (None).
+        if model_classes is not None and not shared_state.classes_drift_checked:
+            try:
+                onnx_names = read_onnx_class_names(
+                    f"./model/{model_name}.onnx")
+                if onnx_names is None:
+                    # .onnx missing / unreadable / unparseable — the helper
+                    # already logged (INFO/WARNING); could not verify.
+                    shared_state.classes_drift = None
+                else:
+                    onnx_nc, onnx_list = onnx_names
+                    yaml_nc = model_classes.get("nc")
+                    yaml_names = list(model_classes.get("names") or [])
+                    if yaml_nc != onnx_nc or yaml_names != onnx_list:
+                        shared_state.classes_drift = True
+                        logger.warning(
+                            "classes_drift=true: classes.yaml (nc=%r, "
+                            "names=%r) differs from %s.onnx (nc=%r, "
+                            "names=%r)", yaml_nc, yaml_names, model_name,
+                            onnx_nc, onnx_list)
+                    else:
+                        shared_state.classes_drift = False
+                        logger.info(
+                            "classes_drift=false: classes.yaml matches "
+                            "%s.onnx (nc=%r)", model_name, onnx_nc)
+            except Exception as exc:
+                # Fail-open: never let the cross-check abort start().
+                logger.warning("classes_drift cross-check raised (%s): "
+                               "%s; classes_drift=null", type(exc).__name__,
+                               exc)
+                shared_state.classes_drift = None
+            shared_state.classes_drift_checked = True
         if model_classes is not None:
             shared_state.class_names = list(model_classes.get("names") or [])
             shared_state.default_counting_class = model_classes.get(
                 "default_counting_class", 1)
             shared_state.model_version = model_classes.get("model_version")
+            # BL-96 part (b): thread the once-per-process classes_drift
+            # (cached on shared_state) into the IPC payload so the companion
+            # can distinguish "checked OK" (false) / "drifted" (true) /
+            # "could not verify" (null).
             publish_model_classes_json(
                 shared_state.class_names,
                 shared_state.default_counting_class,
                 shared_state.model_version,
                 model_name,
+                classes_drift=shared_state.classes_drift,
             )
 
         if shared_state.infer_thread is None or (shared_state.infer_thread and not shared_state.infer_thread.is_alive()):

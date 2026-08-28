@@ -26,9 +26,11 @@ these singletons from here so they all bind to the *same* object instances
 (no circular imports — this module imports nothing from the split modules).
 """
 
+import ast
 import json
 import logging
 import os
+import re
 import tempfile
 import threading
 
@@ -231,18 +233,89 @@ def load_classes_yaml():
         return None
 
 
+def read_onnx_class_names(onnx_path):
+    """BL-96 part (b): pure-stdlib read of the class names embedded in an
+    Ultralytics `.onnx` engine metadata (no `onnx` library dependency).
+
+    Ultralytics stores the class names as a UTF-8 dict-repr string inside the
+    ONNX protobuf (e.g. ``{0: 'human', 1: 'pig'}``). This helper scans the raw
+    binary for the first such dict-shaped substring, ``ast.literal_eval``-s it,
+    and returns the names ordered by dict key so the caller can compare with
+    the hand-written `classes.yaml` catalog.
+
+    Returns a tuple ``(nc, names_list)`` (``nc == len(names_list)``) on success;
+    returns ``None`` when the file is missing, the regex does not match, or
+    the literal_eval fails. Any error is logged at WARNING level and the
+    function returns ``None`` (fail-open): the caller then leaves
+    ``classes_drift`` at ``null`` (could not verify). Never raises.
+
+    Reused by the `start_counting` startup cross-check in main.py (Task 3).
+    """
+    try:
+        with open(onnx_path, "rb") as fh:
+            raw = fh.read()
+    except FileNotFoundError:
+        logger.info("onnx class-name cross-check: %s not found; "
+                    "classes_drift=null (could not verify)", onnx_path)
+        return None
+    except OSError as exc:
+        logger.warning("onnx class-name cross-check: cannot read %s "
+                       "(%s): %s; classes_drift=null", onnx_path,
+                       type(exc).__name__, exc)
+        return None
+    match = re.search(rb"\{[0-9]+: '[^']+'(, [0-9]+: '[^']+')*\}", raw)
+    if match is None:
+        logger.warning("onnx class-name cross-check: no names dict found "
+                       "in %s; classes_drift=null", onnx_path)
+        return None
+    try:
+        names_dict = ast.literal_eval(match.group(0).decode("utf-8", "replace"))
+    except (ValueError, SyntaxError) as exc:
+        logger.warning("onnx class-name cross-check: cannot parse names dict "
+                       "in %s (%s): %s; classes_drift=null", onnx_path,
+                       type(exc).__name__, exc)
+        return None
+    if not isinstance(names_dict, dict) or not names_dict:
+        logger.warning("onnx class-name cross-check: parsed names is not a "
+                       "non-empty dict (%r) in %s; classes_drift=null",
+                       names_dict, onnx_path)
+        return None
+    # Order by dict key (int class index) into a positional names list.
+    try:
+        ordered = [names_dict[k] for k in sorted(names_dict)]
+    except TypeError as exc:
+        logger.warning("onnx class-name cross-check: non-int key in names "
+                       "dict (%r) in %s (%s): %s; classes_drift=null",
+                       names_dict, onnx_path, type(exc).__name__, exc)
+        return None
+    return len(ordered), ordered
+
+
 def publish_model_classes_json(class_names, default_counting_class,
-                                model_version, model_name=None):
+                                model_version, model_name=None,
+                                classes_drift=None):
     """Atomically write the read-only /conf/model-classes.json mirror (BL-78).
 
-    Schema: ``{model_version, model_name, nc, names, default_counting_class}``.
-    ``model_name`` (BL-89) identifies the active model so the companion can
-    select the matching per-model runtime-settings section (mask_zones /
-    counting line / counting_class_ids). The file is written to a temp path
-    then ``os.replace``-d into place so the companion never observes a
-    half-written file. Best-effort: any failure is logged at WARNING level
-    and the app continues counting (the companion simply won't see the
-    catalog until the next successful write). Never raises.
+    Schema: ``{model_version, model_name, nc, names, default_counting_class,
+    classes_drift}``. ``model_name`` (BL-89) identifies the active model so the
+    companion can select the matching per-model runtime-settings section
+    (mask_zones / counting line / counting_class_ids). The file is written to a
+    temp path then ``os.replace``-d into place so the companion never observes
+    a half-written file. Best-effort: any failure is logged at WARNING level
+    and the app continues counting (the companion simply won't see the catalog
+    until the next successful write). Never raises.
+
+    ``classes_drift`` (BL-96 part b) is a 3-state field serialized as JSON
+    ``true`` / ``false`` / ``null``:
+      - ``False`` — the startup cross-check ran and the classes.yaml
+        nc/names MATCH the deployed ``.onnx`` names (no drift);
+      - ``True``  — the cross-check ran and the classes.yaml nc/names DIFFER
+        from the deployed ``.onnx`` names (drift detected, WARNING logged);
+      - ``None``  — could not verify (the ``.onnx`` is missing, the catalog
+        is absent/legacy, or the cross-check raised); serialized as JSON
+        ``null``.
+    The default ``None`` keeps this call backward-compatible with the single
+    existing caller that does not yet pass the kwarg.
     """
     payload = {
         "model_version": model_version,
@@ -250,6 +323,7 @@ def publish_model_classes_json(class_names, default_counting_class,
         "nc": len(class_names),
         "names": list(class_names),
         "default_counting_class": int(default_counting_class),
+        "classes_drift": classes_drift,
     }
     try:
         os.makedirs(os.path.dirname(MODEL_CLASSES_PATH), exist_ok=True)
