@@ -10,6 +10,9 @@
     },
     "sheep_template": {
       "reference_video": "validation-sheep-1-#47.mp4"
+    },
+    "sheep_goat_template": {
+      "reference_video": "validation-sheep-1-#47.mp4"
     }
   }
 }

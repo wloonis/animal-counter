@@ -1,0 +1,8 @@
+model_version: sheep_goat_template
+model_name: sheep_goat_template
+nc: 3
+names:
+- sheep
+- goat
+- dog
+default_counting_class: 0
