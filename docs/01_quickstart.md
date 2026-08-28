@@ -53,7 +53,7 @@ What it does, in order:
 2. `scripts/jetson_first_access.sh` — confirms SSH works
 3. `ansible-playbook -i ansible/inventory/jetsons.yml
    ansible/playbooks/app/deploy_app.yml` — renders the K3s templates and
-   applies them (namespace, DaemonSet, service, filebrowser, video-compress)
+   applies them (namespace, DaemonSet, service, video-compress)
 
 On success the app runs and displays the live camera feed + counting line on
 the Jetson's attached screen (the on-screen X11/cv2 window). There is no web

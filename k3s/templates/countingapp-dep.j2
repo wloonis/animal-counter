@@ -57,7 +57,7 @@ spec:
           mountPath: /dev/video0
         - name: dev-app
           mountPath: /app
-        - name: filebrowser
+        - name: files
           mountPath: /files
         - name: conf
           mountPath: /conf
@@ -89,7 +89,7 @@ spec:
         hostPath:
           path: "{{ video_device }}"
 
-      - name: filebrowser
+      - name: files
         hostPath:
           path: "{{ files_path }}"
           type: Directory

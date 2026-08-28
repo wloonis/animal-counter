@@ -16,16 +16,6 @@
     log_max_size: "{{ lookup('env', 'LOG_MAX_SIZE') | default('100M', true) }}"
     jetson_ip_wifi: "{{ lookup('env','JETSON_IP') }}"
     k3s_app: "{{ lookup('env', 'K3S_APP_PATH') | default('/data/orin/git/animal-counting/k3s', true) }}"
-    # FileBrowser configuration
-    filebrowser_port: "{{ lookup('env', 'FILEBROWSER_PORT') | default('80', true) }}"
-    filebrowser_base_url: "{{ lookup('env', 'FILEBROWSER_BASE_URL') | default('/', true) }}"
-    filebrowser_cache_dir: "{{ lookup('env', 'FILEBROWSER_CACHE_DIR') | default('/data/tmp', true) }}"
-    filebrowser_database: "{{ lookup('env', 'FILEBROWSER_DATABASE') | default('/data/database.db', true) }}"
-    filebrowser_srv_path: "{{ lookup('env', 'FILEBROWSER_SRV_PATH') | default('/srv', true) }}"
-    filebrowser_admin_username: "{{ lookup('env', 'FILEBROWSER_ADMIN_USERNAME') | default('admin', true) }}"
-    filebrowser_admin_password: "{{ lookup('env', 'FILEBROWSER_ADMIN_PASSWORD') | default('admin', true) }}"
-    filebrowser_image: "{{ lookup('env', 'FILEBROWSER_IMAGE') | default('ghcr.io/gtsteffaniak/filebrowser:stable', true) }}"
-    filebrowser_config_path: "{{ lookup('env', 'FILEBROWSER_CONFIG_PATH') | default('/data/orin/git/animal-counting/config/filebrowser/', true) }}"
   tags: always
 
 - name: Pull Docker image
@@ -90,16 +80,6 @@
   become: yes
   tags: always
 
-- name: Create config files filebrowser directory on Jetson
-  file:
-    path: "{{ filebrowser_config_path }}"
-    state: directory
-    mode: '0775'
-    owner: "{{ ansible_user }}"
-    group: "{{ ansible_user }}"
-  become: yes
-  tags: always
-
 - name: Render namespace template
   template:
     src: ../../../k3s/templates/countingapp-ns.j2
@@ -142,27 +122,6 @@
   become: yes
   tags: service
 
-- name: Render filebrowser configmap template
-  template:
-    src: ../../../k3s/templates/filebrowser-cmap.j2
-    dest: "{{ k3s_app }}/filebrowser-cmap.yaml"
-  become: yes
-  tags: filebrowser
-
-- name: Render filebrowser deployment template
-  template:
-    src: ../../../k3s/templates/filebrowser-dep.j2
-    dest: "{{ k3s_app }}/filebrowser-dep.yaml"
-  become: yes
-  tags: filebrowser
-
-- name: Render filebrowser secret template
-  template:
-    src: ../../../k3s/templates/filebrowser-sct.j2
-    dest: "{{ k3s_app }}/filebrowser-sct.yaml"
-  become: yes
-  tags: filebrowser
-
 - name: Render cronvideo template
   template:
     src: ../../../k3s/templates/cronvideo-dep.j2
@@ -203,24 +162,6 @@
     k3s kubectl apply -f {{ k3s_app }}/countingapp-svc.yaml
   become: yes
   tags: service
-
-- name: Deploy filebrowser configmap using kubectl
-  command: >
-    k3s kubectl apply -f {{ k3s_app }}/filebrowser-cmap.yaml
-  become: yes
-  tags: filebrowser
-
-- name: Deploy filebrowser secret using kubectl
-  command: >
-    k3s kubectl apply -f {{ k3s_app }}/filebrowser-sct.yaml
-  become: yes
-  tags: filebrowser
-
-- name: Deploy filebrowser deployment using kubectl
-  command: >
-    k3s kubectl apply -f {{ k3s_app }}/filebrowser-dep.yaml
-  become: yes
-  tags: filebrowser
 
 - name: Deploy video compress cronjob using kubectl
   command: >
