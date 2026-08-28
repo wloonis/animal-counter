@@ -110,17 +110,9 @@ class InferThread(threading.Thread):
                     logger.info(f"------->No Frame; Value Status: {shared_state.status}")
                     break
 
-                TOP_IGNORE = settings.TOP_IGNORE
-                BOTTOM_IGNORE = settings.BOTTOM_IGNORE
-
-                h, w = image_raw.shape[:2]
-
-                frame_roi = image_raw[TOP_IGNORE:h-BOTTOM_IGNORE, :]
-                y_offset = TOP_IGNORE
-
                 if shared_state.status in [1,3]:
                     time_start = time.time()
-                    output, use_time, origin_h, origin_w, preproc_time, r_scale, tx1, ty1 = self.yolo.infer(frame_roi)
+                    output, use_time, origin_h, origin_w, preproc_time, r_scale, tx1, ty1 = self.yolo.infer(image_raw)
                     time_end = time.time()
 
                     if logger.isEnabledFor(logging.DEBUG):
