@@ -7,3 +7,11 @@ Task 6: read per-model input config + output_fps at startup, plumb to threads �
 Task 7: input-source precedence in cli.py (CLI > per-model > env) — 1a3454b
 Task 8: document per-model input keys + output_fps in IPC_CONTRACT.md — d8da492
 Task 9: unit tests for resolvers + FrameSource + watcher guard — 89f2605
+Task 1: remove pre-inference TOP_IGNORE/BOTTOM_IGNORE crop in infer_thread.py — 4ef5a2b
+Task 2: remove y_offset from results tuple in infer_thread.py — d70e900
+Task 3 & 4: drop y_offset from display_thread.py tuple unpack + box offset — c033f94
+Task 5: remove TOP_IGNORE/BOTTOM_IGNORE from settings.py — 96527f6
+Task 6: remove TOP_IGNORE/BOTTOM_IGNORE from .env.example — c5c6750
+Task 7: remove TOP_IGNORE/BOTTOM_IGNORE docs row + migration note to MASK_ZONES — 79e9662
+Task 8: replace TOP_IGNORE/BOTTOM_IGNORE ref with MASK_ZONES pointer in 05_counting_pipeline.md — 7998def
+Task 9: verify IPC_CONTRACT.md has no TOP_IGNORE/BOTTOM_IGNORE refs (none found, no edit) — 7998def

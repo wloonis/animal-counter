@@ -371,7 +371,7 @@ these parameters **depend on the installation** and must be verified/adjusted
 on site:
 
 - `OFFSET_PERCENT_COUNTING_LINE`: line position vs installation.
-- `TOP_IGNORE` / `BOTTOM_IGNORE`: regions to ignore (camera framing).
+- `MASK_ZONES` (BL-87): regions to ignore (normalized rects, per-model via `/conf/runtime-settings.json`, editable from the companion UI) — replaces the former `TOP_IGNORE`/`BOTTOM_IGNORE` band crop. See `docs/04_configuration.md`.
 - `PIG_CONFIDENCE_THRESHOLD`: lighting / distance / detection conditions.
 
 ### 9.2 Long-duration camera mode (24/7) — memory
