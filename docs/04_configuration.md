@@ -86,8 +86,9 @@ atomically (tmp + `os.replace`) so the companion's `GET /api/snapshot`
 | `PIG_CONFIDENCE_THRESHOLD_START_VIDEO` | 0.8 | Higher threshold for the first frames of a recording |
 | `CONF_THRESH` | 0.5 | YOLO raw confidence (pre-tracker) |
 | `IOU_THRESHOLD` | 0.45 | YOLO NMS IoU |
-| `TOP_IGNORE` / `BOTTOM_IGNORE` | 100 / 50 | Ignore detections in the top/bottom bands (px) |
 | `DRAW_TRACKING` | `False` | Draw tracking boxes/IDs on the output |
+
+> **Migration (BL-94):** the old fixed top/bottom band pixel crops were removed. Use `MASK_ZONES` below (normalized rects) — e.g. `{x:0,y:0,w:1,h:100/H}` for the top band, `{x:0,y:(H-50)/H,w:1,h:50/H}` for the bottom band — editable from the companion UI (BL-88).
 | `CENTROID_TRACKING` / `BOX_TRACKING` | True / True | What to draw when `DRAW_TRACKING=True` |
 | `MASK_ZONES` | `[]` | **(BL-87)** normalized axis-aligned exclusion rects `{x,y,w,h}` in `[0..1]`; detections whose centroid falls inside any rect are dropped before tracking (no track → no count). Default `[]` = no-op |
 | `DRAW_MASK_ZONES` | `True` | **(BL-87)** draw a semi-transparent overlay of the `mask_zones` rects (independent of `DRAW_TRACKING`) |
