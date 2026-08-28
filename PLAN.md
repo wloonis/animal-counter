@@ -32,8 +32,8 @@ Remove the obsolete pre-inference `TOP_IGNORE`/`BOTTOM_IGNORE` crop in `infer_th
 - [x] Task 5: EDIT `app/src/settings.py` — delete lines 55-56 (`self.TOP_IGNORE = ...` and `self.BOTTOM_IGNORE = ...`).
 - [x] Task 6: EDIT `app/.env.example` — delete lines 51-52 (`TOP_IGNORE=100 ...` and `BOTTOM_IGNORE=50 ...`).
 - [x] Task 7: EDIT `docs/04_configuration.md` — remove the `TOP_IGNORE` / `BOTTOM_IGNORE` row (line 89); add a short note (e.g. under the counting/detection section) that top/bottom band masking is now done via `MASK_ZONES` (BL-87, normalized rects) and the companion UI, with a cross-reference to the existing `MASK_ZONES` row already present in this file.
-- [ ] Task 8: EDIT `docs/05_counting_pipeline.md` — remove the `TOP_IGNORE` / `BOTTOM_IGNORE` bullet (line 374); replace/augment with a pointer to `mask_zones` for the band-ignoring use case.
-- [ ] Task 9: VERIFY `docs/IPC_CONTRACT.md` — confirm no `TOP_IGNORE`/`BOTTOM_IGNORE` references (grep during clarify found none; `mask_zones` is already documented at lines 187-188, 222-239). No edit expected; if any stray reference is found, remove it.
+- [x] Task 8: EDIT `docs/05_counting_pipeline.md` — remove the `TOP_IGNORE` / `BOTTOM_IGNORE` bullet (line 374); replace/augment with a pointer to `mask_zones` for the band-ignoring use case.
+- [x] Task 9: VERIFY `docs/IPC_CONTRACT.md` — confirm no `TOP_IGNORE`/`BOTTOM_IGNORE` references (grep during clarify found none; `mask_zones` is already documented at lines 187-188, 222-239). No edit expected; if any stray reference is found, remove it.
 
 ## Documentation Impact
 - `docs/04_configuration.md` — the env-var table row for `TOP_IGNORE`/`BOTTOM_IGNORE` goes stale (removed in Task 7); add migration pointer to `mask_zones`.
