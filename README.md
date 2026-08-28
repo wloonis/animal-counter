@@ -1,17 +1,33 @@
 # Animal Counter
 
-Real-time animal (pig) counting on NVIDIA Jetson Orin, using a YOLO model
-exported to ONNX and compiled into a TensorRT engine, tracked with OC-SORT,
+Real-time **multi-species animal counting** on NVIDIA Jetson Orin, using a YOLO
+model exported to ONNX and compiled into a TensorRT engine, tracked with OC-SORT,
 and deployed on a single-node K3s cluster via Ansible.
 
-The system points a **fixed camera** at a counting line, tracks every pig that
-crosses it, and maintains a **net bidirectional counter** (+1 right→left,
-−1 left→right). It auto-records a video clip whenever a pig is detected and
-stops after ~2 minutes with no detection. It is normally operated daily — powered on in the morning (counter starts at 0),
+The system points a **fixed camera** at a counting line, tracks every animal
+that crosses it, and maintains a **net bidirectional counter** (+1 in the +1
+direction, −1 the other way — the direction is configurable, BL-92). It
+auto-records a video clip whenever an animal is detected and stops after ~2
+minutes with no detection. It is normally operated daily — powered on in the morning (counter starts at 0),
 used through the day across several animal-moving iterations, and powered off
 (hard power cut) in the evening — **but it can also run continuously 24/7** (the
 counter then accumulates across days; reset it on demand from the web UI when
 starting a new batch).
+
+> **Species — not exhaustive.** The pipeline is model-driven: count any species
+> your trained YOLO model can detect by selecting its class ids at deploy time
+> (`counting_class_ids`, BL-78). To date the **trials have covered pigs and
+> caprines (sheep, goats)** — a single 3-class model (`sheep_goat_template`,
+> with a dog class to reject farm dogs) is in production for the caprine use
+> case. Other species are supported by the architecture but have **not been
+> tested**.
+>
+> **Drone / RTSP stream input — experimental, not yet realized in production.**
+> The input layer accepts a per-model `STREAM` source (RTSP URL, e.g. a drone's
+> 720p feed, BL-93) alongside the default `CAMERA` (USB webcam) and `FILE`
+> (validation). The code path is in place but the **drone use case has not been
+> deployed / validated end-to-end** — it is an experimental capability. The
+> legacy pig deployment uses `CAMERA` (`/dev/video0`).
 
 <p align="center">
   <img src="docs/assets/frame_count.jpg" alt="Pig counting in action: fixed camera, yellow vertical counting line, and the live net bidirectional counter overlay" width="640">
@@ -353,6 +369,23 @@ Android companion app (sister repo) writes these settings remotely:
 Contract for the `/conf` + `/files` files shared with the companion:
 [`docs/IPC_CONTRACT.md`](docs/IPC_CONTRACT.md) (kept byte-identical in both
 repos).
+
+### Per-model build + startup config (not hot-reloaded)
+
+Two things are **not** hot-reloaded — they are read at build/startup time:
+
+- **Build precision (FP16/FP32) + imgsz** — `app/build-config.json` selects the
+  TensorRT engine precision and inference size per model (keyed by `MODEL_NAME`):
+  `fp16` for imgsz=1280 models (~13–15 FPS on Orin Nano, e.g. the caprine model),
+  `fp32` for the legacy 640 pig model (30 FPS). The engine artifact is named
+  after the dataset dir (`basename(TRAINING_PROJECT_DIR)`, fallback `my_model`).
+  See `docs/04_configuration.md`.
+- **Input source (BL-93, experimental)** — `input_source` (`CAMERA` / `STREAM` /
+  `FILE`), `input_url` (RTSP), `input_device`, `input_width`/`input_height`,
+  `output_fps` live per-model in `/conf/runtime-settings.json` but are read **once
+  at startup**. Switching the physical sensor (camera ↔ drone) is a restart, not
+  a hot-swap. The `STREAM`/drone path is **experimental and not yet realized in
+  production** — see the note above.
 
 ---
 
