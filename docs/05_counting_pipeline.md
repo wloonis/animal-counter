@@ -372,6 +372,7 @@ on site:
 
 - `OFFSET_PERCENT_COUNTING_LINE`: line position vs installation.
 - `MASK_ZONES` (BL-87): regions to ignore (normalized rects, per-model via `/conf/runtime-settings.json`, editable from the companion UI) — replaces the former `TOP_IGNORE`/`BOTTOM_IGNORE` band crop. See `docs/04_configuration.md`.
+- `COUNTING_DIRECTION_MODE` / `COUNTING_DIRECTION` (BL-92): the counting direction — `auto` (auto-detect the dominant crossing direction per run via a warm-up of N=3 crossings or T=10s, then lock) or `manual` (operator-set `+1` direction, validated vs the active `counting_line_orientation`). A **global** runtime setting (top-level, not per-model), editable from the companion UI. A change resets the counter. See `docs/04_configuration.md`.
 - `PIG_CONFIDENCE_THRESHOLD`: lighting / distance / detection conditions.
 
 ### 9.2 Long-duration camera mode (24/7) — memory

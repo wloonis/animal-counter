@@ -71,6 +71,17 @@ on Roboflow** — the repo does not ship a model. `ansible/playbooks/model/build
 4. **Compile the TensorRT engine on the Jetson** — the container's `build-engine`
    mode runs `trtexec` to compile `model/my_model.onnx` → `model/my_model.engine`
    (the engine `serve` mode loads at runtime; see `app/src/core/inference.py`).
+   The build precision + imgsz are **per-model** via `app/build-config.json`
+   (keyed by `MODEL_NAME`): `fp16` for imgsz=1280 models (~15 FPS on Orin
+   Nano), `fp32` for legacy 640 pig models (30 FPS). The model artifact is
+   named after the dataset dir (`model_name = basename(TRAINING_PROJECT_DIR)`;
+   fallback `my_model`). See `docs/04_configuration.md`.
+5. **Per-model input source** (BL-93, startup-only) — `input_source`
+   (`CAMERA`/`STREAM`/`FILE`), `input_url` (RTSP, drone 720p), `input_device`,
+   `input_width`/`input_height`, `output_fps` are read **once at startup** from
+   the active model's section in `/conf/runtime-settings.json` (falling back to
+   env defaults). Switching the physical sensor (camera ↔ drone) is a restart,
+   not a hot-swap. See `docs/04_configuration.md` + `docs/IPC_CONTRACT.md`.
 
 > Prerequisite: the operator creates/versions a dataset on Roboflow and puts
 > the `TRAINING_ROBOFLOW_*` values (including the Roboflow API key) in
