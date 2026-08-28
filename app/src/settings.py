@@ -50,11 +50,6 @@ class Settings:
         self.CONF_THRESH = float(os.getenv("CONF_THRESH", 0.5))
         self.IOU_THRESHOLD = float(os.getenv("IOU_THRESHOLD", 0.45))
 
-        # Inference ROI: number of pixels ignored at the top/bottom of the frame
-        # (the model only runs on the cropped vertical band)
-        self.TOP_IGNORE = int(os.getenv("TOP_IGNORE", 100))
-        self.BOTTOM_IGNORE = int(os.getenv("BOTTOM_IGNORE", 50))
-
         # Input Source
         self.INPUT_SOURCE = os.getenv("INPUT_SOURCE", "CAMERA")
         self.VIDEO_PATH = os.getenv("VIDEO_PATH", "/dev/video0")
