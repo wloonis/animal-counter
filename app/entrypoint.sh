@@ -12,14 +12,11 @@ case "$MODE" in
 
   build-engine)
     echo "Building TensorRT engine..."
-    echo "Initializing GPU..."
 
-    python3 - <<EOF
-import torch
-torch.cuda.init()
-EOF
-
-    sleep 5
+    # NOTE: do NOT torch.cuda.init() here — on Jetson Orin Nano unified memory it
+    # carves out GPU device memory before trtexec starts, leaving trtexec only
+    # ~5-9 MB for tactics (needs 43+ MB) → "Engine set up failed". trtexec manages
+    # its own TensorRT/CUDA session; no torch pre-init is needed.
 
     # Model artifacts are named after the dataset dir (e.g. sheep_template,
     # mike). MODEL_NAME is injected by the build-engine k3s Job (rendered from
