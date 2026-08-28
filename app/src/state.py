@@ -26,9 +26,11 @@ these singletons from here so they all bind to the *same* object instances
 (no circular imports — this module imports nothing from the split modules).
 """
 
+import ast
 import json
 import logging
 import os
+import re
 import tempfile
 import threading
 
@@ -229,6 +231,64 @@ def load_classes_yaml():
         logger.warning("classes.yaml unreadable (%s): %s",
                         type(exc).__name__, exc)
         return None
+
+
+def read_onnx_class_names(onnx_path):
+    """BL-96 part (b): pure-stdlib read of the class names embedded in an
+    Ultralytics `.onnx` engine metadata (no `onnx` library dependency).
+
+    Ultralytics stores the class names as a UTF-8 dict-repr string inside the
+    ONNX protobuf (e.g. ``{0: 'human', 1: 'pig'}``). This helper scans the raw
+    binary for the first such dict-shaped substring, ``ast.literal_eval``-s it,
+    and returns the names ordered by dict key so the caller can compare with
+    the hand-written `classes.yaml` catalog.
+
+    Returns a tuple ``(nc, names_list)`` (``nc == len(names_list)``) on success;
+    returns ``None`` when the file is missing, the regex does not match, or
+    the literal_eval fails. Any error is logged at WARNING level and the
+    function returns ``None`` (fail-open): the caller then leaves
+    ``classes_drift`` at ``null`` (could not verify). Never raises.
+
+    Reused by the `start_counting` startup cross-check in main.py (Task 3).
+    """
+    try:
+        with open(onnx_path, "rb") as fh:
+            raw = fh.read()
+    except FileNotFoundError:
+        logger.info("onnx class-name cross-check: %s not found; "
+                    "classes_drift=null (could not verify)", onnx_path)
+        return None
+    except OSError as exc:
+        logger.warning("onnx class-name cross-check: cannot read %s "
+                       "(%s): %s; classes_drift=null", onnx_path,
+                       type(exc).__name__, exc)
+        return None
+    match = re.search(rb"\{[0-9]+: '[^']+'(, [0-9]+: '[^']+')*\}", raw)
+    if match is None:
+        logger.warning("onnx class-name cross-check: no names dict found "
+                       "in %s; classes_drift=null", onnx_path)
+        return None
+    try:
+        names_dict = ast.literal_eval(match.group(0).decode("utf-8", "replace"))
+    except (ValueError, SyntaxError) as exc:
+        logger.warning("onnx class-name cross-check: cannot parse names dict "
+                       "in %s (%s): %s; classes_drift=null", onnx_path,
+                       type(exc).__name__, exc)
+        return None
+    if not isinstance(names_dict, dict) or not names_dict:
+        logger.warning("onnx class-name cross-check: parsed names is not a "
+                       "non-empty dict (%r) in %s; classes_drift=null",
+                       names_dict, onnx_path)
+        return None
+    # Order by dict key (int class index) into a positional names list.
+    try:
+        ordered = [names_dict[k] for k in sorted(names_dict)]
+    except TypeError as exc:
+        logger.warning("onnx class-name cross-check: non-int key in names "
+                       "dict (%r) in %s (%s): %s; classes_drift=null",
+                       names_dict, onnx_path, type(exc).__name__, exc)
+        return None
+    return len(ordered), ordered
 
 
 def publish_model_classes_json(class_names, default_counting_class,
