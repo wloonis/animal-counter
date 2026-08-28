@@ -119,6 +119,61 @@
             - snapd.socket
           tags: optimize
 
+        # ---------------------------------------------------------------
+        # Suppress the desktop popup dialogs that appear on the LXDE
+        # autologin session:
+        #   - apport: "System program problem detected" (shown by
+        #     apport-gtk when /var/crash/*.crash reports exist +
+        #     /etc/default/apport enabled=1). nvargus-daemon and other
+        #     Jetson daemons occasionally segfault (known Argus stack
+        #     instability); these crashes are non-fatal (the daemon
+        #     restarts) but the popup is intrusive on a kiosk/prod box.
+        #   - update-notifier: "Updates available" (desktop autostart app
+        #     fed by the apt-daily timers). On a pinned Jetson L4T image
+        #     apt upgrades are done explicitly during deploy, never via
+        #     the desktop popup.
+        # ---------------------------------------------------------------
+        - name: Disable + mask apport (crash-report popups)
+          systemd:
+            name: apport
+            enabled: no
+            state: stopped
+            masked: yes
+          ignore_errors: yes
+          tags: optimize
+
+        - name: Disable apport via /etc/default/apport (apport-gtk guard)
+          copy:
+            dest: /etc/default/apport
+            content: "enabled=0\n"
+            mode: '0644'
+          tags: optimize
+
+        - name: Clean stale crash reports (so the dialog does not reappear post-deploy)
+          shell: rm -f /var/crash/*.crash
+          args:
+            removes: /var/crash
+          changed_when: false
+          tags: optimize
+
+        - name: Disable apt-daily timers (no background "updates available" checks)
+          systemd:
+            name: "{{ item }}"
+            enabled: no
+            state: stopped
+          loop:
+            - apt-daily.timer
+            - apt-daily-upgrade.timer
+          ignore_errors: yes
+          tags: optimize
+
+        - name: Mask update-notifier desktop autostart (suppress "updates available" popup)
+          file:
+            path: /etc/xdg/autostart/update-notifier.desktop
+            state: absent
+          ignore_errors: yes
+          tags: optimize
+
         - name: Set Jetson to MAXN mode (Super Orin)
           command: sudo nvpmodel -m 2
           tags: optimize
