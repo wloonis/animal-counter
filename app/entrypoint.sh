@@ -54,6 +54,109 @@ PYEOF
       $EXTRA_FLAGS \
       --saveEngine="/app/model/${MODEL_FILE}.engine"
 
+    # BL-96 part (b): regenerate a STAGED <MODEL_FILE>.classes.yaml from the
+    # freshly-compiled .onnx (the .onnx names are the source of truth for what
+    # the engine outputs). This does NOT overwrite the active
+    # /app/model/classes.yaml — an operator/ansible `cp` activates it. Pure
+    # stdlib (re + ast), same grep technique as state.read_onnx_class_names()
+    # and the validate script's cross-check. Best-effort: any error logs to
+    # stderr and the heredoc still exits 0 (the engine already compiled — the
+    # staged yaml is not a build gate; set -e-safe).
+    python3 - <<'PYEOF'
+import ast
+import os
+import re
+import sys
+
+model_file = os.environ.get("MODEL_FILE", "my_model")
+onnx_path = os.path.join("/app/model", model_file + ".onnx")
+staged_path = os.path.join("/app/model", model_file + ".classes.yaml")
+tmp_path = os.path.join("/app/model", "." + model_file + ".classes.yaml.tmp")
+
+try:
+    with open(onnx_path, "rb") as fh:
+        raw = fh.read()
+except OSError as exc:
+    sys.stderr.write(
+        "WARN staged-classes.yaml: cannot read %s (%s); skipping\n"
+        % (onnx_path, type(exc).__name__))
+    sys.exit(0)
+
+match = re.search(rb"\{[0-9]+: '[^']+'(, [0-9]+: '[^']+')*\}", raw)
+if match is None:
+    sys.stderr.write(
+        "WARN staged-classes.yaml: no names dict found in %s; skipping\n"
+        % onnx_path)
+    sys.exit(0)
+try:
+    names_dict = ast.literal_eval(match.group(0).decode("utf-8", "replace"))
+except (ValueError, SyntaxError) as exc:
+    sys.stderr.write(
+        "WARN staged-classes.yaml: cannot parse names dict in %s (%s); skipping\n"
+        % (onnx_path, type(exc).__name__))
+    sys.exit(0)
+if not isinstance(names_dict, dict) or not names_dict:
+    sys.stderr.write(
+        "WARN staged-classes.yaml: parsed names is not a non-empty dict in %s; skipping\n"
+        % onnx_path)
+    sys.exit(0)
+
+nc = len(names_dict)
+names_list = [names_dict[i] for i in range(nc)]
+
+# Resolve + clamp the default counting class to [0, nc). Non-fatal: a bad
+# value logs a WARN and is clamped (the engine already compiled — must NOT
+# abort the build; mirrors build_model.yml's range guard but non-fatal).
+try:
+    default_counting_class = int(
+        os.environ.get("TRAINING_DEFAULT_COUNTING_CLASS", "1"))
+except (TypeError, ValueError):
+    sys.stderr.write(
+        "WARN staged-classes.yaml: TRAINING_DEFAULT_COUNTING_CLASS unparseable; "
+        "defaulting to 1\n")
+    default_counting_class = 1
+if default_counting_class < 0 or default_counting_class >= nc:
+    clamped = max(0, min(nc - 1, default_counting_class))
+    sys.stderr.write(
+        "WARN staged-classes.yaml: TRAINING_DEFAULT_COUNTING_CLASS=%d out of "
+        "range [0, %d); clamped to %d\n"
+        % (default_counting_class, nc, clamped))
+    default_counting_class = clamped
+
+# Hand-write a minimal YAML (no PyYAML dependency). names is a YAML list.
+lines = []
+lines.append("model_name: %s" % model_file)
+lines.append("model_version: %s" % model_file)
+lines.append("nc: %d" % nc)
+lines.append("names:")
+for name in names_list:
+    # Quote to be safe against names containing ':' or leading '-'.
+    escaped = str(name).replace("'", "''")
+    lines.append("  - '%s'" % escaped)
+lines.append("default_counting_class: %d" % default_counting_class)
+lines.append("")
+body = "\n".join(lines)
+
+# Atomic write: temp + os.replace. Never raises past here on the happy path.
+try:
+    with open(tmp_path, "w") as fh:
+        fh.write(body)
+    os.replace(tmp_path, staged_path)
+except OSError as exc:
+    sys.stderr.write(
+        "WARN staged-classes.yaml: cannot write %s (%s); skipping\n"
+        % (staged_path, type(exc).__name__))
+    # Clean up the temp file if it lingers.
+    try:
+        os.remove(tmp_path)
+    except OSError:
+        pass
+    sys.exit(0)
+
+print("STAGED %s written (nc=%d)" % (staged_path, nc))
+sys.exit(0)
+PYEOF
+
     echo "Engine build complete"
     ;;
 
