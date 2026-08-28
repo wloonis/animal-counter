@@ -292,17 +292,30 @@ def read_onnx_class_names(onnx_path):
 
 
 def publish_model_classes_json(class_names, default_counting_class,
-                                model_version, model_name=None):
+                                model_version, model_name=None,
+                                classes_drift=None):
     """Atomically write the read-only /conf/model-classes.json mirror (BL-78).
 
-    Schema: ``{model_version, model_name, nc, names, default_counting_class}``.
-    ``model_name`` (BL-89) identifies the active model so the companion can
-    select the matching per-model runtime-settings section (mask_zones /
-    counting line / counting_class_ids). The file is written to a temp path
-    then ``os.replace``-d into place so the companion never observes a
-    half-written file. Best-effort: any failure is logged at WARNING level
-    and the app continues counting (the companion simply won't see the
-    catalog until the next successful write). Never raises.
+    Schema: ``{model_version, model_name, nc, names, default_counting_class,
+    classes_drift}``. ``model_name`` (BL-89) identifies the active model so the
+    companion can select the matching per-model runtime-settings section
+    (mask_zones / counting line / counting_class_ids). The file is written to a
+    temp path then ``os.replace``-d into place so the companion never observes
+    a half-written file. Best-effort: any failure is logged at WARNING level
+    and the app continues counting (the companion simply won't see the catalog
+    until the next successful write). Never raises.
+
+    ``classes_drift`` (BL-96 part b) is a 3-state field serialized as JSON
+    ``true`` / ``false`` / ``null``:
+      - ``False`` — the startup cross-check ran and the classes.yaml
+        nc/names MATCH the deployed ``.onnx`` names (no drift);
+      - ``True``  — the cross-check ran and the classes.yaml nc/names DIFFER
+        from the deployed ``.onnx`` names (drift detected, WARNING logged);
+      - ``None``  — could not verify (the ``.onnx`` is missing, the catalog
+        is absent/legacy, or the cross-check raised); serialized as JSON
+        ``null``.
+    The default ``None`` keeps this call backward-compatible with the single
+    existing caller that does not yet pass the kwarg.
     """
     payload = {
         "model_version": model_version,
@@ -310,6 +323,7 @@ def publish_model_classes_json(class_names, default_counting_class,
         "nc": len(class_names),
         "names": list(class_names),
         "default_counting_class": int(default_counting_class),
+        "classes_drift": classes_drift,
     }
     try:
         os.makedirs(os.path.dirname(MODEL_CLASSES_PATH), exist_ok=True)
