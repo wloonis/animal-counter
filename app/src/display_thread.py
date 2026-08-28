@@ -463,7 +463,7 @@ class DisplayThread(threading.Thread):
 
             # Always retrieve img FIRST
             if len(self.results) > 1:
-                img, boxes_pp, output, use_time, origin_h, origin_w, frame_counter, r_scale, tx1, ty1, y_offset, input_h, input_w = self.results
+                img, boxes_pp, output, use_time, origin_h, origin_w, frame_counter, r_scale, tx1, ty1, input_h, input_w = self.results
             else:
                 img = self.results[0]
 
@@ -551,9 +551,6 @@ class DisplayThread(threading.Thread):
                             input_h,
                             input_w
                         )
-
-                        box[1] += y_offset
-                        box[3] += y_offset
 
                         boxes_scaled.append(box)
 
