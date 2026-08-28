@@ -210,11 +210,16 @@ def start(input_source, video_path):
             shared_state.default_counting_class = model_classes.get(
                 "default_counting_class", 1)
             shared_state.model_version = model_classes.get("model_version")
+            # BL-96 part (b): thread the once-per-process classes_drift
+            # (cached on shared_state) into the IPC payload so the companion
+            # can distinguish "checked OK" (false) / "drifted" (true) /
+            # "could not verify" (null).
             publish_model_classes_json(
                 shared_state.class_names,
                 shared_state.default_counting_class,
                 shared_state.model_version,
                 model_name,
+                classes_drift=shared_state.classes_drift,
             )
 
         if shared_state.infer_thread is None or (shared_state.infer_thread and not shared_state.infer_thread.is_alive()):
