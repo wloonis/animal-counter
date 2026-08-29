@@ -1,184 +1,80 @@
 # Animal Counter
 
-Real-time **multi-species animal counting** on NVIDIA Jetson Orin, using a YOLO
-model exported to ONNX and compiled into a TensorRT engine, tracked with OC-SORT,
-and deployed on a single-node K3s cluster via Ansible.
-
-The system points a **fixed camera** at a counting line, tracks every animal
-that crosses it, and maintains a **net bidirectional counter** (+1 in the +1
-direction, −1 the other way — the direction is configurable, BL-92). It
-auto-records a video clip whenever an animal is detected and stops after ~2
-minutes with no detection. It is normally operated daily — powered on in the morning (counter starts at 0),
-used through the day across several animal-moving iterations, and powered off
-(hard power cut) in the evening — **but it can also run continuously 24/7** (the
-counter then accumulates across days; reset it on demand from the web UI when
-starting a new batch).
-
-> **Species — not exhaustive.** The pipeline is model-driven: count any species
-> your trained YOLO model can detect by selecting its class ids at deploy time
-> (`counting_class_ids`, BL-78). To date the **trials have covered pigs and
-> caprines (sheep, goats)** — a single 3-class model (`sheep_goat_template`,
-> with a dog class to reject farm dogs) is in production for the caprine use
-> case. Other species are supported by the architecture but have **not been
-> tested**.
->
-> **Drone / RTSP stream input — experimental, not yet realized in production.**
-> The input layer accepts a per-model `STREAM` source (RTSP URL, e.g. a drone's
-> 720p feed, BL-93) alongside the default `CAMERA` (USB webcam) and `FILE`
-> (validation). The code path is in place but the **drone use case has not been
-> deployed / validated end-to-end** — it is an experimental capability. The
-> legacy pig deployment uses `CAMERA` (`/dev/video0`).
+Animal Counter is a real-time counting system for livestock. It watches a
+camera, detects each animal that crosses a counting line, and maintains a
+running total — **+1 one way, −1 the other** (the direction is configurable).
 
 <p align="center">
   <img src="docs/assets/frame_count.jpg" alt="Pig counting in action: fixed camera, yellow vertical counting line, and the live net bidirectional counter overlay" width="640">
 </p>
-<p align="center"><em>The app in action — YOLO/TensorRT detections, OC-SORT tracks, the yellow counting line, and the live net counter (+1 right→left, −1 left→right).</em></p>
+<p align="center"><em>The app in action — detections, tracks, the yellow counting line, and the live net counter (+1 right→left, −1 left→right).</em></p>
 
 > **Status:** counting logic validated on 30 reference videos (4/4 priority
 > defect videos pass, REID-SUPPRESS regression guard confirmed). See
 > [`docs/06_validation.md`](docs/06_validation.md).
 
----
+## How it works in 30 seconds
 
-## Table of contents
+- **Camera** — a fixed USB webcam watches the counting line.
+- **AI detection** — a vision model spots each animal in every frame.
+- **Tracking** — the system follows each animal across frames so it doesn't
+  double-count.
+- **Counting** — when an animal crosses the line, the counter goes +1 (one
+  direction) or −1 (the other); a video clip is recorded automatically and
+  stops after ~2 minutes with no detection.
 
-| Doc | What it covers |
-|-----|----------------|
-| [`docs/01_quickstart.md`](docs/01_quickstart.md) | 5-minute path from a flashed Jetson to a running app, **scripts-first** |
-| [`docs/02_setup.md`](docs/02_setup.md) | Flash JetPack, first boot, system preparation |
-| [`docs/03_deployment.md`](docs/03_deployment.md) | K3s + Ansible deployment (real playbooks & templates) |
-| [`docs/04_configuration.md`](docs/04_configuration.md) | App configuration (`.env`, `settings.py`, parameter table) |
-| [`docs/05_counting_pipeline.md`](docs/05_counting_pipeline.md) | Counting pipeline internals & anti-ID-switch guards |
-| [`docs/06_validation.md`](docs/06_validation.md) | Validation workflow (`validate_on_jetson.sh`, manifest, reports) |
-| [`docs/07_development_workflow.md`](docs/07_development_workflow.md) | Development workflow with `archon-jetson-dev` (CLARIFY → plan → validate → PR) |
-| [`docs/08_offline_image_transfer.md`](docs/08_offline_image_transfer.md) | Transfer a Docker image from a test Jetson to an offline production Jetson via the PC |
-| [`docs/11_counting_history.md`](docs/11_counting_history.md) | Persistent counting-session history (BL-68/71) — JSONL schema, compaction, disk guard (the HTTP **reader** lives in the sister repo; the shared-file contract is in `docs/IPC_CONTRACT.md`) |
-| [`docs/12_jetson_network_k3s_boot.md`](docs/12_jetson_network_k3s_boot.md) | Jetson networking & K3s boot (WiFi-only, no RTC, no ethernet cable) — why + how |
-| [`docs/13_rtc_install.md`](docs/13_rtc_install.md) | DS3231 RTC (HW-084) install + on-demand, durable time sync (BL-74) — the phone time push + companion live in the sister repo |
-| [`docs/14_troubleshooting.md`](docs/14_troubleshooting.md) | Troubleshooting |
-| [`docs/15_reset.md`](docs/15_reset.md) | Reset procedures |
-| [`docs/IPC_CONTRACT.md`](docs/IPC_CONTRACT.md) | **Authoritative** shared-file contract between this repo (countingapp) and the sister repo (companion) |
+## Who / contexts
 
-> **Sister repo:** the Android phone app + the Jetson host companion (HTTP bridge) live in
-> [`wloonis/animal-counter-companion`](https://github.com/wloonis/animal-counter-companion).
-> They were extracted at tag `v1.1.0`. The two repos talk only via the shared files
-> documented in [`docs/IPC_CONTRACT.md`](docs/IPC_CONTRACT.md): **`/files`**
-> (hostPath `/data/orin/files`) for **data** (`counting-history.jsonl`, mp4 clips,
-> dataset) and **`/conf`** (hostPath `/data/orin/conf`) for **config/contrôle**
-> (`runtime-settings.json`, `.arret_requested` — BL-79 split).
+> **Species — not exhaustive.** The pipeline is model-driven: count any species
+> your trained model can detect by selecting its class ids at deploy time
+> (`counting_class_ids`). To date the **trials have covered pigs and caprines
+> (sheep, goats)** — a single 3-class model (`sheep_goat_template`, with a dog
+> class to reject farm dogs) is in production for the caprine use case. Other
+> species are supported by the architecture but have **not been tested**.
+>
+> **Drone / RTSP stream input — experimental, not yet realized in production.**
+> The input layer accepts a per-model `STREAM` source (RTSP URL, e.g. a drone's
+> 720p feed) alongside the default `CAMERA` (USB webcam) and `FILE`
+> (validation). The code path is in place but the **drone use case has not been
+> deployed / validated end-to-end** — it is an experimental capability. The
+> legacy pig deployment uses `CAMERA` (`/dev/video0`).
 
----
+The app is normally operated **daily** — powered on in the morning (counter
+starts at 0), used through the day across several animal-moving iterations, and
+powered off (hard power cut) in the evening. **It can also run continuously
+24/7** — the counter then accumulates across days; reset it on demand from the
+on-screen UI when starting a new batch.
 
-## Repository layout
+## Two paths
 
-```
-animal-counter/
-├── app/                     # The counting application (container image)
-│   ├── Dockerfile           # Base: dustynv/l4t-pytorch:r36.4.0 (JetPack 6.2)
-│   ├── entrypoint.sh        # Modes: build-engine | serve | debug | test | validate
-│   ├── requirements.txt     # pycuda, trackers==2.4.0 (OC-SORT), flask, python-dotenv
-│   ├── .env / .env.example  # Runtime config (.env is gitignored; .env.example is versioned)
-│   ├── model/               # my_model.{pt,onnx,engine}  (engine built by trtexec)
-│   └── src/
-│       ├── main.py           # Thin entry point: start()/stop() orchestration + re-exports; `if __name__: cli.main()` (BL-29)
-│       ├── state.py          # Module-level singletons: shared_state, logger, _IOU_METRICS (BL-29)
-│       ├── infer_thread.py   # InferThread — capture → TensorRT inference → frame_queue (BL-29)
-│       ├── display_thread.py # DisplayThread — tracking → counting → recording → render (BL-29)
-│       ├── validate.py       # write_result_json (validation mode, RESULT_JSON_PATH) (BL-29)
-│       ├── cli.py            # argparse + signal handlers + serve/validate loop + Jetson poweroff (BL-29)
-│       ├── settings.py       # Config loader (reads app/.env, defaults documented inline)
-│       ├── core/
-│       │   ├── inference.py   # TensorRT inference + pre/post-processing
-│       │   ├── tracking.py    # OC-SORT tracker integration, letterbox undo, drawing
-│       │   └── counting.py    # Counting line logic + anti-ID-switch guards
-│       ├── ui/rendering.py    # Overlay & UI drawing
-│       └── utils/             # frame_source, shared_state, timer_fps
-├── scripts/                 # ⭐ Central automation hub (the starting point for humans)
-│   ├── prepare_jetson.sh            # Discover Jetson + deploy the app (one-shot)
-│   ├── training_model.sh            # Discover Jetson + build/train a model
-│   ├── validate_on_jetson.sh        # Validate counting on reference videos (dev loop)
-│   ├── jetson_discover.sh           # nmap scan + SSH credential test → JETSON_IP
-│   ├── jetson_first_access.sh       # SSH connectivity check
-│   ├── install_ansible.sh           # Install Ansible on the control machine
-│   └── install_splash_screen_standalone.sh
-├── ansible/                 # Ansible automation (deploy + system + model)
-│   ├── inventory/jetsons.yml        # Single host, env-driven (JETSON_IP/USER/PASSWORD)
-│   ├── group_vars/all.yml           # Defaults (paths…)
-│   └── playbooks/
-│       ├── app/   deploy_app.yml · deploy_countingapp.yml · build_countingapp.yml
-│       ├── model/ build_model.yml
-│       └── system/ prepare_system · install_k3s · hotspot · splash · lxde · network_ssh …
-├── k3s/templates/           # Jinja2 K8s manifests (the REAL prod manifests, applied by Ansible)
-│   ├── countingapp-dep.j2          # DaemonSet (the app, pausable for validation)
-│   ├── countingapp-svc.j2 · countingapp-ns.j2
-│   ├── countingapp-validate.j2 · countingapp-test.j2 · build-engine-batch.j2
-│   └── cronvideo-dep.j2            # Rolling video compression + cleanup
-├── validation/              # Reference videos + expected-count manifest
-│   ├── config.json                  # reference_video, tolerance, max_iterations, mode
-│   ├── expected_counts.json         # Manifest: videos{} + disabled{}
-│   └── videos/                      # validation-<seq>-#<count>.mp4 (gitignored except 1 reference)
-├── docs/                    # This documentation set
-└── tests/                   # pytest unit tests (counting, inference, tracking, rendering)
-```
+- **Operator?** → read [Day-to-day (operator)](#day-to-day-operator) for the
+  power-on → count → power-off workflow.
+- **Developer / integrator?** → read [Getting started (developer)](#getting-started-developer)
+  for the deploy / validate / train ladder, then dip into
+  [Configuration](#configuration) and [Under the hood](#under-the-hood) as
+  needed.
 
-> The real manifests are the Jinja2 templates in `k3s/templates/`, rendered and
-> applied by `ansible/playbooks/app/deploy_countingapp.yml`. See
-> [`docs/03_deployment.md`](docs/03_deployment.md).
+## Day-to-day (operator)
 
----
-
-## How the app runs
-
-The container `entrypoint.sh` takes a **mode** argument:
-
-| Mode | What it does |
-|------|--------------|
-| `build-engine` | Compile `model/my_model.onnx` → `my_model.engine` via `trtexec` |
-| `serve` | Run `python3 src/main.py` — on-screen X11/cv2 UI + inference/display threads (production) |
-| `validate` | Run `main.py --input=FILE --file=$VALIDATE_VIDEO` and write `result.json` (used by the validation job) |
-| `test` | Run `main.py` on a local test video with tracking drawn |
-| `debug` | `tail -f /dev/null` — keep the container alive for `kubectl exec` |
-
-In production the pod runs in `serve` mode. The operator controls the app via
-the **on-screen X11/cv2 window** ("Counter") on the Jetson's attached display
-— clickable buttons (play/pause/stop, learning, auto, reset, Arrêt) drive
-**start/stop** counting, and the live net counter is drawn over the feed. There
-is no web UI; the `countingapp-svc` port `31501` is declared in the manifest but
-the app does not serve HTTP. Two background threads do the work:
-**InferThread** (`infer_thread.py` — capture → TensorRT inference → queue) and
-**DisplayThread** (`display_thread.py` — tracking → counting → recording →
-render). Since BL-29, `main.py` is a thin entry point that imports them and
-delegates the CLI/serve/validate loop to `cli.py` (singletons in `state.py`,
-validation output in `validate.py`). See
-[`docs/05_counting_pipeline.md`](docs/05_counting_pipeline.md).
-
----
-
-## Operator workflow (daily, or 24/7)
-
-1. **Power on** the Jetson in the morning → K3s starts → the `countingapp`
-   DaemonSet pod boots → the web app is ready (counter = 0).
-2. Open the app on the Jetson's attached screen (the on-screen X11/cv2 window),
-   confirm the camera
-   feed and the counting line are visible.
-3. Move a series of pigs (typically 15–25) past the camera; the counter
-   increments for each pig that crosses the line right→left (+1) and
+1. **Power on** the Jetson in the morning → the counting app starts → the
+   counter is 0.
+2. Open the app on the Jetson's attached screen (the on-screen window),
+   confirm the camera feed and the counting line are visible.
+3. Move a series of animals (typically 15–25) past the camera; the counter
+   increments for each animal that crosses the line right→left (+1) and
    decrements for a left→right return (−1). A video clip is recorded each time
-   a pig is detected and stops after ~2 minutes with no detection.
+   an animal is detected and stops after ~2 minutes with no detection.
 4. Repeat the series through the day — the counter accumulates across
    iterations and across recordings.
 5. **Read the counter** at the end of the day, then **power off** the Jetson
    (hard cut).
 
-For **24/7 operation**, skip the daily power-off: the Jetson and the
-`countingapp` pod stay up, and the counter accumulates continuously across
-days. Reset it on demand from the web UI when starting a new batch. (A pod
-restart, however, resets the counter to 0 — it is not persisted across
-restarts.)
+For **24/7 operation**, skip the daily power-off: the Jetson and the app stay
+up, and the counter accumulates continuously across days. Reset it on demand
+from the on-screen UI when starting a new batch. (A restart, however, resets
+the counter to 0 — it is not persisted across restarts.)
 
----
-
-## Onboarding for a new developer
+## Getting started (developer)
 
 The `scripts/` directory is the central hub. Two flows cover everything.
 
@@ -302,22 +198,7 @@ Two dataset sources (`TRAINING_DATASET_SOURCE`):
   Re-running training reuses the same prepared dataset (the prep is one-shot;
   only re-run it if the source dataset changes — pass `--force` to overwrite).
 
----
-
-## Requirements
-
-| | Requirement |
-|---|---|
-| **Target device** | NVIDIA Jetson Orin (tested on Orin Nano 8 GB "Super") |
-| **JetPack / L4T** | 6.2 / R36.4.0+ (Docker base `dustynv/l4t-pytorch:r36.4.0`) |
-| **Control machine** | Ubuntu/Debian with Ansible 2.14+, `sshpass`, `nmap`, `jq` |
-| **Python** | 3.10 (in the container) |
-| **Camera** | USB webcam (`/dev/video0`) — fixed position |
-| **Network** | Same LAN as the Jetson (or the Jetson's WiFi hotspot) |
-
----
-
-## Configuration at a glance
+## Configuration
 
 Runtime config lives in **`app/.env`** (gitignored); copy `app/.env.example`
 and adjust. Key validated values (fixed camera, 30 fps, pigs counted
@@ -332,7 +213,7 @@ PIG_CONFIDENCE_THRESHOLD=0.6
 DRAW_TRACKING=False
 LOG_LEVEL=INFO
 OUTPUT_VIDEO_PATH=/files
-# OC-SORT anti-ID-switch tuning:
+# anti-ID-switch tuning:
 TRACKER_LOST_TRACK_BUFFER=20
 TRACKER_MIN_CONSECUTIVE_FRAMES=5
 COUNTING_GUARD_MAX_AGE=15
@@ -345,23 +226,23 @@ Full parameter table and per-parameter rationale:
 ### Runtime features (hot-reloaded via `/conf`)
 
 Beyond the boot-time `.env`, a second hostPath `/conf` holds
-`runtime-settings.json` — **hot-reloaded in-process** at the next idle window
-(BL-86), so you can tune the counter **without restarting the pod**. The
-Android companion app (sister repo) writes these settings remotely:
+`runtime-settings.json` — **hot-reloaded in-process** at the next idle window,
+so you can tune the counter **without restarting the pod**. The Android
+companion app (sister repo) writes these settings remotely:
 
-- **Configurable counting classes (BL-78)** — count a configurable subset of
-  the model's classes (multi-species); `global = sum of per-species counters`.
-- **Configurable counting line (BL-83)** — orientation `vertical` |
-  `horizontal` + a signed offset (percent of the frame), centered by default.
-- **Configurable counting direction (BL-92)** — the +1 direction is
-  configurable: `auto` (default, warm-up auto-detect of the dominant crossing
-  direction per run) or `manual` (`up`/`down`/`left`/`right`, validated vs the
-  line orientation). Default `auto` = the BL-83 behavior. A +1 change resets the
+- **Configurable counting classes** — count a configurable subset of the
+  model's classes (multi-species); `global = sum of per-species counters`.
+- **Configurable counting line** — orientation `vertical` | `horizontal` + a
+  signed offset (percent of the frame), centered by default.
+- **Configurable counting direction** — the +1 direction is configurable:
+  `auto` (default, warm-up auto-detect of the dominant crossing direction per
+  run) or `manual` (`up`/`down`/`left`/`right`, validated vs the line
+  orientation). Default `auto` = the warm-up behavior. A +1 change resets the
   counter.
-- **Mask zones (BL-87)** — normalized exclusion rects; detections whose
-  centroid falls inside a zone are dropped before tracking (no track → no
-  count). The Android editor draws / moves / resizes / names them visually.
-- **Snapshot (BL-88)** — the countingapp writes a raw-frame JPEG
+- **Mask zones** — normalized exclusion rects; detections whose centroid falls
+  inside a zone are dropped before tracking (no track → no count). The Android
+  editor draws / moves / resizes / names them visually.
+- **Snapshot** — the counting app writes a raw-frame JPEG
   (`/files/snapshot.jpg`) ~every 5s so the companion/app can show a live
   preview + let you draw mask zones on it.
 - **Overlay toggles** — `draw_tracking`, `draw_mask_zones` (independent).
@@ -380,24 +261,156 @@ Two things are **not** hot-reloaded — they are read at build/startup time:
   `fp32` for the legacy 640 pig model (30 FPS). The engine artifact is named
   after the dataset dir (`basename(TRAINING_PROJECT_DIR)`, fallback `my_model`).
   See `docs/04_configuration.md`.
-- **Input source (BL-93, experimental)** — `input_source` (`CAMERA` / `STREAM` /
+- **Input source (experimental)** — `input_source` (`CAMERA` / `STREAM` /
   `FILE`), `input_url` (RTSP), `input_device`, `input_width`/`input_height`,
   `output_fps` live per-model in `/conf/runtime-settings.json` but are read **once
   at startup**. Switching the physical sensor (camera ↔ drone) is a restart, not
   a hot-swap. The `STREAM`/drone path is **experimental and not yet realized in
   production** — see the note above.
 
----
+## Under the hood
 
-## Tests
+> This section is for developers who want depth. Operators never need to read
+> it.
+
+### Code architecture
+
+```
+animal-counter/
+├── app/                     # The counting application (container image)
+│   ├── Dockerfile           # Base: dustynv/l4t-pytorch:r36.4.0 (JetPack 6.2)
+│   ├── entrypoint.sh        # Modes: build-engine | serve | debug | test | validate
+│   ├── requirements.txt     # pycuda, trackers==2.4.0 (OC-SORT), flask, python-dotenv
+│   ├── .env / .env.example  # Runtime config (.env is gitignored; .env.example is versioned)
+│   ├── model/               # my_model.{pt,onnx,engine}  (engine built by trtexec)
+│   └── src/
+│       ├── main.py           # Thin entry point: start()/stop() orchestration + re-exports; `if __name__: cli.main()`
+│       ├── state.py          # Module-level singletons: shared_state, logger, _IOU_METRICS
+│       ├── infer_thread.py   # InferThread — capture → TensorRT inference → frame_queue
+│       ├── display_thread.py # DisplayThread — tracking → counting → recording → render
+│       ├── validate.py       # write_result_json (validation mode, RESULT_JSON_PATH)
+│       ├── cli.py            # argparse + signal handlers + serve/validate loop + Jetson poweroff
+│       ├── settings.py       # Config loader (reads app/.env, defaults documented inline)
+│       ├── core/
+│       │   ├── inference.py   # TensorRT inference + pre/post-processing
+│       │   ├── tracking.py    # OC-SORT tracker integration, letterbox undo, drawing
+│       │   └── counting.py    # Counting line logic + anti-ID-switch guards
+│       ├── ui/rendering.py    # Overlay & UI drawing
+│       └── utils/             # frame_source, shared_state, timer_fps
+├── scripts/                 # ⭐ Central automation hub (the starting point for humans)
+│   ├── prepare_jetson.sh            # Discover Jetson + deploy the app (one-shot)
+│   ├── training_model.sh            # Discover Jetson + build/train a model
+│   ├── validate_on_jetson.sh        # Validate counting on reference videos (dev loop)
+│   ├── jetson_discover.sh           # nmap scan + SSH credential test → JETSON_IP
+│   ├── jetson_first_access.sh       # SSH connectivity check
+│   ├── install_ansible.sh           # Install Ansible on the control machine
+│   └── install_splash_screen_standalone.sh
+├── ansible/                 # Ansible automation (deploy + system + model)
+│   ├── inventory/jetsons.yml        # Single host, env-driven (JETSON_IP/USER/PASSWORD)
+│   ├── group_vars/all.yml           # Defaults (paths…)
+│   └── playbooks/
+│       ├── app/   deploy_app.yml · deploy_countingapp.yml · build_countingapp.yml
+│       ├── model/ build_model.yml
+│       └── system/ prepare_system · install_k3s · hotspot · splash · lxde · network_ssh …
+├── k3s/templates/           # Jinja2 K8s manifests (the REAL prod manifests, applied by Ansible)
+│   ├── countingapp-dep.j2          # DaemonSet (the app, pausable for validation)
+│   ├── countingapp-svc.j2 · countingapp-ns.j2
+│   ├── countingapp-validate.j2 · countingapp-test.j2 · build-engine-batch.j2
+│   └── cronvideo-dep.j2            # Rolling video compression + cleanup
+├── validation/              # Reference videos + expected-count manifest
+│   ├── config.json                  # reference_video, tolerance, max_iterations, mode
+│   ├── expected_counts.json         # Manifest: videos{} + disabled{}
+│   └── videos/                      # validation-<seq>-#<count>.mp4 (gitignored except 1 reference)
+├── docs/                    # This documentation set
+└── tests/                   # pytest unit tests (counting, inference, tracking, rendering)
+```
+
+> The real manifests are the Jinja2 templates in `k3s/templates/`, rendered and
+> applied by `ansible/playbooks/app/deploy_countingapp.yml`. See
+> [`docs/03_deployment.md`](docs/03_deployment.md).
+
+### How the app runs
+
+The container `entrypoint.sh` takes a **mode** argument:
+
+| Mode | What it does |
+|------|--------------|
+| `build-engine` | Compile `model/my_model.onnx` → `my_model.engine` via `trtexec` |
+| `serve` | Run `python3 src/main.py` — on-screen X11/cv2 UI + inference/display threads (production) |
+| `validate` | Run `main.py --input=FILE --file=$VALIDATE_VIDEO` and write `result.json` (used by the validation job) |
+| `test` | Run `main.py` on a local test video with tracking drawn |
+| `debug` | `tail -f /dev/null` — keep the container alive for `kubectl exec` |
+
+In production the pod runs in `serve` mode. The operator controls the app via
+the **on-screen X11/cv2 window** ("Counter") on the Jetson's attached display
+— clickable buttons (play/pause/stop, learning, auto, reset, Arrêt) drive
+**start/stop** counting, and the live net counter is drawn over the feed. There
+is no web UI; the `countingapp-svc` port `31501` is declared in the manifest but
+the app does not serve HTTP. Two background threads do the work:
+**InferThread** (`infer_thread.py` — capture → TensorRT inference → queue) and
+**DisplayThread** (`display_thread.py` — tracking → counting → recording →
+render). `main.py` is a thin entry point that imports them and delegates the
+CLI/serve/validate loop to `cli.py` (singletons in `state.py`, validation
+output in `validate.py`). See
+[`docs/05_counting_pipeline.md`](docs/05_counting_pipeline.md).
+
+### Counting pipeline + anti-ID-switch guards
+
+The counting logic lives in `app/src/core/counting.py`: a configurable line
+(vertical or horizontal, offset as a percent of the frame), per-track
+directional crossing detection, and a set of anti-ID-switch guards (REID
+window, lost-track buffer, max-age, min-consecutive-frames) tuned to avoid
+double-counting when animals occlude each other or re-enter the frame. For the
+full pipeline breakdown, see
+[`docs/05_counting_pipeline.md`](docs/05_counting_pipeline.md).
+
+## Documentation
+
+| Doc | What it covers |
+|-----|----------------|
+| [`docs/01_quickstart.md`](docs/01_quickstart.md) | 5-minute path from a flashed Jetson to a running app, **scripts-first** |
+| [`docs/02_setup.md`](docs/02_setup.md) | Flash JetPack, first boot, system preparation |
+| [`docs/03_deployment.md`](docs/03_deployment.md) | K3s + Ansible deployment (real playbooks & templates) |
+| [`docs/04_configuration.md`](docs/04_configuration.md) | App configuration (`.env`, `settings.py`, parameter table) |
+| [`docs/05_counting_pipeline.md`](docs/05_counting_pipeline.md) | Counting pipeline internals & anti-ID-switch guards |
+| [`docs/06_validation.md`](docs/06_validation.md) | Validation workflow (`validate_on_jetson.sh`, manifest, reports) |
+| [`docs/07_development_workflow.md`](docs/07_development_workflow.md) | Development workflow with `archon-jetson-dev` (CLARIFY → plan → validate → PR) |
+| [`docs/08_offline_image_transfer.md`](docs/08_offline_image_transfer.md) | Transfer a Docker image from a test Jetson to an offline production Jetson via the PC |
+| [`docs/11_counting_history.md`](docs/11_counting_history.md) | Persistent counting-session history — JSONL schema, compaction, disk guard (the HTTP **reader** lives in the sister repo; the shared-file contract is in `docs/IPC_CONTRACT.md`) |
+| [`docs/12_jetson_network_k3s_boot.md`](docs/12_jetson_network_k3s_boot.md) | Jetson networking & K3s boot (WiFi-only, no RTC, no ethernet cable) — why + how |
+| [`docs/13_rtc_install.md`](docs/13_rtc_install.md) | DS3231 RTC (HW-084) install + on-demand, durable time sync — the phone time push + companion live in the sister repo |
+| [`docs/14_troubleshooting.md`](docs/14_troubleshooting.md) | Troubleshooting |
+| [`docs/15_reset.md`](docs/15_reset.md) | Reset procedures |
+| [`docs/IPC_CONTRACT.md`](docs/IPC_CONTRACT.md) | **Authoritative** shared-file contract between this repo (countingapp) and the sister repo (companion) |
+
+> **Sister repo:** the Android phone app + the Jetson host companion (HTTP bridge) live in
+> [`wloonis/animal-counter-companion`](https://github.com/wloonis/animal-counter-companion).
+> They were extracted at tag `v1.1.0`. The two repos talk only via the shared files
+> documented in [`docs/IPC_CONTRACT.md`](docs/IPC_CONTRACT.md): **`/files`**
+> (hostPath `/data/orin/files`) for **data** (`counting-history.jsonl`, mp4 clips,
+> dataset) and **`/conf`** (hostPath `/data/orin/conf`) for **config/contrôle**
+> (`runtime-settings.json`, `.arret_requested`).
+
+## Project status / scope / license
+
+### Requirements
+
+| | Requirement |
+|---|---|
+| **Target device** | NVIDIA Jetson Orin (tested on Orin Nano 8 GB "Super") |
+| **JetPack / L4T** | 6.2 / R36.4.0+ (Docker base `dustynv/l4t-pytorch:r36.4.0`) |
+| **Control machine** | Ubuntu/Debian with Ansible 2.14+, `sshpass`, `nmap`, `jq` |
+| **Python** | 3.10 (in the container) |
+| **Camera** | USB webcam (`/dev/video0`) — fixed position |
+| **Network** | Same LAN as the Jetson (or the Jetson's WiFi hotspot) |
+
+### Tests
 
 ```bash
 cd app && python -m pytest ../tests/ -v     # unit tests for counting/inference/tracking/rendering
 ```
 
----
-
-## License
+### License
 
 Copyright (C) 2026  LOONIS Wennaël
 
@@ -410,7 +423,7 @@ This program is distributed in the hope that it will be useful, but WITHOUT
 ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
 FOR A PARTICULAR PURPOSE. See the GNU General Public License for details.
 
-## Scope
+### Scope
 
 Internal project for animal-counting on a Jetson Orin. Hardware-specific
 (TensorRT engine, `/dev/video0`, X11 display, K3s on a single node).
