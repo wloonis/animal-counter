@@ -28,9 +28,8 @@ running total — **+1 one way, −1 the other** (the direction is configurable)
 > **Species — not exhaustive.** The pipeline is model-driven: count any species
 > your trained model can detect by selecting its class ids at deploy time
 > (`counting_class_ids`). To date the **trials have covered pigs and caprines
-> (sheep, goats)** — a single 3-class model (`sheep_goat_template`, with a dog
-> class to reject farm dogs) is in production for the caprine use case. Other
-> species are supported by the architecture but have **not been tested**.
+> (sheep, goats)**. Other species are supported by the architecture but have
+> **not been tested**.
 >
 > **Drone / RTSP stream input — experimental, not yet realized in production.**
 > The input layer accepts a per-model `STREAM` source (RTSP URL, e.g. a drone's
