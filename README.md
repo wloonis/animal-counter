@@ -256,7 +256,7 @@ Two things are **not** hot-reloaded — they are read at build/startup time:
 
 - **Build precision (FP16/FP32) + imgsz** — `app/build-config.json` selects the
   TensorRT engine precision and inference size per model (keyed by `MODEL_NAME`):
-  `fp16` for imgsz=1280 models (~13–15 FPS on Orin Nano, e.g. the caprine model),
+  `fp16` for imgsz=1280 models (~13–15 FPS on Orin Nano),
   `fp32` for the legacy 640 pig model (30 FPS). The engine artifact is named
   after the dataset dir (`basename(TRAINING_PROJECT_DIR)`, fallback `my_model`).
   See `docs/04_configuration.md`.
