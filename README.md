@@ -89,15 +89,15 @@ relayed from the phone).
   <img src="docs/assets/system_overview.svg" alt="Animal Counter system overview — Roboflow (RS stack), control PC with pi + archon-jetson-dev, Jetson Orin Nano with USB webcam and countingapp pod, attached X11 screen, shared /files + /conf hostPaths, and an Android phone app + companion that also relays into pi for dev">
 </p>
 
-**Lecture du schéma** — de gauche à droite et de haut en bas :
+**How to read the diagram** — left to right, top to bottom:
 
-1. **☁ Roboflow (RS stack)** — le nuage en haut. L'opérateur crée et versionne un dataset ; le PC télécharge l'export YOLO et entraîne → ONNX → moteur TensorRT.
-2. **💻 Control PC** — la machine de dev/intégration (en vert). Elle porte `scripts/` + Ansible (`deploy · train · validate`) **et** l'agent `pi` avec le workflow `archon-jetson-dev` (CLARIFY → plan → implement → validate → PR). La flèche violette pointillée `pi drives dev workflow` montre que pi orchestre ces scripts.
-3. **🟧 Jetson Orin Nano** — la carte edge (au centre, en orange). La **📷 webcam USB** (en haut, en rouge) alimente le **🐾 pod `countingapp`** (K3s single-node, OC-SORT + TensorRT, compteur +1 / −1, WiFi-only). Le pod lit/écrit les **🗄 shared hostPaths** (`/files` : historique · clips · snapshot ; `/conf` : réglages runtime) — c'est le seul canal entre le pod et le companion, **pas d'HTTP**.
-4. **🖥 Écran attaché (X11)** — en bas centre (en turquoise). Le pod y pousse l'overlay X11 (flèche épaisse verte) ; l'opérateur clique sur play / pause / reset / Arrêt (flèche pointillée verte de retour).
-5. **📱 Android phone** — en bas droite (en rose). L'**app** parle en HTTP au **companion** (bridge systemd), qui lit/écrit `/files` + `/conf` → configurer les classes comptées, la ligne, la direction, les mask zones, lire l'historique, demander l'arrêt. La **longue flèche rose pointillée** `dev relay` relie le téléphone à `pi` sur le PC : depuis le téléphone on peut relayer les questions CLARIFY, les approbations de plan et les validations, et lancer/piloter un run Archon à distance.
+1. **☁ Roboflow (RS stack)** — the cloud at the top. The operator creates & versions a dataset; the PC downloads the YOLO export and trains → ONNX → TensorRT engine.
+2. **💻 Control PC** — the dev/integrator machine (green). It hosts `scripts/` + Ansible (`deploy · train · validate`) **and** the `pi` agent with the `archon-jetson-dev` workflow (CLARIFY → plan → implement → validate → PR). The dashed violet arrow `pi drives dev workflow` shows pi orchestrating these scripts.
+3. **🟧 Jetson Orin Nano** — the edge board (center, orange). The **📷 USB webcam** (above, red) feeds the **🐾 `countingapp` pod** (K3s single-node, OC-SORT + TensorRT, +1 / −1 counter, WiFi-only). The pod reads/writes the **🗄 shared hostPaths** (`/files`: history · clips · snapshot; `/conf`: runtime settings) — this is the only channel between the pod and the companion, **no HTTP**.
+4. **🖥 Attached screen (X11)** — bottom center (turquoise). The pod pushes the X11 overlay to it (thick green arrow); the operator clicks play / pause / reset / Arrêt (dashed green arrow back).
+5. **📱 Android phone** — bottom right (pink). The **app** talks HTTP to the **companion** (systemd bridge), which reads/writes `/files` + `/conf` → configure counted classes, the line, direction, mask zones, read history, request a stop. The **long dashed pink arrow** `dev relay` links the phone to `pi` on the PC: from the phone you can relay CLARIFY questions, plan approvals and validations, and launch/drive an Archon run remotely.
 
-La **légende** (en bas à gauche) distingue les trois types de canaux : trait plein = données/déploiement, pointillé violet = automatisation dev (pi), pointillé rose = téléphone / dev relay.
+The **legend** (bottom left) distinguishes the three channel types: solid line = data/deploy, dashed violet = dev automation (pi), dashed pink = phone / dev relay.
 
 ### The five components
 
