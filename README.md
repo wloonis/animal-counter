@@ -73,6 +73,74 @@ up, and the counter accumulates continuously across days. Reset it on demand
 from the on-screen UI when starting a new batch. (A restart, however, resets
 the counter to 0 — it is not persisted across restarts.)
 
+## Features & system overview
+
+Animal Counter is not just the on-device counting app — it is a **complete
+edge-AI system** spanning a Jetson, a control PC, a cloud training pipeline, an
+attached operator screen, and an Android phone app. The pieces talk to each
+other through three channels: **Ansible/rsync** (PC → Jetson deploys),
+**shared hostPath files** (`/files` + `/conf` — the app ↔ companion contract),
+and **pi + the Archon workflow** (developer automation, driven from the PC or
+relayed from the phone).
+
+### System diagram
+
+<p align="center">
+  <img src="docs/assets/system_overview.svg" alt="Animal Counter system overview — Roboflow (RS stack), control PC with pi + archon-jetson-dev, Jetson Orin Nano with USB webcam and countingapp pod, attached X11 screen, shared /files + /conf hostPaths, and an Android phone app + companion that also relays into pi for dev">
+</p>
+
+**Lecture du schéma** — de gauche à droite et de haut en bas :
+
+1. **☁ Roboflow (RS stack)** — le nuage en haut. L'opérateur crée et versionne un dataset ; le PC télécharge l'export YOLO et entraîne → ONNX → moteur TensorRT.
+2. **💻 Control PC** — la machine de dev/intégration (en vert). Elle porte `scripts/` + Ansible (`deploy · train · validate`) **et** l'agent `pi` avec le workflow `archon-jetson-dev` (CLARIFY → plan → implement → validate → PR). La flèche violette pointillée `pi drives dev workflow` montre que pi orchestre ces scripts.
+3. **🟧 Jetson Orin Nano** — la carte edge (au centre, en orange). La **📷 webcam USB** (en haut, en rouge) alimente le **🐾 pod `countingapp`** (K3s single-node, OC-SORT + TensorRT, compteur +1 / −1, WiFi-only). Le pod lit/écrit les **🗄 shared hostPaths** (`/files` : historique · clips · snapshot ; `/conf` : réglages runtime) — c'est le seul canal entre le pod et le companion, **pas d'HTTP**.
+4. **🖥 Écran attaché (X11)** — en bas centre (en turquoise). Le pod y pousse l'overlay X11 (flèche épaisse verte) ; l'opérateur clique sur play / pause / reset / Arrêt (flèche pointillée verte de retour).
+5. **📱 Android phone** — en bas droite (en rose). L'**app** parle en HTTP au **companion** (bridge systemd), qui lit/écrit `/files` + `/conf` → configurer les classes comptées, la ligne, la direction, les mask zones, lire l'historique, demander l'arrêt. La **longue flèche rose pointillée** `dev relay` relie le téléphone à `pi` sur le PC : depuis le téléphone on peut relayer les questions CLARIFY, les approbations de plan et les validations, et lancer/piloter un run Archon à distance.
+
+La **légende** (en bas à gauche) distingue les trois types de canaux : trait plein = données/déploiement, pointillé violet = automatisation dev (pi), pointillé rose = téléphone / dev relay.
+
+### The five components
+
+| Component | Role | Where it lives |
+|---|---|---|
+| **☁ Roboflow (RS stack)** | Cloud dataset hosting + versioning; the operator creates & versions a dataset, the PC downloads the YOLO export and trains YOLO → ONNX → TensorRT engine. | `app/` consumes `TRAINING_ROBOFLOW_*` from `.env.local` |
+| **💻 Control PC** | The developer/integrator machine. Runs `scripts/` (discover, deploy, train, validate) and Ansible playbooks (system, app, model). Also runs **pi** + the **`archon-jetson-dev`** workflow — the autonomous dev loop: CLARIFY → plan (plannotator) → implement → Jetson validate → docs-sync → draft PR. | `scripts/`, `ansible/`, `.archon/` |
+| **🟧 Jetson Orin Nano** | The edge device. Runs K3s single-node (WiFi-only, on a `dummy0` interface) hosting the `countingapp` DaemonSet. The pod does OC-SORT tracking + TensorRT inference on the USB webcam feed and writes counting history + snapshots to `/files`, reads hot-reloaded runtime settings from `/conf`. | `app/` (container image), `k3s/templates/*.j2` |
+| **🖥 Attached screen** | A physical monitor on the Jetson running the on-screen X11/cv2 "Counter" window — the **operator's daily interface**: play/pause/stop, learning, auto, reset, Arrêt buttons, with the live net counter drawn over the feed. No web UI. | `app/src/ui/rendering.py`, `display_thread.py` |
+| **📱 Android phone app** | The operator's remote control (sister repo `wloonis/animal-counter-companion`). Talks over HTTP to the **Jetson companion** (a systemd bridge), which in turn reads/writes the shared `/files` + `/conf` hostPaths. Lets you configure counting classes, the counting line, direction, and mask zones (drawn on a live snapshot), read counting history, and request a stop. **In the dev process the phone can also relay into pi** — surface CLARIFY questions / plan approvals / validation mismatches and feed answers back, driving an Archon run remotely. | sister repo |
+
+### Feature summary
+
+**Counting core (this repo)**
+- Real-time bidirectional counting on a fixed camera (+1 / −1 across a configurable line).
+- OC-SORT tracking + anti-ID-switch guards (REID window, lost-track buffer, max-age, min-consecutive-frames) — validated on 30 reference videos.
+- TensorRT engines per model (FP16 for 1280px models ~13–15 FPS, FP32 for the legacy 640px pig model @ 30 FPS).
+- Multi-species, model-driven: count any species your trained model detects by selecting its class ids at deploy time (`counting_class_ids`). Trials to date: **pigs, caprines (sheep, goats)**.
+- Automatic video-clip recording per detection event (~2-min timeout with no detection), rolling compression + cleanup (`cronvideo`).
+- Persistent counting-session history (`counting-history.jsonl`) with compaction + disk guard.
+- K3s single-node deployment (WiFi-only, no RTC, no ethernet cable) — survives hard power cuts; fake-hwclock + phone time push restore the clock at boot.
+
+**Runtime configuration (hot-reloaded via `/conf`, no pod restart)**
+- Configurable counting classes (multi-species sub-counts, `global = sum`).
+- Configurable counting line (orientation + signed offset).
+- Configurable counting direction (`auto` warm-up auto-detect, or `manual` up/down/left/right).
+- Mask zones (normalized exclusion rects, drawn visually in the Android editor).
+- Live snapshot (~every 5s to `/files/snapshot.jpg`) for preview + mask editing.
+- Independent overlay toggles (`draw_tracking`, `draw_mask_zones`).
+
+**Deploy / validate / train (PC-driven)**
+- One-shot `prepare_jetson.sh`: discover (nmap) → SSH check → Ansible deploy.
+- `validate_on_jetson.sh`: rsync code + reference video, pause the DaemonSet, run a K8s validation Job, compare the count to the expected value, write `validation-report.json` (standard / `--full` modes; model-aware reference video).
+- `training_model.sh`: Roboflow or **local dataset** source → YOLO training → ONNX → TensorRT engine (built on the Jetson).
+- `pi` + `archon-jetson-dev`: autonomous dev workflow with Jetson business validation, plan review in plannotator, and automatic draft PR.
+
+**Operator interfaces**
+- Attached screen: on-screen X11 window with clickable controls (daily operator path).
+- Android app: remote parameterization + history reading + stop request, via the Jetson companion HTTP bridge (sister repo).
+- Android app → pi relay: drive Archon dev runs from the phone (surface questions, feed answers back).
+
+> **Shared-file IPC contract.** The countingapp (here) and the companion (sister repo) communicate **only** via `/files` + `/conf` hostPaths — no HTTP/RPC between them. The authoritative contract is [`docs/IPC_CONTRACT.md`](docs/IPC_CONTRACT.md), kept byte-identical in both repos.
+
 ## Getting started (developer)
 
 The `scripts/` directory is the central hub. Two flows cover everything.

@@ -1,0 +1,217 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1180 760" font-family="Segoe UI, Helvetica, Arial, sans-serif" role="img" aria-label="Animal Counter system overview">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#fbfcff"/>
+      <stop offset="1" stop-color="#eef2fb"/>
+    </linearGradient>
+    <linearGradient id="gCloud" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff"/><stop offset="1" stop-color="#e8f0fe"/>
+    </linearGradient>
+    <linearGradient id="gPC" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff"/><stop offset="1" stop-color="#e6f4ea"/>
+    </linearGradient>
+    <linearGradient id="gJet" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff"/><stop offset="1" stop-color="#fff3e0"/>
+    </linearGradient>
+    <linearGradient id="gShare" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff"/><stop offset="1" stop-color="#f3e8fd"/>
+    </linearGradient>
+    <linearGradient id="gScreen" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff"/><stop offset="1" stop-color="#e0f2f1"/>
+    </linearGradient>
+    <linearGradient id="gPhone" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff"/><stop offset="1" stop-color="#fce4ec"/>
+    </linearGradient>
+    <linearGradient id="gDisp" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#1a3a6b"/><stop offset="1" stop-color="#4285f4"/>
+    </linearGradient>
+
+    <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#5a6b8a"/>
+    </marker>
+    <marker id="arrDash" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#8a6bb0"/>
+    </marker>
+    <marker id="arrPink" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#d81b60"/>
+    </marker>
+
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur in="SourceAlpha" stdDeviation="4"/>
+      <feOffset dx="0" dy="3" result="o"/>
+      <feComponentTransfer><feFuncA type="linear" slope="0.18"/></feComponentTransfer>
+      <feMerge><feMergeNode/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+
+  <rect width="1180" height="760" fill="url(#bg)"/>
+
+  <text x="590" y="44" text-anchor="middle" font-size="26" font-weight="700" fill="#1f2d3d">Animal Counter — system overview</text>
+  <text x="590" y="70" text-anchor="middle" font-size="15" fill="#5a6b8a">Edge-AI counting system · Roboflow → PC → Jetson → screen, with an Android phone as remote + dev relay</text>
+
+  <!-- ============ CLOUD : Roboflow ============ -->
+  <g filter="url(#shadow)">
+    <path d="M210,120 q-30,0 -42,22 q-30,-2 -38,26 q-22,8 -18,32 q6,22 32,22 l150,0 q26,0 32,-22 q4,-24 -18,-32 q-8,-28 -38,-26 q-12,-22 -42,-22 z"
+          fill="url(#gCloud)" stroke="#4285f4" stroke-width="3"/>
+  </g>
+  <text x="219" y="172" text-anchor="middle" font-size="18" font-weight="700" fill="#1a3a6b">☁ Roboflow</text>
+  <text x="219" y="194" text-anchor="middle" font-size="13" fill="#3a587d">RS stack · dataset + versions</text>
+  <text x="219" y="212" text-anchor="middle" font-size="12" fill="#5a6b8a">YOLO export → train → ONNX</text>
+
+  <!-- ============ PC : Control machine ============ -->
+  <g filter="url(#shadow)">
+    <rect x="40" y="300" width="300" height="240" rx="16" fill="url(#gPC)" stroke="#34a853" stroke-width="3"/>
+  </g>
+  <!-- laptop lid -->
+  <rect x="70" y="324" width="240" height="120" rx="8" fill="#34a853" opacity="0.12" stroke="#34a853" stroke-width="2"/>
+  <rect x="82" y="336" width="216" height="96" rx="4" fill="url(#gDisp)" opacity="0.9"/>
+  <text x="190" y="372" text-anchor="middle" font-size="13" font-weight="600" fill="#ffffff">💻 Control PC</text>
+  <text x="190" y="394" text-anchor="middle" font-size="11" fill="#dbeafe">Ubuntu / Debian</text>
+  <text x="190" y="412" text-anchor="middle" font-size="11" fill="#dbeafe">Ansible + scripts/</text>
+  <!-- keyboard base -->
+  <path d="M60,452 l260,0 l-14,28 l-232,0 z" fill="#34a853" opacity="0.18" stroke="#34a853" stroke-width="2"/>
+
+  <text x="190" y="500" text-anchor="middle" font-size="14" font-weight="700" fill="#1a5131">deploy · train · validate</text>
+  <text x="190" y="520" text-anchor="middle" font-size="12" fill="#2e6b46">🤖 pi + archon-jetson-dev workflow</text>
+  <text x="190" y="536" text-anchor="middle" font-size="11" fill="#3f7d57">CLARIFY → plan → implement → validate → PR</text>
+
+  <!-- ============ JETSON ============ -->
+  <g filter="url(#shadow)">
+    <rect x="430" y="300" width="360" height="250" rx="16" fill="url(#gJet)" stroke="#ff8a00" stroke-width="3"/>
+  </g>
+  <text x="610" y="330" text-anchor="middle" font-size="17" font-weight="700" fill="#7a3d00">🟧 Jetson Orin Nano 8GB</text>
+  <!-- dev board -->
+  <rect x="460" y="346" width="300" height="86" rx="8" fill="#ff8a00" opacity="0.12" stroke="#ff8a00" stroke-width="2"/>
+  <!-- SoC chip -->
+  <rect x="478" y="360" width="60" height="58" rx="6" fill="#2b2b2b" stroke="#111" stroke-width="1.5"/>
+  <text x="508" y="395" text-anchor="middle" font-size="11" fill="#9aa0a6">SoC</text>
+  <!-- connector pins -->
+  <g fill="#ff8a00" opacity="0.6">
+    <rect x="556" y="364" width="90" height="6" rx="2"/>
+    <rect x="556" y="376" width="90" height="6" rx="2"/>
+    <rect x="556" y="388" width="90" height="6" rx="2"/>
+    <rect x="556" y="400" width="90" height="6" rx="2"/>
+  </g>
+  <!-- heatsink -->
+  <g stroke="#9aa0a6" stroke-width="1.5">
+    <line x1="660" y1="360" x2="660" y2="418"/><line x1="670" y1="360" x2="670" y2="418"/>
+    <line x1="680" y1="360" x2="680" y2="418"/><line x1="690" y1="360" x2="690" y2="418"/>
+    <line x1="700" y1="360" x2="700" y2="418"/><line x1="710" y1="360" x2="710" y2="418"/>
+    <line x1="720" y1="360" x2="720" y2="418"/><line x1="730" y1="360" x2="730" y2="418"/>
+    <line x1="740" y1="360" x2="740" y2="418"/>
+  </g>
+  <!-- countingapp pod badge -->
+  <rect x="460" y="448" width="300" height="44" rx="8" fill="#ff8a00" stroke="#c46a00" stroke-width="2"/>
+  <text x="610" y="466" text-anchor="middle" font-size="13" font-weight="700" fill="#ffffff">🐾 countingapp pod (K3s single-node)</text>
+  <text x="610" y="484" text-anchor="middle" font-size="11" fill="#ffe7c2">OC-SORT + TensorRT · +1 / −1 counter · WiFi-only</text>
+  <text x="610" y="528" text-anchor="middle" font-size="12" fill="#7a3d00">InferThread (capture → infer) · DisplayThread (track → count → render)</text>
+
+  <!-- ============ CAMERA ============ -->
+  <g filter="url(#shadow)">
+    <rect x="442" y="160" width="120" height="70" rx="12" fill="#fdecea" stroke="#ea4335" stroke-width="3"/>
+  </g>
+  <circle cx="540" cy="195" r="20" fill="#ffffff" stroke="#ea4335" stroke-width="3"/>
+  <circle cx="540" cy="195" r="11" fill="#ea4335"/>
+  <circle cx="546" cy="190" r="4" fill="#ffb3a8"/>
+  <rect x="452" y="170" width="40" height="14" rx="3" fill="#ea4335" opacity="0.6"/>
+  <text x="502" y="250" text-anchor="middle" font-size="12" font-weight="600" fill="#7a1a12">📷 USB webcam (fixed)</text>
+  <text x="502" y="266" text-anchor="middle" font-size="11" fill="#9a3a30">/dev/video0</text>
+
+  <!-- ============ SHARED HOSTPATHS ============ -->
+  <g filter="url(#shadow)">
+    <rect x="820" y="320" width="330" height="195" rx="16" fill="url(#gShare)" stroke="#a142f4" stroke-width="3"/>
+  </g>
+  <!-- centered folder icon (text sits below it) -->
+  <g>
+    <path d="M953,338 l24,0 l6,7 l36,0 l0,30 l-66,0 z" fill="#a142f4" opacity="0.18" stroke="#a142f4" stroke-width="2"/>
+    <path d="M960,350 l24,0 l6,7 l36,0 l0,30 l-66,0 z" fill="#ffffff" stroke="#a142f4" stroke-width="2"/>
+  </g>
+  <text x="985" y="406" text-anchor="middle" font-size="15" font-weight="700" fill="#4a1a7a">🗄 shared hostPaths</text>
+  <text x="860" y="434" text-anchor="start" font-size="12" fill="#6a3aa0">/files — history · clips · snapshot</text>
+  <text x="860" y="456" text-anchor="start" font-size="12" fill="#6a3aa0">/conf — runtime settings</text>
+  <text x="985" y="490" text-anchor="middle" font-size="11" fill="#7a52a8">app ↔ companion IPC (no HTTP)</text>
+
+  <!-- ============ SCREEN ============ -->
+  <g filter="url(#shadow)">
+    <rect x="470" y="600" width="280" height="120" rx="12" fill="url(#gScreen)" stroke="#00897b" stroke-width="3"/>
+  </g>
+  <rect x="490" y="618" width="240" height="74" rx="6" fill="#00897b" opacity="0.14" stroke="#00897b" stroke-width="2"/>
+  <!-- mini counter overlay -->
+  <text x="610" y="638" text-anchor="middle" font-size="11" fill="#005d52">Counter</text>
+  <line x1="556" y1="648" x2="556" y2="678" stroke="#ffcc00" stroke-width="3"/>
+  <text x="690" y="676" text-anchor="end" font-size="22" font-weight="800" fill="#00695c">+12</text>
+  <rect x="608" y="700" width="100" height="10" rx="3" fill="#00897b" opacity="0.4"/>
+  <text x="610" y="740" text-anchor="middle" font-size="12" font-weight="600" fill="#003c33">🖥 Attached screen (X11) · play · pause · reset · Arrêt</text>
+
+  <!-- ============ PHONE ============ -->
+  <g filter="url(#shadow)">
+    <rect x="858" y="600" width="120" height="120" rx="18" fill="url(#gPhone)" stroke="#d81b60" stroke-width="3"/>
+  </g>
+  <rect x="872" y="618" width="92" height="78" rx="6" fill="#d81b60" opacity="0.12" stroke="#d81b60" stroke-width="2"/>
+  <circle cx="918" cy="708" r="5" fill="#d81b60" opacity="0.5"/>
+  <text x="918" y="640" text-anchor="middle" font-size="11" font-weight="700" fill="#7a1033">Animal</text>
+  <text x="918" y="654" text-anchor="middle" font-size="11" font-weight="700" fill="#7a1033">Counter</text>
+  <text x="918" y="678" text-anchor="middle" font-size="10" fill="#9a2050">app</text>
+  <text x="918" y="755" text-anchor="middle" font-size="12" font-weight="600" fill="#7a1033">📱 Android phone</text>
+
+  <!-- companion badge under phone -->
+  <g filter="url(#shadow)">
+    <rect x="858" y="540" width="120" height="44" rx="10" fill="#ffffff" stroke="#d81b60" stroke-width="2"/>
+  </g>
+  <text x="918" y="558" text-anchor="middle" font-size="11" font-weight="700" fill="#7a1033">companion</text>
+  <text x="918" y="574" text-anchor="middle" font-size="10" fill="#9a2050">HTTP bridge (systemd)</text>
+
+  <!-- ============ ARROWS ============ -->
+  <!-- Roboflow -> PC -->
+  <path d="M150,222 C120,250 110,270 150,300" fill="none" stroke="#5a6b8a" stroke-width="2.5" marker-end="url(#arr)"/>
+  <text x="175" y="266" text-anchor="middle" font-size="11" fill="#5a6b8a">YOLO dataset</text>
+
+  <!-- PC -> Jetson (deploy) -->
+  <path d="M340,420 L430,420" fill="none" stroke="#5a6b8a" stroke-width="2.5" marker-end="url(#arr)"/>
+  <text x="385" y="410" text-anchor="middle" font-size="11" fill="#5a6b8a">rsync + build</text>
+
+  <!-- pi drives PC scripts: bottom-left to bottom-right of the PC box -->
+  <path d="M75,540 C75,582 305,582 305,540" fill="none" stroke="#8a6bb0" stroke-width="2" stroke-dasharray="5,4" marker-end="url(#arrDash)"/>
+  <text x="190" y="600" text-anchor="middle" font-size="11" fill="#6a4a8a">pi drives dev workflow</text>
+
+  <!-- camera -> jetson (arrives on the left of the board, clear of the title) -->
+  <path d="M502,270 C498,292 494,320 492,346" fill="none" stroke="#ea4335" stroke-width="2.5" marker-end="url(#arr)"/>
+  <text x="468" y="308" text-anchor="middle" font-size="11" fill="#9a3a30">live frames</text>
+
+  <!-- jetson <-> shared -->
+  <path d="M790,420 L820,420" fill="none" stroke="#5a6b8a" stroke-width="2.5" marker-end="url(#arr)"/>
+  <path d="M820,460 L790,460" fill="none" stroke="#5a6b8a" stroke-width="2.5" marker-end="url(#arr)"/>
+
+  <!-- companion <-> shared -->
+  <path d="M918,540 L970,515" fill="none" stroke="#d81b60" stroke-width="2.5" marker-end="url(#arrPink)"/>
+
+  <!-- phone <-> companion -->
+  <path d="M918,600 L918,584" fill="none" stroke="#d81b60" stroke-width="2.5" marker-end="url(#arrPink)"/>
+  <path d="M918,584 L918,600" fill="none" stroke="#d81b60" stroke-width="1.6" opacity="0"/>
+  <text x="940" y="592" font-size="10" fill="#9a2050">HTTP</text>
+
+  <!-- jetson -> screen (X11 overlay) -->
+  <path d="M610,550 L610,600" fill="none" stroke="#00897b" stroke-width="3" marker-end="url(#arr)"/>
+  <text x="624" y="578" font-size="11" fill="#00695c">X11 overlay</text>
+  <!-- screen -> jetson (operator clicks, dashed) -->
+  <path d="M560,600 C520,560 520,540 560,492" fill="none" stroke="#00897b" stroke-width="2" stroke-dasharray="5,4" marker-end="url(#arr)"/>
+  <text x="492" y="560" text-anchor="middle" font-size="10" fill="#00695c">operator clicks</text>
+
+  <!-- phone to pi (dev relay): routed through the gap between Jetson and screen -->
+  <path d="M858,600 C780,565 460,565 400,565 C 360,565 340,545 340,520" fill="none" stroke="#d81b60" stroke-width="2.2" stroke-dasharray="6,5" marker-end="url(#arrPink)"/>
+  <text x="360" y="578" text-anchor="start" font-size="11" font-weight="600" fill="#9a2050">dev relay</text>
+  <text x="360" y="594" text-anchor="start" font-size="11" font-weight="600" fill="#9a2050">questions / approvals</text>
+  <text x="360" y="610" text-anchor="start" font-size="11" font-weight="600" fill="#9a2050">launch runs</text>
+
+  <!-- legend -->
+  <g transform="translate(40,640)">
+    <rect x="0" y="0" width="300" height="96" rx="10" fill="#ffffff" stroke="#c9d3e6" stroke-width="1.5"/>
+    <text x="12" y="20" font-size="12" font-weight="700" fill="#1f2d3d">Channels</text>
+    <line x1="14" y1="38" x2="54" y2="38" stroke="#5a6b8a" stroke-width="2.5" marker-end="url(#arr)"/>
+    <text x="64" y="42" font-size="11" fill="#3a4a66">data / deploy</text>
+    <line x1="14" y1="58" x2="54" y2="58" stroke="#8a6bb0" stroke-width="2" stroke-dasharray="5,4" marker-end="url(#arrDash)"/>
+    <text x="64" y="62" font-size="11" fill="#3a4a66">dev automation (pi)</text>
+    <line x1="14" y1="78" x2="54" y2="78" stroke="#d81b60" stroke-width="2.2" stroke-dasharray="6,5" marker-end="url(#arrPink)"/>
+    <text x="64" y="82" font-size="11" fill="#3a4a66">phone / dev relay</text>
+  </g>
+</svg>
