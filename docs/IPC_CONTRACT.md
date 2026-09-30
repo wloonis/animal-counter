@@ -140,6 +140,9 @@ Schema:
   "box_tracking": true,
   "centroid_tracking": true,
   "draw_mask_zones": true,
+  "draw_box_style": "brackets",
+  "draw_box_corner_len": 12,
+  "draw_box_outline": false,
   "counting_direction_mode": "auto",
   "counting_direction": null,
   "models": {
@@ -163,10 +166,12 @@ Schema:
 (`mask_zones`, `counting_line_orientation`, `offset_counting_line`,
 `counting_class_ids`) live under a **`models.<model_name>`** section, one per
 deployed model, so switching models (pig → sheep) loads that model's own
-mask zones + counting line instead of the other's. The 4 display/tracker
-toggles (`draw_tracking`, `box_tracking`, `centroid_tracking`, `draw_mask_zones`)
-are **global** (user preference) and stay at the top level. The active
-`model_name` comes from `model-classes.json` (BL-89, see file #5).
+mask zones + counting line instead of the other's. The 7 display/tracker
+toggles (`draw_tracking`, `box_tracking`, `centroid_tracking`,
+`draw_mask_zones`, `draw_box_style`, `draw_box_corner_len`,
+`draw_box_outline`) are **global** (user preference) and stay at the top
+level. The active `model_name` comes from `model-classes.json` (BL-89, see
+file #5).
 
 The countingapp (`load_runtime_settings`) returns a **flat** dict = global keys
 + the active model's per-model keys merged, so the downstream resolve_* /
@@ -186,6 +191,9 @@ per-model keys are absent (defaults apply).
 | `counting_class_ids` | array[int] | subset of `model-classes.json` `names` ids | `[default_counting_class]` | **(BL-78)** which class IDs the countingapp counts; hot-reloaded per recording (validated against `model-classes.json`; invalid IDs dropped with a WARNING; fallback `[default_counting_class]` when absent/empty/all-invalid) |
 | `mask_zones` | array[object] | each `{x,y,w,h, name?}` in `[0..1]`, `w>0`, `h>0`, `x+w<=1`, `y+h<=1` | `[]` | **(BL-87)** normalized axis-aligned exclusion rects; detections whose centroid falls inside any rect are dropped before tracking (no track → no count). Strict reject-all on any invalid rect (field ignored, prior kept, WARNING). Hot-reloaded at idle. Generic (all species). **`name` (optional string, additive)** is an app-local label for the rect (Android UI): the companion stores + returns it (generic merge, unknown-key tolerant), the countingapp ignores it (reads only `x/y/w/h`) |
 | `draw_mask_zones` | bool | — | `true` | **(BL-87)** draw a semi-transparent overlay of the `mask_zones` rects (independent of `draw_tracking`). Hot-reloaded |
+| `draw_box_style` | string | `"plain"` \| `"brackets"` \| `"rounded"` | `"brackets"` | **(BL-98)** box contour style when `draw_tracking`/`box_tracking` is on. `plain` = a single `cv2.rectangle`; `brackets` = 4 L-shaped corner brackets; `rounded` = 4 quarter-arc corners + connecting lines. Invalid string skipped with a WARNING (current value kept). Hot-reloaded (global) |
+| `draw_box_corner_len` | int | positive (>0, reject bool) | `12` | **(BL-98)** arm length (px) of the `brackets`/`rounded` corners, clamped at draw time to ≤ half the box width/height (and frame bounds) so brackets/arcs never cross or invert. Non-positive / bool rejected with a WARNING. Hot-reloaded (global) |
+| `draw_box_outline` | bool | — | `false` | **(BL-98)** draw a thin (1px) contrast liseré 1px outside the box (white if the box colour is dark, black if bright) before the style, so the style sits on top. Plain bool only. Hot-reloaded (global) |
 | `counting_direction_mode` | string | `"auto"` \| `"manual"` | `"auto"` | **(BL-92)** auto-detect the dominant crossing direction per run via a warm-up of N=3 crossings or T=10s then lock, vs manual operator-set +1. Hot-reloaded at idle (BL-86 gating). *Additive — companion byte-identical sync later* |
 | `counting_direction` | string | `up` \| `down` \| `left` \| `right` \| `null` | `null` | **(BL-92, manual only)** the +1 direction. Validated vs the active `counting_line_orientation` (horizontal → `up`/`down`, vertical → `left`/`right`, reject+WARN on mismatch → fall back to auto/default). A change resets the counter like `counting_class_ids`. *Additive — companion byte-identical sync later* |
 
@@ -220,6 +228,9 @@ back; resolvers never raise (fail-open).
   "box_tracking": true,
   "centroid_tracking": true,
   "draw_mask_zones": true,
+  "draw_box_style": "brackets",
+  "draw_box_corner_len": 12,
+  "draw_box_outline": false,
   "models": {
     "my_model": {
       "counting_class_ids": [1],
