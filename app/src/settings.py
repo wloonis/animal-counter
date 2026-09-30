@@ -150,6 +150,17 @@ class Settings:
         self.DRAW_LABEL_THICKNESS = int(os.getenv("DRAW_LABEL_THICKNESS", 2))
         # Radius of the centroid marker (was 1 -> nearly invisible).
         self.DRAW_CENTROID_RADIUS = int(os.getenv("DRAW_CENTROID_RADIUS", 3))
+        # BL-98 attractive box contours: style + bracket arm length + contrast
+        # outer outline liseré. Boot defaults for the runtime-settings keys
+        # (hot-reloaded via the BL-86 watcher). Visual-only; no counting impact.
+        #   draw_box_style: plain | brackets | rounded (default brackets)
+        #   draw_box_corner_len: int > 0, L-bracket arm / rounded-arc radius
+        #   draw_box_outline: thin 1px contrast rectangle 1px outside the box
+        self.DRAW_BOX_STYLE = os.getenv("DRAW_BOX_STYLE", "brackets")
+        self.DRAW_BOX_CORNER_LEN = int(os.getenv("DRAW_BOX_CORNER_LEN", 12))
+        self.DRAW_BOX_OUTLINE = (
+            os.getenv("DRAW_BOX_OUTLINE", "false").lower() == "true"
+        )
         ### Bounding-box render tuning (BL-58 visual readability) - End
         
         ### MODIFICATION: Pig Detection Threshold - Start
