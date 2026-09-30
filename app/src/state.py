@@ -114,6 +114,11 @@ _GLOBAL_SETTINGS_KEYS = (
     "box_tracking",
     "centroid_tracking",
     "draw_mask_zones",
+    # BL-98: attractive box-contour visual prefs (GLOBAL, not per-model —
+    # purely visual, like draw_tracking/draw_mask_zones above).
+    "draw_box_style",
+    "draw_box_corner_len",
+    "draw_box_outline",
     # BL-92: configurable +1 counting direction (GLOBAL, not per-model —
     # the +1 direction is tied to camera/video placement, not the model).
     "counting_direction_mode",
