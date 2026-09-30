@@ -104,6 +104,104 @@ class Tracking:
         """Choose black or white text for best contrast on bg_color."""
         return (0, 0, 0) if self._luminance(bg_color) > 140 else (255, 255, 255)
 
+    def _contrast_outline_color(self, color):
+        """Luminance-contrast liseré colour for the box outline (BL-98).
+
+        Returns white when the box colour is dark, black when it is bright,
+        so a 1px outline drawn around the box reads on any background.
+        Reuses the same luminance threshold as ``_label_text_color``.
+        """
+        return (0, 0, 0) if self._luminance(color) > 140 else (255, 255, 255)
+
+    def _draw_box_contours(self, img, c1, c2, color, tl, style, corner_len,
+                           outline):
+        """Draw the bounding-box contour in the requested style (BL-98).
+
+        Styles:
+          * ``plain``    - a single antialiased ``cv2.rectangle`` (legacy).
+          * ``brackets`` - 4 L-shaped corner brackets (two short segments per
+            corner), thickness ``tl + 1`` so they read slightly bolder than
+            the legacy line. Arm length is clamped to <= half the box
+            width/height so the brackets never cross, and to the frame bounds
+            so they never draw off-frame.
+          * ``rounded``  - 4 ``cv2.ellipse`` quarter-arc corners (radius =
+            min(corner_len, half min box dim)) + straight ``cv2.line``
+            connectors, thickness ``tl``.
+
+        When ``outline`` is True a thin (thickness 1) outer rectangle is
+        drawn 1px outside the box in a luminance-contrast colour BEFORE the
+        style so the style sits on top of the liseré.
+        """
+        x1, y1 = c1
+        x2, y2 = c2
+        w = x2 - x1
+        h = y2 - y1
+
+        # Contrast liseré drawn first (under the style).
+        if outline:
+            o_color = self._contrast_outline_color(color)
+            cv2.rectangle(img, (x1 - 1, y1 - 1), (x2 + 1, y2 + 1),
+                          o_color, thickness=1, lineType=cv2.LINE_AA)
+
+        if style == "plain":
+            cv2.rectangle(img, c1, c2, color, thickness=tl,
+                          lineType=cv2.LINE_AA)
+            return
+
+        # Clamp arm/radius to <= half the box width/height so brackets/rounds
+        # never cross or invert on small boxes.
+        arm = max(1, min(int(corner_len), w // 2, h // 2))
+
+        if style == "brackets":
+            bt = tl + 1
+            # Top-left L: horizontal arm going right + vertical arm going down.
+            cv2.line(img, (x1, y1), (x1 + arm, y1), color, thickness=bt,
+                     lineType=cv2.LINE_AA)
+            cv2.line(img, (x1, y1), (x1, y1 + arm), color, thickness=bt,
+                     lineType=cv2.LINE_AA)
+            # Top-right L.
+            cv2.line(img, (x2, y1), (x2 - arm, y1), color, thickness=bt,
+                     lineType=cv2.LINE_AA)
+            cv2.line(img, (x2, y1), (x2, y1 + arm), color, thickness=bt,
+                     lineType=cv2.LINE_AA)
+            # Bottom-left L.
+            cv2.line(img, (x1, y2), (x1 + arm, y2), color, thickness=bt,
+                     lineType=cv2.LINE_AA)
+            cv2.line(img, (x1, y2), (x1, y2 - arm), color, thickness=bt,
+                     lineType=cv2.LINE_AA)
+            # Bottom-right L.
+            cv2.line(img, (x2, y2), (x2 - arm, y2), color, thickness=bt,
+                     lineType=cv2.LINE_AA)
+            cv2.line(img, (x2, y2), (x2, y2 - arm), color, thickness=bt,
+                     lineType=cv2.LINE_AA)
+            return
+
+        if style == "rounded":
+            r = max(1, min(int(corner_len), w // 2, h // 2))
+            # Quarter-arc corners (OpenCV angles are in degrees, 0 = east,
+            # counter-clockwise).
+            cv2.ellipse(img, (x1 + r, y1 + r), (r, r), 180, 0, 90, color,
+                        thickness=tl, lineType=cv2.LINE_AA)
+            cv2.ellipse(img, (x2 - r, y1 + r), (r, r), 270, 0, 90, color,
+                        thickness=tl, lineType=cv2.LINE_AA)
+            cv2.ellipse(img, (x1 + r, y2 - r), (r, r), 90, 0, 90, color,
+                        thickness=tl, lineType=cv2.LINE_AA)
+            cv2.ellipse(img, (x2 - r, y2 - r), (r, r), 0, 0, 90, color,
+                        thickness=tl, lineType=cv2.LINE_AA)
+            # Straight connectors between the arc endpoints.
+            cv2.line(img, (x1 + r, y1), (x2 - r, y1), color, thickness=tl,
+                     lineType=cv2.LINE_AA)
+            cv2.line(img, (x1 + r, y2), (x2 - r, y2), color, thickness=tl,
+                     lineType=cv2.LINE_AA)
+            cv2.line(img, (x1, y1 + r), (x1, y2 - r), color, thickness=tl,
+                     lineType=cv2.LINE_AA)
+            cv2.line(img, (x2, y1 + r), (x2, y2 - r), color, thickness=tl,
+                     lineType=cv2.LINE_AA)
+            return
+
+        # Unknown style: fall back to the plain rectangle (fail-open).
+        cv2.rectangle(img, c1, c2, color, thickness=tl, lineType=cv2.LINE_AA)
+
     def plot_one_box(self, x, img, color=None, label=None, line_thickness=None):
         """
         Plot one bounding box on the image (BL-58 readability refactor).
@@ -139,7 +237,16 @@ class Tracking:
         color = color or [np.random.randint(0, 255) for _ in range(3)]
         color = [int(c) for c in color]
         c1, c2 = (int(x[0]), int(x[1])), (int(x[2]), int(x[3]))
-        cv2.rectangle(img, c1, c2, color, thickness=tl, lineType=cv2.LINE_AA)
+
+        # BL-98: style-aware box contour. Read the visual prefs from
+        # shared_state with unit-test-safe fallbacks (brackets / 12 / off when
+        # shared_state is None).
+        ss = self.shared_state
+        box_style = getattr(ss, "draw_box_style", "brackets") if ss else "brackets"
+        corner_len = getattr(ss, "draw_box_corner_len", 12) if ss else 12
+        box_outline = getattr(ss, "draw_box_outline", False) if ss else False
+        self._draw_box_contours(img, c1, c2, color, tl, box_style,
+                                corner_len, box_outline)
 
         if label:
             font = cv2.FONT_HERSHEY_SIMPLEX
@@ -168,12 +275,17 @@ class Tracking:
             bg_y2c = min(bg_y2, img_h)
 
             # Semi-opaque background: blend a dark rectangle (alpha ~0.6) over
-            # the label region only (cheap - bounded to the label box).
-            overlay = img.copy()
-            cv2.rectangle(overlay, (bg_x1c, bg_y1c), (bg_x2c, bg_y2c),
-                          (0, 0, 0), -1, cv2.LINE_AA)
+            # the label region only. Instead of a full-frame ``img.copy()`` per
+            # box (O(frame) at 30 FPS x N boxes), copy only the clipped label
+            # ROI, fill it black, blend it, and assign the result back into the
+            # same slice -- O(label area) per box (BL-98 perf).
             alpha = 0.6
-            cv2.addWeighted(overlay, alpha, img, 1 - alpha, 0, dst=img)
+            roi = img[bg_y1c:bg_y2c, bg_x1c:bg_x2c]
+            overlay_roi = roi.copy()
+            cv2.rectangle(overlay_roi, (0, 0),
+                          (bg_x2c - bg_x1c, bg_y2c - bg_y1c),
+                          (0, 0, 0), -1, cv2.LINE_AA)
+            cv2.addWeighted(overlay_roi, alpha, roi, 1 - alpha, 0, dst=roi)
 
             # The label sits on a semi-opaque DARK background (the black overlay
             # blended above), NOT on the box colour. Choosing the text colour
@@ -235,9 +347,21 @@ class Tracking:
             c_x, c_y = self.calculate_center(bbox=box)
             
             color = self._track_color(track_id)
-            # Draw bounding box with the new label format: ID first, score second.
+            # Draw bounding box with the class-aware label format: class first,
+            # then ID, then score (BL-98). Resolve the class name from the
+            # categories list with bounds guards; truncate to <=12 chars so long
+            # class names don't bloat the label box.
             if self.shared_state.box_tracking:
-                label = "ID:{} {:.2f}".format(int(track_id), float(result_scores[j]))
+                idx = int(result_classid[j])
+                if 0 <= idx < len(categories):
+                    cls_name = str(categories[idx])
+                elif categories:
+                    cls_name = str(idx)
+                else:
+                    cls_name = '?'
+                if len(cls_name) > 12:
+                    cls_name = cls_name[:12]
+                label = "{} ID:{} {:.2f}".format(cls_name, int(track_id), float(result_scores[j]))
                 self.plot_one_box(box, image, color, label,
                                   line_thickness=self.shared_state.draw_box_line_thickness)
 

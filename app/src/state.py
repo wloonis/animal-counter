@@ -59,6 +59,12 @@ shared_state.draw_box_line_thickness = settings.DRAW_BOX_LINE_THICKNESS
 shared_state.draw_label_font_scale = settings.DRAW_LABEL_FONT_SCALE
 shared_state.draw_label_thickness = settings.DRAW_LABEL_THICKNESS
 shared_state.draw_centroid_radius = settings.DRAW_CENTROID_RADIUS
+# BL-98: attractive box contours (visual only - no counting/tracking impact).
+# Hot-reloaded by main.py from runtime-settings.json (same watcher pattern as
+# the draw_* toggles above); boot defaults come from settings.py env vars.
+shared_state.draw_box_style = settings.DRAW_BOX_STYLE
+shared_state.draw_box_corner_len = settings.DRAW_BOX_CORNER_LEN
+shared_state.draw_box_outline = settings.DRAW_BOX_OUTLINE
 # BL-83: counting line orientation ("vertical" | "horizontal"). Default
 # mirrors the Settings default; main.py hot-reloads it per-recording from
 # runtime-settings.json (same "next recording" semantics as
@@ -108,6 +114,11 @@ _GLOBAL_SETTINGS_KEYS = (
     "box_tracking",
     "centroid_tracking",
     "draw_mask_zones",
+    # BL-98: attractive box-contour visual prefs (GLOBAL, not per-model —
+    # purely visual, like draw_tracking/draw_mask_zones above).
+    "draw_box_style",
+    "draw_box_corner_len",
+    "draw_box_outline",
     # BL-92: configurable +1 counting direction (GLOBAL, not per-model —
     # the +1 direction is tied to camera/video placement, not the model).
     "counting_direction_mode",
@@ -773,6 +784,29 @@ class RuntimeSettingsWatcher(threading.Thread):
             val = rt.get(key)
             if isinstance(val, bool):
                 pending[key] = val
+        # draw_box_style: string enum ("plain" | "brackets" | "rounded");
+        # invalid values skipped with a WARNING, current value kept (fail-open).
+        _style = rt.get("draw_box_style")
+        if isinstance(_style, str) and _style in ("plain", "brackets",
+                                                   "rounded"):
+            pending["draw_box_style"] = _style
+        elif _style is not None:
+            logger.warning("runtime-settings watcher: draw_box_style invalid "
+                            "(ignored): %r", _style)
+        # draw_box_corner_len: positive int (reject bool, a subclass of int).
+        _clen = rt.get("draw_box_corner_len")
+        if isinstance(_clen, int) and not isinstance(_clen, bool) and _clen > 0:
+            pending["draw_box_corner_len"] = _clen
+        elif _clen is not None:
+            logger.warning("runtime-settings watcher: draw_box_corner_len "
+                            "invalid (ignored): %r", _clen)
+        # draw_box_outline: only accept a plain bool.
+        _outline = rt.get("draw_box_outline")
+        if isinstance(_outline, bool):
+            pending["draw_box_outline"] = _outline
+        elif _outline is not None:
+            logger.warning("runtime-settings watcher: draw_box_outline "
+                            "invalid (ignored): %r", _outline)
         # offset_counting_line: signed int in [-300, 300] (reject bool, which
         # is a subclass of int). This mirrors the main.py sanity cap; the
         # authoritative 200px-margin clamp happens at use-time in counting.py

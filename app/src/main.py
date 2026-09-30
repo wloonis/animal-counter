@@ -264,6 +264,32 @@ def start(input_source, video_path):
                 # visualization. Same boot-read pattern as the other toggles.
                 if isinstance(rt.get("draw_mask_zones"), bool):
                     shared_state.draw_mask_zones = rt["draw_mask_zones"]
+                # BL-98: draw_box_style / draw_box_corner_len / draw_box_outline
+                # are GLOBAL visual prefs (same independent-toggle pattern as
+                # draw_tracking/draw_mask_zones). The guards below mirror the
+                # watcher guards in state.py (_build_pending) byte-for-byte so
+                # both paths accept/reject the same values: valid string enum /
+                # positive non-bool int / plain bool. Invalid values are skipped
+                # with a WARNING and the current value is kept (fail-open).
+                _style = rt.get("draw_box_style")
+                if isinstance(_style, str) and _style in ("plain", "brackets",
+                                                          "rounded"):
+                    shared_state.draw_box_style = _style
+                elif _style is not None:
+                    logger.warning("runtime-settings: draw_box_style invalid "
+                                   "(ignored): %r", _style)
+                _clen = rt.get("draw_box_corner_len")
+                if isinstance(_clen, int) and not isinstance(_clen, bool) and _clen > 0:
+                    shared_state.draw_box_corner_len = _clen
+                elif _clen is not None:
+                    logger.warning("runtime-settings: draw_box_corner_len "
+                                   "invalid (ignored): %r", _clen)
+                _outline = rt.get("draw_box_outline")
+                if isinstance(_outline, bool):
+                    shared_state.draw_box_outline = _outline
+                elif _outline is not None:
+                    logger.warning("runtime-settings: draw_box_outline "
+                                   "invalid (ignored): %r", _outline)
                 _off = rt.get("offset_counting_line")
                 if isinstance(_off, bool) or not isinstance(_off, int):
                     # bool is a subclass of int — reject it explicitly; only accept
