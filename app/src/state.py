@@ -784,6 +784,29 @@ class RuntimeSettingsWatcher(threading.Thread):
             val = rt.get(key)
             if isinstance(val, bool):
                 pending[key] = val
+        # draw_box_style: string enum ("plain" | "brackets" | "rounded");
+        # invalid values skipped with a WARNING, current value kept (fail-open).
+        _style = rt.get("draw_box_style")
+        if isinstance(_style, str) and _style in ("plain", "brackets",
+                                                   "rounded"):
+            pending["draw_box_style"] = _style
+        elif _style is not None:
+            logger.warning("runtime-settings watcher: draw_box_style invalid "
+                            "(ignored): %r", _style)
+        # draw_box_corner_len: positive int (reject bool, a subclass of int).
+        _clen = rt.get("draw_box_corner_len")
+        if isinstance(_clen, int) and not isinstance(_clen, bool) and _clen > 0:
+            pending["draw_box_corner_len"] = _clen
+        elif _clen is not None:
+            logger.warning("runtime-settings watcher: draw_box_corner_len "
+                            "invalid (ignored): %r", _clen)
+        # draw_box_outline: only accept a plain bool.
+        _outline = rt.get("draw_box_outline")
+        if isinstance(_outline, bool):
+            pending["draw_box_outline"] = _outline
+        elif _outline is not None:
+            logger.warning("runtime-settings watcher: draw_box_outline "
+                            "invalid (ignored): %r", _outline)
         # offset_counting_line: signed int in [-300, 300] (reject bool, which
         # is a subclass of int). This mirrors the main.py sanity cap; the
         # authoritative 200px-margin clamp happens at use-time in counting.py
