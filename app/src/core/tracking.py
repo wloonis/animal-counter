@@ -235,9 +235,21 @@ class Tracking:
             c_x, c_y = self.calculate_center(bbox=box)
             
             color = self._track_color(track_id)
-            # Draw bounding box with the new label format: ID first, score second.
+            # Draw bounding box with the class-aware label format: class first,
+            # then ID, then score (BL-98). Resolve the class name from the
+            # categories list with bounds guards; truncate to <=12 chars so long
+            # class names don't bloat the label box.
             if self.shared_state.box_tracking:
-                label = "ID:{} {:.2f}".format(int(track_id), float(result_scores[j]))
+                idx = int(result_classid[j])
+                if 0 <= idx < len(categories):
+                    cls_name = str(categories[idx])
+                elif categories:
+                    cls_name = str(idx)
+                else:
+                    cls_name = '?'
+                if len(cls_name) > 12:
+                    cls_name = cls_name[:12]
+                label = "{} ID:{} {:.2f}".format(cls_name, int(track_id), float(result_scores[j]))
                 self.plot_one_box(box, image, color, label,
                                   line_thickness=self.shared_state.draw_box_line_thickness)
 
