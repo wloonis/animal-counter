@@ -275,12 +275,17 @@ class Tracking:
             bg_y2c = min(bg_y2, img_h)
 
             # Semi-opaque background: blend a dark rectangle (alpha ~0.6) over
-            # the label region only (cheap - bounded to the label box).
-            overlay = img.copy()
-            cv2.rectangle(overlay, (bg_x1c, bg_y1c), (bg_x2c, bg_y2c),
-                          (0, 0, 0), -1, cv2.LINE_AA)
+            # the label region only. Instead of a full-frame ``img.copy()`` per
+            # box (O(frame) at 30 FPS x N boxes), copy only the clipped label
+            # ROI, fill it black, blend it, and assign the result back into the
+            # same slice -- O(label area) per box (BL-98 perf).
             alpha = 0.6
-            cv2.addWeighted(overlay, alpha, img, 1 - alpha, 0, dst=img)
+            roi = img[bg_y1c:bg_y2c, bg_x1c:bg_x2c]
+            overlay_roi = roi.copy()
+            cv2.rectangle(overlay_roi, (0, 0),
+                          (bg_x2c - bg_x1c, bg_y2c - bg_y1c),
+                          (0, 0, 0), -1, cv2.LINE_AA)
+            cv2.addWeighted(overlay_roi, alpha, roi, 1 - alpha, 0, dst=roi)
 
             # The label sits on a semi-opaque DARK background (the black overlay
             # blended above), NOT on the box colour. Choosing the text colour
