@@ -59,6 +59,12 @@ shared_state.draw_box_line_thickness = settings.DRAW_BOX_LINE_THICKNESS
 shared_state.draw_label_font_scale = settings.DRAW_LABEL_FONT_SCALE
 shared_state.draw_label_thickness = settings.DRAW_LABEL_THICKNESS
 shared_state.draw_centroid_radius = settings.DRAW_CENTROID_RADIUS
+# BL-98: attractive box contours (visual only - no counting/tracking impact).
+# Hot-reloaded by main.py from runtime-settings.json (same watcher pattern as
+# the draw_* toggles above); boot defaults come from settings.py env vars.
+shared_state.draw_box_style = settings.DRAW_BOX_STYLE
+shared_state.draw_box_corner_len = settings.DRAW_BOX_CORNER_LEN
+shared_state.draw_box_outline = settings.DRAW_BOX_OUTLINE
 # BL-83: counting line orientation ("vertical" | "horizontal"). Default
 # mirrors the Settings default; main.py hot-reloads it per-recording from
 # runtime-settings.json (same "next recording" semantics as
