@@ -125,6 +125,9 @@ atomically (tmp + `os.replace`) so the companion's `GET /api/snapshot`
 | `CENTROID_TRACKING` / `BOX_TRACKING` | True / True | What to draw when `DRAW_TRACKING=True` |
 | `MASK_ZONES` | `[]` | **(BL-87)** normalized axis-aligned exclusion rects `{x,y,w,h}` in `[0..1]`; detections whose centroid falls inside any rect are dropped before tracking (no track → no count). Default `[]` = no-op |
 | `DRAW_MASK_ZONES` | `True` | **(BL-87)** draw a semi-transparent overlay of the `mask_zones` rects (independent of `DRAW_TRACKING`) |
+| `DRAW_BOX_STYLE` | `brackets` | **(BL-98)** boot default for the runtime-settings key `draw_box_style` — box contour style when `DRAW_TRACKING`/`BOX_TRACKING` is on. `plain` = single `cv2.rectangle`; `brackets` = 4 L-shaped corner brackets; `rounded` = 4 quarter-arc corners + connecting lines |
+| `DRAW_BOX_CORNER_LEN` | `12` | **(BL-98)** boot default for `draw_box_corner_len` — arm length (px) of the `brackets`/`rounded` corners (clamped to ≤ half the box width/height at draw time) |
+| `DRAW_BOX_OUTLINE` | `False` | **(BL-98)** boot default for `draw_box_outline` — draw a thin 1px contrast liseré 1px outside the box before the style |
 | `COUNTING_DIRECTION_MODE` | `auto` | **(BL-92)** `auto` (default) auto-detects the dominant crossing direction per run via a warm-up (N=3 crossings or T=10s, then lock), or `manual` for an operator-set +1. Boot default for the runtime-settings key `counting_direction_mode` |
 | `COUNTING_DIRECTION` | `null` | **(BL-92, manual only)** the +1 direction, one of `up`/`down`/`left`/`right`, validated vs the active `COUNTING_LINE_ORIENTATION` (horizontal → `up`/`down`, vertical → `left`/`right`); `null` = auto/default. Boot default for the runtime-settings key `counting_direction` |
 
@@ -174,6 +177,7 @@ atomically (tmp + `os.replace`) so the companion's `GET /api/snapshot`
   `/conf/runtime-settings.json` — `draw_tracking`, `box_tracking`,
   `centroid_tracking`, `offset_counting_line`, `counting_line_orientation`,
   `counting_class_ids`, `mask_zones`, `draw_mask_zones`,
+  `draw_box_style`, `draw_box_corner_len`, `draw_box_outline`,
   `counting_direction_mode`, `counting_direction` — are **hot-reloaded in-process**. Write them from the
   companion via `PUT /api/settings` (or edit `/conf/runtime-settings.json`
   directly). A lightweight `RuntimeSettingsWatcher` thread in the countingapp
